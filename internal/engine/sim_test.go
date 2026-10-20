@@ -119,25 +119,40 @@ func (b *syncBuffer) Bytes() []byte {
 	return append([]byte(nil), b.b.Bytes()...)
 }
 
+// userWrite and userDelete run on the machine's engine loop, so the read
+// of what is being replaced and the write itself are one atomic step with
+// respect to the engine. Otherwise the oracle can blame Enigma for content
+// the simulated user overwrote (a stale-editor save, which no sync tool can
+// detect). Races inside one machine are covered by dedicated tests instead
+// (fsx write races, TestUserEditBetweenDecideAndApplyIsKept).
 func (s *sim) userWrite(m int, rel, content string) {
-	s.logf("write %s %s = %q (was %q)", s.ms[m].name, rel, content, s.ms[m].read(rel))
-	if old := s.ms[m].read(rel); old != "<missing>" {
-		s.replaced[old] = true
-	}
-	s.ms[m].write(rel, content)
-	s.ms[m].e.Rescan()
-	s.seen[content] = true
+	mc := s.ms[m]
+	mc.e.do(func() {
+		old := mc.read(rel)
+		s.logf("write %s %s = %q (was %q)", mc.name, rel, content, old)
+		if old != "<missing>" {
+			s.replaced[old] = true
+		}
+		p := mc.path(rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(content), 0o644)
+		mc.e.rescanAll()
+		s.seen[content] = true
+	})
 }
 
 func (s *sim) userDelete(m int, rel string) {
-	old := s.ms[m].read(rel)
-	if old == "<missing>" {
-		return
-	}
-	s.logf("delete %s %s (was %q)", s.ms[m].name, rel, old)
-	s.replaced[old] = true
-	os.Remove(s.ms[m].path(rel))
-	s.ms[m].e.Rescan()
+	mc := s.ms[m]
+	mc.e.do(func() {
+		old := mc.read(rel)
+		if old == "<missing>" {
+			return
+		}
+		s.logf("delete %s %s (was %q)", mc.name, rel, old)
+		s.replaced[old] = true
+		os.Remove(mc.path(rel))
+		mc.e.rescanAll()
+	})
 }
 
 func (s *sim) toggle(i, j int) {
