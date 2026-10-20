@@ -89,6 +89,12 @@ var ErrDuplicateLink = errors.New("already linked to this peer")
 // the engine. dialed says whether this side opened conn. It returns once
 // the link is up; the link then lives until conn fails or the engine closes.
 func (e *Engine) Connect(conn io.ReadWriteCloser, dialed bool) error {
+	_, err := e.ConnectPeer(conn, dialed)
+	return err
+}
+
+// ConnectPeer is Connect that also reports who is on the other end.
+func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, error) {
 	hello := &proto.Msg{Type: proto.Hello, Hello: &proto.HelloBody{
 		GroupID: e.o.GroupID, MachineID: e.o.MachineID, Name: e.o.Name, Proto: proto.Version}}
 	sendErr := make(chan error, 1)
@@ -106,15 +112,15 @@ func (e *Engine) Connect(conn io.ReadWriteCloser, dialed bool) error {
 	case r = <-got:
 	case <-time.After(handshakeTimeout):
 		conn.Close()
-		return errors.New("handshake timed out")
+		return PeerStatus{}, errors.New("handshake timed out")
 	}
 	if err := <-sendErr; err != nil {
 		conn.Close()
-		return fmt.Errorf("handshake: %w", err)
+		return PeerStatus{}, fmt.Errorf("handshake: %w", err)
 	}
 	if r.err != nil {
 		conn.Close()
-		return fmt.Errorf("handshake: %w", r.err)
+		return PeerStatus{}, fmt.Errorf("handshake: %w", r.err)
 	}
 	h := r.m.Hello
 	switch {
@@ -129,7 +135,7 @@ func (e *Engine) Connect(conn io.ReadWriteCloser, dialed bool) error {
 	}
 	if r.err != nil {
 		conn.Close()
-		return r.err
+		return PeerStatus{}, r.err
 	}
 
 	dialedBy := h.MachineID
@@ -140,14 +146,14 @@ func (e *Engine) Connect(conn io.ReadWriteCloser, dialed bool) error {
 	kept := false
 	if err := e.do(func() { kept = e.attach(p) }); err != nil {
 		p.close()
-		return err
+		return PeerStatus{}, err
 	}
 	if !kept {
 		p.close()
-		return ErrDuplicateLink
+		return PeerStatus{ID: h.MachineID, Name: h.Name}, ErrDuplicateLink
 	}
 	go e.readLoop(p)
-	return nil
+	return PeerStatus{ID: h.MachineID, Name: h.Name}, nil
 }
 
 func (e *Engine) readLoop(p *peer) {

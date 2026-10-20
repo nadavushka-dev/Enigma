@@ -1,7 +1,7 @@
 x 2026-10-20 2026-10-20 M2 config: paths (XDG, ENIGMA_HOME, short socket), identity, peers file +m2
 x 2026-10-20 2026-10-20 M2 engine: one link per pair (keep link dialed by lower machine ID) +m2
 x 2026-10-20 2026-10-20 M2 link: ssh argv, process conn w/ stderr, bridge relay +m2
-2026-10-20 M2 daemon: sockets, API, dial loop w/ backoff, reconnect +m2
+x 2026-10-20 2026-10-20 M2 daemon: sockets, API, dial loop w/ backoff, reconnect +m2
 2026-10-20 M2 cli: init, join, peers, add, remove, list, status, daemon, bridge +m2
 2026-10-20 M2 local multi-machine e2e via fake ssh (no docker) +m2
 2026-10-20 M2 service: launchd + systemd user unit, install/uninstall +m2
