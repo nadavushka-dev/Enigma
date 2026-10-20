@@ -36,19 +36,19 @@ func paneLines(m *Model) []string {
 func TestMachinesRowsAndStates(t *testing.T) {
 	m := started(t, groupFake(t))
 	lines := paneLines(m)
-	wants := []string{"● mac  this", "● devbox  linked", "○ laptop  down", "○ nas  dials us", "· office  ssh only"}
+	wants := []string{"● mac this", "● devbox linked", "○ laptop down", "○ nas dials us", "· office ssh only"}
 	for i, w := range wants {
-		if !strings.Contains(lines[i], w) {
+		if got := strings.Join(strings.Fields(lines[i]), " "); got != w { // names are padded to align the states
 			t.Fatalf("row %d = %q, want %q", i, lines[i], w)
 		}
 	}
-	v := m.View()
-	for _, member := range []string{"devbox  ssh only", "lap  ssh only"} {
+	v := strings.Join(strings.Fields(m.View()), " ")
+	for _, member := range []string{"devbox ssh only", "lap ssh only"} {
 		if strings.Contains(v, member) {
 			t.Fatalf("member listed as a host: %q", member)
 		}
 	}
-	if !strings.Contains(v, "office  ssh only") {
+	if !strings.Contains(v, "office ssh only") {
 		t.Fatal("office host missing")
 	}
 }
@@ -202,5 +202,22 @@ func TestMachinesHelpListsAX(t *testing.T) {
 	}
 	if !keys["a"] || !keys["x"] {
 		t.Fatalf("help: %v", keys)
+	}
+}
+
+func TestMachinesStateColumnIsAligned(t *testing.T) {
+	f := newFake(t)
+	f.hosts = []string{"devbox"}
+	m := started(t, f)
+	var cols []int
+	for _, l := range strings.Split(m.View(), "\n") {
+		for _, st := range []string{"this", "ssh only"} {
+			if i := strings.Index(l, st); i > 0 && strings.Contains(l, "│") {
+				cols = append(cols, lipgloss.Width(l[:i]))
+			}
+		}
+	}
+	if len(cols) != 2 || cols[0] != cols[1] {
+		t.Fatalf("state columns at %v:\n%s", cols, m.View())
 	}
 }

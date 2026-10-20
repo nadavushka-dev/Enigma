@@ -200,6 +200,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 && !msg.Paste {
+			// Typed faster than read: one message, several keys.
+			var cmds []tea.Cmd
+			for _, r := range msg.Runes {
+				_, cmd := m.key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: msg.Alt})
+				cmds = append(cmds, cmd)
+			}
+			return m, tea.Sequence(cmds...)
+		}
 		return m.key(msg)
 	}
 	return m, m.broadcast(msg)

@@ -139,3 +139,22 @@ func TestShowErrorUsesTheFooterUntilTheNextKey(t *testing.T) {
 		t.Fatal("error stays")
 	}
 }
+
+// Keys typed faster than they are read arrive as one message with several
+// runes ("ljjj"); each must act as its own key.
+func TestBatchedRunesAreSeparateKeys(t *testing.T) {
+	f := newFake(t)
+	f.write(t, "a/x", "1")
+	f.write(t, "b/x", "1")
+	f.write(t, "c/x", "1")
+	m := started(t, f)
+	drive(t, m, key("tab"), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jj")})
+	if p := m.panes[1].(*filesPane); p.cursor != 2 {
+		t.Fatalf("cursor %d after \"jj\", want 2", p.cursor)
+	}
+	// A paste stays one message (it is text, not keys).
+	drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("kk"), Paste: true})
+	if p := m.panes[1].(*filesPane); p.cursor != 2 {
+		t.Fatalf("a paste moved the cursor to %d", p.cursor)
+	}
+}

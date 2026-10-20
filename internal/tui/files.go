@@ -278,6 +278,13 @@ func entryFor(s *Shared, rel string) *engine.EntryStatus {
 func (p *filesPane) mark(s *Shared, n *fileNode) string {
 	e := entryFor(s, n.rel)
 	if e == nil {
+		if n.dir {
+			for _, en := range s.Status.Entries {
+				if strings.HasPrefix(en.Path, n.rel+"/") {
+					return "holds synced"
+				}
+			}
+		}
 		return ""
 	}
 	if e.Path == n.rel {

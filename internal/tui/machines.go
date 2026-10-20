@@ -223,7 +223,7 @@ func (p *machinesPane) View(s *Shared, width, height int, focused bool) string {
 		l := ""
 		if i < len(p.rows) {
 			r := p.rows[i]
-			text := fit(fmt.Sprintf("%s %s  %s", r.mark, r.name, r.state), width)
+			text := fit(fmt.Sprintf("%s %-*s  %s", r.mark, p.nameW(), r.name, r.state), width)
 			switch {
 			case focused && i == p.cur:
 				l = StyleSelected.Render(text)
@@ -259,4 +259,13 @@ func (p *machinesPane) detail() string {
 		parts = append(parts, "error: "+r.peer.LastError)
 	}
 	return strings.Join(parts, "  ")
+}
+
+// nameW is the widest name, so the states line up.
+func (p *machinesPane) nameW() int {
+	w := 0
+	for _, r := range p.rows {
+		w = max(w, lipgloss.Width(r.name))
+	}
+	return w
 }

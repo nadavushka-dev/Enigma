@@ -413,3 +413,19 @@ func TestDriveRunsEachMessageToTheEndBeforeTheNext(t *testing.T) {
 		t.Fatalf("calls %q", got)
 	}
 }
+
+// A folder that holds a synced entry deeper down says so, to guide the eye.
+func TestFilesFolderHoldingAnEntryIsMarked(t *testing.T) {
+	f := newFake(t)
+	f.write(t, ".claude/CLAUDE.md", "x")
+	f.write(t, "other/y", "x")
+	f.status.Entries = []engine.EntryStatus{{Path: ".claude/CLAUDE.md"}}
+	m := filesModel(t, f)
+	p := files(m)
+	if mk := p.mark(m.s, p.rows[0]); p.rows[0].rel != ".claude" || mk != "holds synced" {
+		t.Fatalf("%s: mark %q", p.rows[0].rel, mk)
+	}
+	if mk := p.mark(m.s, p.rows[1]); mk != "" {
+		t.Fatalf("other: mark %q", mk)
+	}
+}
