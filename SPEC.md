@@ -275,7 +275,10 @@ machines. The files stay as they are everywhere.
 **Trash:** `~/.local/share/enigma/trash/<YYYY-MM-DD>/<path>`, purged after
 30 days (a group setting). Trash is per machine and never synced. `enigma
 trash list` and `enigma trash restore <id>` restore a file, which then syncs
-as a normal edit.
+as a normal edit. Restore never overwrites an existing file.
+- The same path trashed twice in a day goes to `<YYYY-MM-DD>.2/<path>`
+  (then `.3`, …), so the original path is always everything after the
+  first folder. The ID is `<day folder>/<path>`.
 
 ## 10. Local storage (per machine)
 

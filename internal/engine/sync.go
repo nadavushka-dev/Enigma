@@ -13,6 +13,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/fsx"
 	"github.com/nadavushka-dev/enigma/internal/merge"
 	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/trash"
 	"github.com/nadavushka-dev/enigma/internal/version"
 )
 
@@ -549,7 +550,7 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			if fs == nil || !fs.Materialized || fs.V.IsDeleted() {
 				return fsx.ErrChanged // a file appeared since the decision
 			}
-			if _, err := fsx.MoveTo(abs, e.dataPath("trash", rel), fs.V.Hash); err != nil {
+			if _, err := trash.Move(filepath.Join(e.o.DataDir, "trash"), abs, rel, fs.V.Hash, time.Now()); err != nil {
 				return err
 			}
 			if e.st.Entries[entry].Dir {
@@ -624,7 +625,7 @@ func (e *Engine) backup(rel string, data []byte) error {
 	return nil
 }
 
-// dataPath is <DataDir>/<kind>/<YYYY-MM-DD>/<rel>.
+// dataPath is <DataDir>/<kind>/<YYYY-MM-DD>/<rel> (backups).
 func (e *Engine) dataPath(kind, rel string) string {
 	return filepath.Join(e.o.DataDir, kind, time.Now().Format("2006-01-02"), filepath.FromSlash(rel))
 }

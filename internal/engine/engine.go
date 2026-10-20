@@ -15,6 +15,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/fsx"
 	"github.com/nadavushka-dev/enigma/internal/history"
 	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/trash"
 	"github.com/nadavushka-dev/enigma/internal/version"
 	"github.com/nadavushka-dev/enigma/internal/watch"
 )
@@ -121,7 +122,7 @@ func New(o Options) (*Engine, error) {
 	}
 	e.rescanAll() // changes made while the daemon was not running (§6.5)
 	e.saveIfDirty()
-	e.pruneHistory()
+	e.prune()
 	go e.loop()
 	return e, nil
 }
@@ -154,7 +155,7 @@ func (e *Engine) loop() {
 			}
 		case <-tick.C:
 			e.rescanAll()
-			e.pruneHistory()
+			e.prune()
 		}
 		e.saveIfDirty()
 	}
@@ -344,9 +345,10 @@ func (e *Engine) rootPresent(entry string, r proto.EntryRecord) bool {
 	return err == nil && fi.IsDir()
 }
 
-// pruneHistory applies the retention policy (SPEC §10): each file's latest
-// versions are protected, current versions are never dropped.
-func (e *Engine) pruneHistory() {
+// prune applies the retention policies: history (SPEC §10; each file's
+// latest versions are protected, current versions never dropped) and the
+// trash (§9, 30 days).
+func (e *Engine) prune() {
 	protected, current := map[string]bool{}, map[string]bool{}
 	for _, fs := range e.st.Files {
 		current[fs.V.Hash] = true
@@ -355,4 +357,5 @@ func (e *Engine) pruneHistory() {
 		}
 	}
 	e.hist.Prune(history.DefaultPolicy, protected, current)
+	trash.Purge(filepath.Join(e.o.DataDir, "trash"), trash.DefaultMaxAge, time.Now())
 }

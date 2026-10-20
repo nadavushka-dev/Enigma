@@ -299,3 +299,42 @@ func TestE2E_DaemonWritesItsOwnLog(t *testing.T) {
 		return strings.Contains(string(b), "daemon started")
 	})
 }
+
+func TestE2E_TrashListRestoreEmpty(t *testing.T) {
+	w := newWorld(t)
+	a, b := w.host("a"), w.host("b")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	b.must("join", "--name", "b", "a")
+	b.startDaemon()
+	a.write("notes/keep.md", "stays")
+	a.write("notes/gone.md", "deleted on a")
+	a.must("add", "notes")
+	eventuallyT(t, "folder on b", func() bool { return b.read("notes/gone.md") == "deleted on a" })
+
+	os.Remove(filepath.Join(a.home, "notes/gone.md"))
+	eventuallyT(t, "delete reaches b", func() bool { return b.read("notes/gone.md") == "<missing>" })
+
+	out := b.must("trash", "list")
+	if !strings.Contains(out, "~/notes/gone.md") {
+		t.Fatalf("trash list:\n%s", out)
+	}
+	var items []struct{ ID, Path string }
+	if err := json.Unmarshal([]byte(b.must("trash", "list", "--json")), &items); err != nil || len(items) != 1 {
+		t.Fatalf("trash list --json: %v %+v", err, items)
+	}
+	b.must("trash", "restore", items[0].ID)
+	eventuallyT(t, "restored file reaches a", func() bool { return a.read("notes/gone.md") == "deleted on a" })
+
+	if _, code := b.run("trash", "restore", items[0].ID); code == 0 {
+		t.Fatal("restoring twice must fail")
+	}
+	os.Remove(filepath.Join(b.home, "notes/keep.md"))
+	eventuallyT(t, "delete reaches a", func() bool { return a.read("notes/keep.md") == "<missing>" })
+	if out := a.must("trash", "empty"); !strings.Contains(out, "1 file") {
+		t.Fatalf("trash empty: %s", out)
+	}
+	if out := a.must("trash", "list"); !strings.Contains(out, "trash is empty") {
+		t.Fatalf("after empty:\n%s", out)
+	}
+}
