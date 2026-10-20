@@ -21,6 +21,7 @@ const summaryChunk = 500
 // into an unbounded queue drained by a writer goroutine.
 type peer struct {
 	id, name string
+	dialedBy string // machine ID of the side that dialed this link
 	conn     io.ReadWriteCloser
 	sent     *atomic.Int64
 
@@ -30,8 +31,8 @@ type peer struct {
 	closed bool
 }
 
-func newPeer(id, name string, conn io.ReadWriteCloser, sent *atomic.Int64) *peer {
-	p := &peer{id: id, name: name, conn: conn, sent: sent}
+func newPeer(id, name, dialedBy string, conn io.ReadWriteCloser, sent *atomic.Int64) *peer {
+	p := &peer{id: id, name: name, dialedBy: dialedBy, conn: conn, sent: sent}
 	p.cond = sync.NewCond(&p.mu)
 	go p.writeLoop()
 	return p
@@ -80,10 +81,14 @@ func (p *peer) writeLoop() {
 	}
 }
 
-// Connect runs the handshake on conn (dialed or accepted, it is symmetric)
-// and, on success, attaches the link to the engine. It returns once the
-// link is up; the link then lives until conn fails or the engine closes.
-func (e *Engine) Connect(conn io.ReadWriteCloser) error {
+// ErrDuplicateLink: the peer is already linked through the link both sides
+// prefer (SPEC §5); this one was closed.
+var ErrDuplicateLink = errors.New("already linked to this peer")
+
+// Connect runs the handshake on conn and, on success, attaches the link to
+// the engine. dialed says whether this side opened conn. It returns once
+// the link is up; the link then lives until conn fails or the engine closes.
+func (e *Engine) Connect(conn io.ReadWriteCloser, dialed bool) error {
 	hello := &proto.Msg{Type: proto.Hello, Hello: &proto.HelloBody{
 		GroupID: e.o.GroupID, MachineID: e.o.MachineID, Name: e.o.Name, Proto: proto.Version}}
 	sendErr := make(chan error, 1)
@@ -127,10 +132,19 @@ func (e *Engine) Connect(conn io.ReadWriteCloser) error {
 		return r.err
 	}
 
-	p := newPeer(h.MachineID, h.Name, conn, &e.sent)
-	if err := e.do(func() { e.attach(p) }); err != nil {
+	dialedBy := h.MachineID
+	if dialed {
+		dialedBy = e.o.MachineID
+	}
+	p := newPeer(h.MachineID, h.Name, dialedBy, conn, &e.sent)
+	kept := false
+	if err := e.do(func() { kept = e.attach(p) }); err != nil {
 		p.close()
 		return err
+	}
+	if !kept {
+		p.close()
+		return ErrDuplicateLink
 	}
 	go e.readLoop(p)
 	return nil
@@ -150,9 +164,16 @@ func (e *Engine) readLoop(p *peer) {
 }
 
 // attach registers p and starts the catch-up (§6.5): group state first,
-// then a summary of every tracked file.
-func (e *Engine) attach(p *peer) {
+// then a summary of every tracked file. With two links to one peer, both
+// sides keep the one dialed by the lower machine ID; between two links
+// dialed by the same side, the newer wins (the old one is likely dead).
+// It reports whether p was kept.
+func (e *Engine) attach(p *peer) bool {
 	if old := e.peers[p.id]; old != nil {
+		preferred := min(e.o.MachineID, p.id)
+		if old.dialedBy == preferred && p.dialedBy != preferred {
+			return false
+		}
 		old.close()
 	}
 	e.peers[p.id] = p
@@ -178,6 +199,7 @@ func (e *Engine) attach(p *peer) {
 	}
 	flush()
 	p.send(&proto.Msg{Type: proto.SummaryDone})
+	return true
 }
 
 func (e *Engine) detach(p *peer) {

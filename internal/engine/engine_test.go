@@ -99,8 +99,8 @@ func link(t *testing.T, a, b *machine) (cut func()) {
 	var wg sync.WaitGroup
 	var errA, errB error
 	wg.Add(2)
-	go func() { defer wg.Done(); errA = a.e.Connect(c1) }()
-	go func() { defer wg.Done(); errB = b.e.Connect(c2) }()
+	go func() { defer wg.Done(); errA = a.e.Connect(c1, true) }()
+	go func() { defer wg.Done(); errB = b.e.Connect(c2, false) }()
 	wg.Wait()
 	if errA != nil || errB != nil {
 		t.Fatalf("connect: %v / %v", errA, errB)
@@ -534,8 +534,8 @@ func TestHandshakeRejectsOtherGroup(t *testing.T) {
 	b := newMachine(t, "b", func(o *Options) { o.GroupID = "other" })
 	c1, c2 := net.Pipe()
 	errs := make(chan error, 2)
-	go func() { errs <- a.e.Connect(c1) }()
-	go func() { errs <- b.e.Connect(c2) }()
+	go func() { errs <- a.e.Connect(c1, true) }()
+	go func() { errs <- b.e.Connect(c2, false) }()
 	if e1, e2 := <-errs, <-errs; e1 == nil || e2 == nil {
 		t.Fatalf("cross-group link accepted: %v / %v", e1, e2)
 	}
@@ -572,4 +572,46 @@ func TestUserEditBetweenDecideAndApplyIsKept(t *testing.T) {
 	if !survived {
 		t.Fatalf("user edit lost: a=%q b=%q", a.read("f.md"), b.read("f.md"))
 	}
+}
+
+// SPEC §5: both machines may dial each other; exactly one link survives on
+// both sides, the one dialed by the lower machine ID ("id-a" < "id-b").
+func TestOneLinkPerPairKeepsLowerIDsDial(t *testing.T) {
+	a, b := newMachine(t, "a"), newMachine(t, "b")
+	a1, b1 := net.Pipe() // dialed by a
+	b2, a2 := net.Pipe() // dialed by b
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	wg.Add(4)
+	go func() { defer wg.Done(); errs[0] = a.e.Connect(a1, true) }()
+	go func() { defer wg.Done(); errs[1] = b.e.Connect(b1, false) }()
+	go func() { defer wg.Done(); errs[2] = b.e.Connect(b2, true) }()
+	go func() { defer wg.Done(); errs[3] = a.e.Connect(a2, false) }()
+	wg.Wait()
+	eventually(t, "one link each side", func() bool {
+		return len(a.e.Status().Peers) == 1 && len(b.e.Status().Peers) == 1
+	})
+	// The link b dialed must be closed on both ends.
+	eventually(t, "b's dial is closed", func() bool {
+		_, err := b2.Write([]byte{0})
+		return err != nil
+	})
+	if _, err := a1.Write(nil); err != nil {
+		t.Fatalf("a's dial must stay open: %v", err)
+	}
+	a.write("f.md", "over the kept link")
+	a.add("f.md")
+	eventually(t, "sync works", hasFile(b, "f.md", "over the kept link"))
+}
+
+func TestReconnectFromSameSideReplacesOldLink(t *testing.T) {
+	a, b := newMachine(t, "a"), newMachine(t, "b")
+	link(t, a, b)
+	link(t, a, b) // e.g. a reconnects before noticing the old link died
+	eventually(t, "still one link", func() bool {
+		return len(a.e.Status().Peers) == 1 && len(b.e.Status().Peers) == 1
+	})
+	a.write("g.md", "x")
+	a.add("g.md")
+	eventually(t, "sync works", hasFile(b, "g.md", "x"))
 }
