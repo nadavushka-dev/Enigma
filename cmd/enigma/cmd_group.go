@@ -13,7 +13,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
-	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/group"
 	"github.com/nadavushka-dev/enigma/internal/service"
 )
 
@@ -59,14 +59,8 @@ func cmdInit(c *ctx, args []string) error {
 	return nil
 }
 
-// joinRequest is what `machine add` sends to `join` on the new machine.
-type joinRequest struct {
-	Identity config.Identity       `json:"identity"`
-	Members  []proto.MachineRecord `json:"members"`
-}
-
 func cmdJoin(c *ctx, args []string) error {
-	var req joinRequest
+	var req group.JoinRequest
 	if err := json.NewDecoder(c.stdin).Decode(&req); err != nil {
 		return fmt.Errorf("join: reading the group from stdin: %w", err)
 	}

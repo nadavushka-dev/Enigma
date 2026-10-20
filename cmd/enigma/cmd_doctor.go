@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/daemon"
-	"github.com/nadavushka-dev/enigma/internal/link"
+	"github.com/nadavushka-dev/enigma/internal/group"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/service"
 )
@@ -63,7 +63,7 @@ func cmdDoctor(c *ctx, args []string) error {
 		return finishDoctor(c, rep, *asJSON)
 	}
 	rep.Checks = append(rep.Checks, "daemon running (enigma "+st.Version+")")
-	ms, err := members(cl)
+	ms, err := group.Members(cl)
 	if err != nil {
 		return err
 	}
@@ -131,41 +131,13 @@ func fromStatus(name string, st daemon.StatusReport) doctorMachine {
 }
 
 func askMachine(r proto.MachineRecord) doctorMachine {
-	st, err := askStatus(r)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	st, err := group.AskStatus(ctx, r)
 	if err != nil {
 		return doctorMachine{Name: r.Name, Error: err.Error()}
 	}
 	return fromStatus(r.Name, st)
-}
-
-// askStatus asks member r for its status over ssh, the way this machine's
-// daemon reaches it.
-func askStatus(r proto.MachineRecord) (daemon.StatusReport, error) {
-	bin := r.Bin
-	if bin == "" {
-		bin = "enigma"
-	}
-	targets := targetsOf(r)
-	if len(targets) == 0 {
-		return daemon.StatusReport{}, fmt.Errorf("no address for %s on this machine (set one with `enigma machine alias`)", r.Name)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	var lastErr error
-	for _, t := range targets {
-		out, err := link.Shell(ctx, t, bin+" status --json", nil)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		var st daemon.StatusReport
-		if err := json.Unmarshal(out, &st); err != nil {
-			lastErr = fmt.Errorf("its status: %v", err)
-			continue
-		}
-		return st, nil
-	}
-	return daemon.StatusReport{}, lastErr
 }
 
 func finishDoctor(c *ctx, rep doctorReport, asJSON bool) error {
