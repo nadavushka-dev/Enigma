@@ -262,12 +262,8 @@ func (e *Engine) refreshFile(entry, rel string) {
 		if fs == nil || fs.V.IsDeleted() || !fs.Materialized {
 			return // never had it here: not a delete
 		}
-		r := e.st.Entries[entry]
-		if !e.rootPresent(entry, r) {
-			if !e.missing[entry] {
-				e.log.Warn("entry root vanished; not propagating deletes", "entry", entry)
-			}
-			e.missing[entry] = true
+		if !e.rootPresent(entry, e.st.Entries[entry]) {
+			e.markMissing(entry)
 			return
 		}
 		v := version.Version{Hash: version.Deleted, Vector: e.bump(fs.V.Vector), Parents: []string{fs.V.Hash},
@@ -278,6 +274,28 @@ func (e *Engine) refreshFile(entry, rel string) {
 	case fsx.Other:
 		sk[rel] = true
 	}
+}
+
+// markMissing applies the vanished-root guard (§6.5) to entry.
+func (e *Engine) markMissing(entry string) {
+	if !e.missing[entry] {
+		e.log.Warn("entry root vanished; not propagating deletes", "entry", entry)
+	}
+	e.missing[entry] = true
+}
+
+// rootVanished: the entry's root is gone although this machine had files
+// under it. A brand-new entry's root is merely not created yet (D6).
+func (e *Engine) rootVanished(entry string) bool {
+	if e.rootPresent(entry, e.st.Entries[entry]) {
+		return false
+	}
+	for rel, fs := range e.st.Files {
+		if fs.Materialized && !fs.V.IsDeleted() && (rel == entry || strings.HasPrefix(rel, entry+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) newLocalVersion(rel string, info fsx.Info, origin version.Origin) {
@@ -416,6 +434,12 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, content
 		announce(d.Result)
 		return nil
 	case Apply:
+		// Writing would re-create a vanished root, and the files that were
+		// there would then read as deletes.
+		if e.rootVanished(entry) {
+			e.markMissing(entry)
+			return nil
+		}
 		// The precondition is what the decision was based on, never a fresh
 		// look at the disk: an edit made since then must not be overwritten.
 		basis, onDisk := "", false

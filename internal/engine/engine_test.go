@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -500,7 +501,11 @@ func TestVanishedRootDoesNotDeleteEverywhere(t *testing.T) {
 	a.add("vault")
 	link(t, a, b)
 	eventually(t, "synced", hasFile(b, "vault/2.md", "2"))
-	os.RemoveAll(b.path("vault")) // e.g. an unmounted disk
+	// An unmounted disk vanishes at once. (RemoveAll would unlink files one
+	// by one, and a stall between unlinks is a genuine delete of one file.)
+	if err := os.Rename(b.path("vault"), filepath.Join(filepath.Dir(b.home), "unmounted")); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(400 * time.Millisecond)
 	b.e.Rescan()
 	time.Sleep(200 * time.Millisecond)
@@ -614,4 +619,36 @@ func TestReconnectFromSameSideReplacesOldLink(t *testing.T) {
 	a.write("g.md", "x")
 	a.add("g.md")
 	eventually(t, "sync works", hasFile(b, "g.md", "x"))
+}
+
+// Regression: the root vanished while a peer's file was being applied, and
+// the apply re-created the root folder (D6 creates missing parents). The
+// root then looked present, so the files already there read as deletes.
+func TestApplyDoesNotRecreateAVanishedRoot(t *testing.T) {
+	a, b := newMachine(t, "a"), newMachine(t, "b")
+	a.write("vault/1.md", "1")
+	a.write("vault/2.md", "2")
+	a.add("vault")
+
+	var applies atomic.Int32
+	hook := func(machine, rel string, act Action) {
+		if machine == "b" && act == Apply && applies.Add(1) == 2 {
+			os.Rename(b.path("vault"), filepath.Join(filepath.Dir(b.home), "unmounted"))
+		}
+	}
+	afterDecide.Store(&hook)
+	defer afterDecide.Store(nil)
+
+	link(t, a, b)
+	eventually(t, "b noticed the vanished root", func() bool {
+		st := b.e.Status()
+		return len(st.Entries) == 1 && st.Entries[0].Missing
+	})
+	time.Sleep(300 * time.Millisecond)
+	if a.read("vault/1.md") != "1" || a.read("vault/2.md") != "2" {
+		t.Fatal("vanished root propagated as deletes")
+	}
+	if _, err := os.Stat(b.path("vault")); err == nil {
+		t.Fatal("the vanished root was re-created")
+	}
 }
