@@ -203,6 +203,7 @@ func (e *Engine) attach(p *peer) bool {
 	}
 	e.peers[p.id] = p
 	e.log.Info("peer up", "peer", p.name)
+	e.event(EvLinkUp, "", p.name, "")
 
 	ms := make([]proto.MachineRecord, 0, len(e.st.Machines))
 	for _, r := range e.st.Machines {
@@ -252,6 +253,7 @@ func (e *Engine) detach(p *peer) {
 	if e.peers[p.id] == p {
 		delete(e.peers, p.id)
 		e.log.Info("peer down", "peer", p.name)
+		e.event(EvLinkDown, "", p.name, "")
 	}
 }
 

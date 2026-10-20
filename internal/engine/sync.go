@@ -82,6 +82,16 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 	e.broadcast(&proto.Msg{Type: proto.Entries, Entries: []proto.EntryRecord{r}}, from)
 
 	wasActive := had && !old.Removed
+	by := ""
+	if from != nil {
+		by = from.name
+	}
+	switch {
+	case r.Removed && wasActive:
+		e.event(EvEntryRemoved, r.Path, by, "")
+	case !r.Removed && !wasActive:
+		e.event(EvEntryAdded, r.Path, by, "")
+	}
 	if r.Removed {
 		if wasActive {
 			e.untrack(r.Path)
@@ -271,6 +281,7 @@ func (e *Engine) refreshFile(entry, rel string) {
 		v := version.Version{Hash: version.Deleted, Vector: e.bump(fs.V.Vector), Parents: []string{fs.V.Hash},
 			Mtime: time.Now().UnixNano(), By: e.o.MachineID, ByName: e.o.Name}
 		e.log.Debug("local delete", "path", rel, "v", fmtVersion(&v))
+		e.event(EvDeleted, rel, "", "")
 		e.setCurrent(rel, v, false)
 		e.broadcast(&proto.Msg{Type: proto.Announce, Path: rel, Version: &v}, nil)
 	case fsx.Other:
@@ -282,6 +293,7 @@ func (e *Engine) refreshFile(entry, rel string) {
 func (e *Engine) markMissing(entry string) {
 	if !e.missing[entry] {
 		e.log.Warn("entry root vanished; not propagating deletes", "entry", entry)
+		e.event(EvError, entry, "", "the folder vanished here; deletes are not sent until it is back")
 	}
 	e.missing[entry] = true
 }
@@ -309,6 +321,9 @@ func (e *Engine) newLocalVersion(rel string, info fsx.Info, origin version.Origi
 	v := version.Version{Hash: info.Hash, Vector: e.bump(vec), Parents: parents, Mtime: info.Mtime,
 		Exec: info.Exec, By: e.o.MachineID, ByName: e.o.Name, Origin: origin}
 	e.log.Debug("local version", "path", rel, "v", fmtVersion(&v))
+	if origin == version.Edit { // not every file of a new entry
+		e.event(EvChanged, rel, "", "")
+	}
 	if data, err := os.ReadFile(e.abs(rel)); err == nil && fsx.Hash(data) == v.Hash {
 		e.keep(data)
 	}
@@ -374,6 +389,7 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	d := Decide(rel, e.current(rel), in, false)
 	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
 		e.log.Error("apply", "path", rel, "err", err)
+		e.event(EvError, rel, p.name, err.Error())
 	}
 }
 
@@ -426,6 +442,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 		if !errors.Is(err, fsx.ErrChanged) {
 			if err != nil {
 				e.log.Error("apply", "path", rel, "err", err)
+				e.event(EvError, rel, p.name, err.Error())
 			}
 			return
 		}
@@ -539,6 +556,11 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		}
 		e.setCurrent(rel, d.Result, true, anc...)
 		announce(d.Result)
+		if d.Content != nil {
+			e.event(EvMerged, rel, p.name, "")
+		} else {
+			e.event(EvReceived, rel, p.name, "")
+		}
 		return nil
 	case Delete:
 		fs := e.st.Files[rel]
@@ -559,6 +581,9 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		}
 		e.setCurrent(rel, d.Result, false, anc...)
 		announce(d.Result)
+		if info.Kind == fsx.Regular {
+			e.event(EvDeleted, rel, p.name, "")
+		}
 		return nil
 	}
 	return fmt.Errorf("unknown action %v", d.Action)
@@ -599,6 +624,11 @@ func (e *Engine) writeCopy(c Copy, data []byte) {
 	}
 	e.keep(data)
 	e.log.Warn("conflict", "kept", c.Path)
+	orig := c.Path
+	if cc, ok := ParseConflictName(c.Path); ok {
+		orig = cc.Original
+	}
+	e.event(EvConflict, c.Path, "", orig)
 	if entry, _, ok := e.entryFor(c.Path); ok && !e.ignored(entry, c.Path) {
 		if cur := e.current(c.Path); cur == nil || version.Compare(c.Version.Vector, cur.Vector) == version.After {
 			e.setCurrent(c.Path, c.Version, true)

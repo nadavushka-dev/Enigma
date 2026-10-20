@@ -91,8 +91,9 @@ func (e *Engine) Machines() []proto.MachineRecord {
 // sends its binary for the older side's platform, the older side installs
 // it. Nothing syncs. It always returns an error (wrapping ErrUpgrade) and
 // closes conn.
-func (e *Engine) upgradeLink(conn io.ReadWriteCloser, h *proto.HelloBody) error {
+func (e *Engine) upgradeLink(conn io.ReadWriteCloser, h *proto.HelloBody) (err error) {
 	defer conn.Close()
+	defer func() { e.post(func() { e.event(EvUpgrade, "", h.Name, err.Error()) }) }()
 	c, ok := buildinfo.Compare(e.o.Version, h.Version)
 	if !ok || c == 0 {
 		return fmt.Errorf("%w: %s runs %s, this machine %s, and neither is newer", ErrUpgrade, h.Name, h.Version, e.o.Version)

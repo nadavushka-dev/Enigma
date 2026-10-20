@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/config"
+	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
@@ -489,5 +490,34 @@ func TestClientWithoutDaemonExplains(t *testing.T) {
 	_, err := NewClient(config.Paths{Data: t.TempDir()}).Status()
 	if err == nil || !strings.Contains(err.Error(), "not running") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEventsLongPoll(t *testing.T) {
+	_, a, b := pair(t)
+	eventually(t, "linked", connected(a, "b"))
+	evs, err := b.client().Events(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last uint64
+	for _, ev := range evs {
+		last = ev.Seq
+	}
+	got := make(chan []engine.Event, 1)
+	go func() {
+		evs, _ := b.client().Events(last, 10*time.Second) // waits for news
+		got <- evs
+	}()
+	time.Sleep(200 * time.Millisecond)
+	a.write("f.md", "x")
+	a.client().Add(filepath.Join(a.home, "f.md"), nil)
+	select {
+	case evs := <-got:
+		if len(evs) == 0 || evs[0].Seq <= last {
+			t.Fatalf("events %+v", evs)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("long poll did not return on a new event")
 	}
 }

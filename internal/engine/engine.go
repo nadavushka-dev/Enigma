@@ -89,6 +89,8 @@ type Engine struct {
 	dirty     bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
+	events          []Event       // recent activity (SPEC §12.2)
+	evSeq           uint64
 }
 
 func New(o Options) (*Engine, error) {

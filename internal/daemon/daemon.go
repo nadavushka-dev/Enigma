@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -499,6 +500,30 @@ func (d *daemon) api() http.Handler {
 	mux.HandleFunc("POST /shutdown", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, struct{}{}, nil)
 		go d.stop()
+	})
+	mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) {
+		// Long poll: wait up to `wait` seconds for events after `after`.
+		after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
+		wait, _ := strconv.Atoi(r.URL.Query().Get("wait"))
+		deadline := time.Now().Add(time.Duration(min(max(wait, 0), 20)) * time.Second)
+		for {
+			evs := d.eng.Events(after)
+			if len(evs) > 0 || !time.Now().Before(deadline) {
+				if evs == nil {
+					evs = []engine.Event{}
+				}
+				reply(w, evs, nil)
+				return
+			}
+			select {
+			case <-r.Context().Done():
+				return
+			case <-d.ctx.Done():
+				reply(w, []engine.Event{}, nil)
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
 	})
 	mux.HandleFunc("GET /machines", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, d.eng.Machines(), nil)

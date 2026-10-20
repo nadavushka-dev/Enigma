@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/config"
+	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
@@ -45,6 +46,13 @@ func (c *Client) Remove(abs string) error {
 
 // Reload makes the daemon re-read peers.json.
 func (c *Client) Reload() error { return c.do(http.MethodPost, "/reload", nil, nil) }
+
+// Events returns the daemon's events after seq, waiting up to wait (at
+// most 20s) for one to happen.
+func (c *Client) Events(after uint64, wait time.Duration) ([]engine.Event, error) {
+	var evs []engine.Event
+	return evs, c.do(http.MethodGet, fmt.Sprintf("/events?after=%d&wait=%d", after, int(wait.Seconds())), nil, &evs)
+}
 
 // Restart makes the daemon re-execute its binary.
 func (c *Client) Restart() error { return c.do(http.MethodPost, "/restart", nil, nil) }
