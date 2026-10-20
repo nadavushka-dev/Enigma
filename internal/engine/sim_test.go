@@ -18,8 +18,10 @@ import (
 // TestSimulation drives random edits, deletes, link cuts and restarts on
 // three machines, then checks the invariants of SPEC §13:
 //   - convergence: once quiet, every machine has identical files;
-//   - no silent loss: every content Enigma saw and nobody knowingly replaced
+//   - no silent loss: every line Enigma saw and nobody knowingly replaced
 //     still exists somewhere (a file on any machine, a trash or a backup).
+//     Lines, not whole contents, so a clean merge counts as keeping both
+//     edits (SPEC §7 step 3).
 //
 // ENIGMA_SIM_SEEDS raises the number of seeds (CI). A failing seed is
 // printed; pin it in regressionSeeds so it is checked forever.
@@ -43,8 +45,8 @@ type sim struct {
 	trace    *syncBuffer
 	ms       []*machine
 	cuts     map[[2]int]func()
-	seen     map[string]bool // contents Enigma has seen
-	replaced map[string]bool // contents a user knowingly overwrote or deleted
+	seen     map[string]bool // lines Enigma has seen
+	replaced map[string]bool // lines a user knowingly overwrote or deleted
 }
 
 func simulate(t *testing.T, seed int64, steps int) {
@@ -69,9 +71,14 @@ func simulate(t *testing.T, seed int64, steps int) {
 		s.ms = append(s.ms, newMachine(t, n, noWatch))
 	}
 	names := []string{"sim/one.md", "sim/two.md", "sim/deep/three.md", "sim/four.txt"}
+	const notes = "sim/notes.md"
 	s.userWrite(0, names[0], "initial")
+	s.userWrite(0, notes, "n0\nn1\nn2\nn3\nn4\nn5\n")
 	s.ms[0].add("sim")
 	s.linkAll()
+	// Line edits of a multi-line file make mergeable conflicts. They draw
+	// from their own stream so pinned seeds keep their other operations.
+	lineRng := rand.New(rand.NewSource(seed ^ 0x5eed))
 
 	for step := 0; step < steps; step++ {
 		m := rng.Intn(len(s.ms))
@@ -87,6 +94,10 @@ func simulate(t *testing.T, seed int64, steps int) {
 			}
 		default:
 			s.restart(m)
+		}
+		if lineRng.Intn(3) == 0 {
+			m := lineRng.Intn(len(s.ms))
+			s.userEditLine(m, notes, lineRng.Intn(6), fmt.Sprintf("%s-line-%d-%d", s.ms[m].name, seed, step))
 		}
 		if rng.Intn(3) == 0 {
 			time.Sleep(time.Duration(rng.Intn(20)) * time.Millisecond)
@@ -131,13 +142,13 @@ func (s *sim) userWrite(m int, rel, content string) {
 		old := mc.read(rel)
 		s.logf("write %s %s = %q (was %q)", mc.name, rel, content, old)
 		if old != "<missing>" {
-			s.replaced[old] = true
+			s.mark(s.replaced, old)
 		}
 		p := mc.path(rel)
 		os.MkdirAll(filepath.Dir(p), 0o755)
 		os.WriteFile(p, []byte(content), 0o644)
 		mc.e.rescanAll()
-		s.seen[content] = true
+		s.mark(s.seen, content)
 	})
 }
 
@@ -149,10 +160,38 @@ func (s *sim) userDelete(m int, rel string) {
 			return
 		}
 		s.logf("delete %s %s (was %q)", mc.name, rel, old)
-		s.replaced[old] = true
+		s.mark(s.replaced, old)
 		os.Remove(mc.path(rel))
 		mc.e.rescanAll()
 	})
+}
+
+// userEditLine replaces line i of rel, as an editor would.
+func (s *sim) userEditLine(m int, rel string, i int, line string) {
+	mc := s.ms[m]
+	mc.e.do(func() {
+		old := mc.read(rel)
+		if old == "<missing>" {
+			return
+		}
+		ls := strings.Split(strings.TrimSuffix(old, "\n"), "\n")
+		if i >= len(ls) {
+			ls = append(ls, line)
+		} else {
+			s.replaced[ls[i]] = true
+			ls[i] = line
+		}
+		s.logf("edit line %s %s:%d = %q", mc.name, rel, i, line)
+		os.WriteFile(mc.path(rel), []byte(strings.Join(ls, "\n")+"\n"), 0o644)
+		mc.e.rescanAll()
+		s.seen[line] = true
+	})
+}
+
+func (s *sim) mark(set map[string]bool, content string) {
+	for _, l := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
+		set[l] = true
+	}
 }
 
 func (s *sim) toggle(i, j int) {
@@ -245,7 +284,7 @@ func (s *sim) checkNoLoss(seed int64) {
 			filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
 				if err == nil && !fi.IsDir() {
 					b, _ := os.ReadFile(p)
-					have[string(b)] = true
+					s.mark(have, string(b))
 				}
 				return nil
 			})
@@ -253,7 +292,7 @@ func (s *sim) checkNoLoss(seed int64) {
 	}
 	for c := range s.seen {
 		if !s.replaced[c] && !have[c] {
-			s.t.Errorf("seed %d: content %q was lost", seed, c)
+			s.t.Errorf("seed %d: line %q was lost", seed, c)
 		}
 	}
 }

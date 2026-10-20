@@ -214,7 +214,8 @@ When two versions are concurrent (neither vector is newer):
    - Overlapping or touching hunks: go to step 4.
 4. **Fallback (binary file, no base, or overlapping edits):**
    - The newer version by mtime wins in place; on equal mtimes, the higher
-     machine ID wins.
+     machine ID wins, then the higher content hash (a total order, so two
+     machines never each keep their own).
    - The losing content is written as a sibling:
      `<stem>.conflict-<machine>-<YYYYMMDD-HHMMSS>-<hash6><ext>`, e.g.
      `CLAUDE.conflict-devbox-20261020-153012-1a2b3c.md`.

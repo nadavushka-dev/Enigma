@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/fsx"
+	"github.com/nadavushka-dev/enigma/internal/merge"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/version"
 )
@@ -415,7 +416,11 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 	}
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
 		e.refreshFile(entry, rel)
-		d := Decide(rel, e.current(rel), in, true)
+		cur := e.current(rel)
+		d := Decide(rel, cur, in, true)
+		if m, ok := e.tryMerge(rel, cur, in, anc, content); ok {
+			d = DecideMerged(rel, cur, in, m)
+		}
 		err := e.execute(p, entry, rel, in, anc, content, d)
 		if !errors.Is(err, fsx.ErrChanged) {
 			if err != nil {
@@ -424,6 +429,40 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 			return
 		}
 	}
+}
+
+// tryMerge three-way merges concurrent text edits on their common base
+// (SPEC §7 step 3). It fails, sending Decide to the fallback, when there is
+// no base, its content is not in history, a side is not text, or the edits
+// overlap.
+func (e *Engine) tryMerge(rel string, cur *version.Version, in version.Version, anc []version.Node, content []byte) (Merged, bool) {
+	if cur == nil || cur.IsDeleted() || in.IsDeleted() || cur.Hash == in.Hash ||
+		version.Compare(in.Vector, cur.Vector) != version.Concurrent {
+		return Merged{}, false
+	}
+	fs := e.st.Files[rel]
+	base, ok := version.CommonBase(version.Walk(fs.Anc, cur.Hash, version.AncestryLimit), anc)
+	if !ok {
+		return Merged{}, false
+	}
+	baseData, ok := e.hist.Get(base)
+	if !ok {
+		e.log.Debug("merge base not in history", "path", rel, "base", base)
+		return Merged{}, false
+	}
+	local, ok := e.hist.Get(cur.Hash)
+	if !ok {
+		return Merged{}, false
+	}
+	if !merge.IsText(baseData) || !merge.IsText(local) || !merge.IsText(content) {
+		return Merged{}, false
+	}
+	out, ok := merge.Merge3(baseData, local, content)
+	if !ok {
+		return Merged{}, false
+	}
+	e.log.Info("merged concurrent edits", "path", rel)
+	return Merged{Hash: fsx.Hash(out), Content: out}, true
 }
 
 func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []version.Node, content []byte, d Decision) error {
@@ -484,6 +523,10 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			if d.Copy != nil {
 				e.writeCopy(*d.Copy, local)
 			}
+		}
+		if d.Content != nil {
+			content = d.Content
+			e.keep(content)
 		}
 		opts := fsx.WriteOpts{Mtime: d.Result.Mtime, Exec: d.Result.Exec, ExpectAbsent: !onDisk, ExpectHash: basis}
 		if _, err := fsx.Write(abs, content, opts); err != nil {

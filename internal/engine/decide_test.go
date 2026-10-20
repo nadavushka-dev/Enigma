@@ -261,3 +261,82 @@ func TestD4_CopiesFromSameMachineSameSecondDoNotCollide(t *testing.T) {
 		t.Fatalf("copy paths collide: %+v / %+v", d1.Copy, d2.Copy)
 	}
 }
+
+// ---- §7 step 3: merged concurrent edits --------------------------------------
+
+func TestMerge_CleanMergeIsAppliedAsOneVersion(t *testing.T) {
+	a := ver("ha", V{"a": 2, "b": 1}, "a", 100)
+	b := ver("hb", V{"a": 1, "b": 2}, "b", 200)
+	m := Merged{Hash: "hm", Content: []byte("merged")}
+	d := DecideMerged("f", &a, b, m)
+	mustAction(t, d, Apply)
+	if d.Copy != nil {
+		t.Fatal("a clean merge makes no conflict copy")
+	}
+	if string(d.Content) != "merged" || d.Result.Hash != "hm" {
+		t.Fatalf("content %q result %+v", d.Content, d.Result)
+	}
+	if version.Compare(d.Result.Vector, V{"a": 2, "b": 2}) != version.Equal {
+		t.Fatalf("vector %v: merged, with no extra counter", d.Result.Vector)
+	}
+	if d.Result.Mtime != 200 || d.Result.By != "b" || d.Result.Origin != version.Edit {
+		t.Fatalf("result %+v: later mtime, author of the step-4 winner", d.Result)
+	}
+	if len(d.Result.Parents) != 2 || d.Result.Parents[0] != "ha" || d.Result.Parents[1] != "hb" {
+		t.Fatalf("parents %v", d.Result.Parents)
+	}
+}
+
+func TestMerge_BothMachinesMakeTheSameVersion(t *testing.T) {
+	a := ver("ha", V{"a": 2, "b": 1}, "a", 100)
+	b := ver("hb", V{"a": 1, "b": 2}, "b", 100)
+	b.Exec = true
+	m := Merged{Hash: "hm", Content: []byte("merged")}
+	da, db := DecideMerged("f", &a, b, m), DecideMerged("f", &b, a, m)
+	ra, rb := da.Result, db.Result
+	if ra.Hash != rb.Hash || ra.Mtime != rb.Mtime || ra.By != rb.By || ra.Exec != rb.Exec ||
+		version.Compare(ra.Vector, rb.Vector) != version.Equal {
+		t.Fatalf("machines diverge:\n%+v\n%+v", ra, rb)
+	}
+}
+
+func TestMerge_ResultEqualToLocalIsJustRecorded(t *testing.T) {
+	a := ver("ha", V{"a": 2, "b": 1}, "a", 300)
+	b := ver("hb", V{"a": 1, "b": 2}, "b", 100)
+	d := DecideMerged("f", &a, b, Merged{Hash: "ha", Content: []byte("same as a")})
+	mustAction(t, d, Record)
+	if d.Result.Hash != "ha" || version.Compare(d.Result.Vector, V{"a": 2, "b": 2}) != version.Equal {
+		t.Fatalf("result %+v", d.Result)
+	}
+}
+
+func TestMerge_FirstAddAndDeleteRulesComeFirst(t *testing.T) {
+	m := Merged{Hash: "hm", Content: []byte("merged")}
+	seed := ver("hs", V{"a": 1}, "a", 1)
+	seed.Origin = version.Seed
+	pre := ver("hp", V{"b": 1}, "b", 2)
+	pre.Origin = version.Preexisting
+	if d := DecideMerged("f", &pre, seed, m); d.Result.Hash != "hs" || !d.Backup {
+		t.Fatalf("D7: seed must win over a preexisting copy, got %+v", d)
+	}
+	edit := ver("he", V{"a": 2, "b": 1}, "a", 1)
+	del := tomb(V{"a": 1, "b": 2}, "b")
+	if d := DecideMerged("f", &edit, del, m); d.Result.Hash != "he" {
+		t.Fatalf("D8: the edit must beat the delete, got %+v", d)
+	}
+}
+
+// Regression: one machine merged and the other fell back (base missing), so
+// the two versions had the same vector, mtime and author. With no tie-break
+// left, each side kept its own and copied the other's forever.
+func TestD4_FullTieBreaksOnHash(t *testing.T) {
+	x := ver("hx", V{"a": 2, "b": 1}, "b", 100)
+	y := ver("hy", V{"a": 2, "b": 1}, "b", 100)
+	dx, dy := Decide("f", &x, y, true), Decide("f", &y, x, true)
+	if dx.Result.Hash != dy.Result.Hash || dx.Result.Hash != "hy" {
+		t.Fatalf("winners differ: %q vs %q", dx.Result.Hash, dy.Result.Hash)
+	}
+	if dx.Copy == nil || dy.Copy == nil || dx.Copy.Path != dy.Copy.Path {
+		t.Fatalf("copies differ: %+v / %+v", dx.Copy, dy.Copy)
+	}
+}

@@ -34,10 +34,17 @@ type Copy struct {
 }
 
 type Decision struct {
-	Action Action
-	Result version.Version // the new current version (Record/Apply/Delete)
-	Backup bool            // back up the local content first (D7, D13)
-	Copy   *Copy
+	Action  Action
+	Result  version.Version // the new current version (Record/Apply/Delete)
+	Backup  bool            // back up the local content first (D7, D13)
+	Copy    *Copy
+	Content []byte // Apply writes this (a merge result) instead of the incoming content
+}
+
+// Merged is a clean three-way merge of the local and incoming content.
+type Merged struct {
+	Hash    string
+	Content []byte
 }
 
 // Decide is the whole sync decision table. cur is this machine's current
@@ -46,6 +53,17 @@ type Decision struct {
 // deterministic: two machines deciding about the same pair of versions reach
 // the same Result and Copy, so a conflict is resolved once (SPEC §7).
 func Decide(p string, cur *version.Version, in version.Version, haveContent bool) Decision {
+	return decide(p, cur, in, haveContent, nil)
+}
+
+// DecideMerged is Decide with the incoming content at hand and a clean merge
+// of it with the local content (SPEC §7 step 3). The merge is used only where
+// the fallback would otherwise make a conflict copy.
+func DecideMerged(p string, cur *version.Version, in version.Version, m Merged) Decision {
+	return decide(p, cur, in, true, &m)
+}
+
+func decide(p string, cur *version.Version, in version.Version, haveContent bool, merged *Merged) Decision {
 	need := func(d Decision) Decision {
 		if !haveContent {
 			return Decision{Action: Fetch}
@@ -104,15 +122,25 @@ func Decide(p string, cur *version.Version, in version.Version, haveContent bool
 		return Decision{Action: Record, Result: resolved(*cur)}
 	}
 
-	// D4 fallback (no merge yet): the newer edit wins, the other is kept.
 	if !haveContent {
 		return Decision{Action: Fetch}
 	}
-	incomingWins := in.Mtime > cur.Mtime || (in.Mtime == cur.Mtime && in.By > cur.By)
+	incomingWins := wins(in, *cur)
 	winner, loser := *cur, in
 	if incomingWins {
 		winner, loser = in, *cur
 	}
+	if merged != nil {
+		// Only data both machines have, so both make this exact version.
+		w := resolved(winner)
+		w.Hash, w.Mtime, w.Origin = merged.Hash, max(cur.Mtime, in.Mtime), version.Edit
+		if sameContent(w, *cur) {
+			return Decision{Action: Record, Result: w}
+		}
+		return Decision{Action: Apply, Result: w, Content: merged.Content}
+	}
+
+	// D4 fallback: the newer edit wins, the other is kept as a copy.
 	cv := loser
 	cv.Vector = version.Merge(cur.Vector, in.Vector)
 	cv.Parents, cv.Origin = nil, version.Edit
@@ -126,6 +154,19 @@ func Decide(p string, cur *version.Version, in version.Version, haveContent bool
 		d.Action = Record
 	}
 	return d
+}
+
+// wins is the step-4 order: later mtime, then higher machine ID, then higher
+// hash. It must be total: two versions with equal vectors, mtimes and
+// authors (one machine merged, the other could not) must still rank.
+func wins(a, b version.Version) bool {
+	if a.Mtime != b.Mtime {
+		return a.Mtime > b.Mtime
+	}
+	if a.By != b.By {
+		return a.By > b.By
+	}
+	return a.Hash > b.Hash
 }
 
 func sameContent(a, b version.Version) bool {
