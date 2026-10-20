@@ -1,0 +1,202 @@
+package tui
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/nadavushka-dev/enigma/internal/daemon"
+	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/proto"
+)
+
+// fake is a Backend for tests: a real temp home, canned daemon state, and
+// a record of every call.
+type fake struct {
+	mu       sync.Mutex
+	home     string
+	status   daemon.StatusReport
+	machines []proto.MachineRecord
+	hosts    []string
+	events   []engine.Event
+	down     error // Status fails with this
+	calls    []string
+	steps    []string // what AddMachine/RemoveMachine print
+	opErr    error
+}
+
+func newFake(t *testing.T) *fake {
+	home := t.TempDir()
+	return &fake{home: home, status: daemon.StatusReport{Machine: "mac", MachineID: "id-mac", Version: "v1.0.0"},
+		machines: []proto.MachineRecord{{ID: "id-mac", Name: "mac"}}}
+}
+
+func (f *fake) call(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
+func (f *fake) Calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+func (f *fake) Home() string { return f.home }
+
+func (f *fake) Status() (daemon.StatusReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down != nil {
+		return daemon.StatusReport{}, f.down
+	}
+	return f.status, nil
+}
+
+func (f *fake) Machines() ([]proto.MachineRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.machines, nil
+}
+
+func (f *fake) Hosts() ([]string, error) { return f.hosts, nil }
+func (f *fake) Add(abs string) error     { f.call("add " + abs); return f.opErr }
+func (f *fake) Remove(abs string) error  { f.call("remove " + abs); return f.opErr }
+
+func (f *fake) AddMachine(ctx context.Context, alias string, out io.Writer) error {
+	f.call("add-machine " + alias)
+	for _, s := range f.steps {
+		fmt.Fprintln(out, s)
+	}
+	return f.opErr
+}
+
+func (f *fake) RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error {
+	f.call(fmt.Sprintf("remove-machine %s uninstall=%v", name, uninstall))
+	for _, s := range f.steps {
+		fmt.Fprintln(out, s)
+	}
+	return f.opErr
+}
+
+func (f *fake) Events(after uint64, wait time.Duration) ([]engine.Event, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []engine.Event
+	for _, ev := range f.events {
+		if ev.Seq > after {
+			out = append(out, ev)
+		}
+	}
+	return out, nil
+}
+
+func (f *fake) ReadFile(rel string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(f.home, filepath.FromSlash(rel)))
+}
+
+func (f *fake) write(t *testing.T, rel, content string) {
+	t.Helper()
+	p := filepath.Join(f.home, filepath.FromSlash(rel))
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ---- driving a Model ---------------------------------------------------------------
+
+// drive runs msg through m and every command it returns, recursively
+// (ticks and long polls excluded), so a test sees the settled result.
+func drive(t *testing.T, m *Model, msgs ...tea.Msg) {
+	t.Helper()
+	queue := msgs
+	for steps := 0; len(queue) > 0; steps++ {
+		if steps > 500 {
+			t.Fatal("drive: too many steps")
+		}
+		msg := queue[0]
+		queue = queue[1:]
+		_, cmd := m.Update(msg)
+		queue = append(queue, run(cmd)...)
+	}
+}
+
+// run executes cmd and the commands it batches, skipping slow ones.
+func run(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	var msg tea.Msg
+	select {
+	case msg = <-done:
+	case <-time.After(300 * time.Millisecond): // a tick or a long poll
+		return nil
+	}
+	switch msg := msg.(type) {
+	case tea.BatchMsg:
+		var out []tea.Msg
+		for _, c := range msg {
+			out = append(out, run(c)...)
+		}
+		return out
+	case nil, tickMsg, pollMsg:
+		return nil
+	case EventsMsg:
+		if len(msg.Events) == 0 && msg.Err == nil {
+			return nil // an empty poll would only poll again
+		}
+	}
+	return []tea.Msg{msg}
+}
+
+func key(k string) tea.KeyMsg {
+	switch k {
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "ctrl+c":
+		return tea.KeyMsg{Type: tea.KeyCtrlC}
+	case "ctrl+d":
+		return tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "ctrl+u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+}
+
+// started is a Model over f, sized and with its first status loaded.
+func started(t *testing.T, f *fake) *Model {
+	t.Helper()
+	m := New(f)
+	drive(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	drive(t, m, m.fetchStatus()())
+	return m
+}
+
+func viewHas(t *testing.T, m *Model, wants ...string) {
+	t.Helper()
+	v := m.View()
+	for _, w := range wants {
+		if !strings.Contains(v, w) {
+			t.Fatalf("view missing %q:\n%s", w, v)
+		}
+	}
+}
+
+var errDown = errors.New("the enigma daemon is not running (start it with `enigma service install`)")

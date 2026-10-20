@@ -1,0 +1,69 @@
+package tui
+
+import (
+	"context"
+	"io"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/nadavushka-dev/enigma/internal/config"
+	"github.com/nadavushka-dev/enigma/internal/daemon"
+	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/sshconfig"
+)
+
+// Backend is everything the TUI does to the world. The live one talks to
+// the local daemon and runs group operations over ssh; tests use a fake.
+type Backend interface {
+	Home() string
+	Status() (daemon.StatusReport, error)
+	Machines() ([]proto.MachineRecord, error)
+	Hosts() ([]string, error) // aliases in ~/.ssh/config
+	Add(abs string) error     // start syncing a file or folder
+	Remove(abs string) error  // stop syncing an entry
+	AddMachine(ctx context.Context, alias string, out io.Writer) error
+	RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error
+	Events(after uint64, wait time.Duration) ([]engine.Event, error)
+	ReadFile(rel string) ([]byte, error) // a file under ~
+}
+
+// Live is the real Backend.
+type Live struct {
+	Paths config.Paths
+	home  string
+	cl    *daemon.Client
+}
+
+func NewLive(p config.Paths) (*Live, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return &Live{Paths: p, home: home, cl: daemon.NewClient(p)}, nil
+}
+
+func (l *Live) Home() string                             { return l.home }
+func (l *Live) Status() (daemon.StatusReport, error)     { return l.cl.Status() }
+func (l *Live) Machines() ([]proto.MachineRecord, error) { return group.Members(l.cl) }
+func (l *Live) Hosts() ([]string, error)                 { return sshconfig.Hosts(l.home) }
+func (l *Live) Add(abs string) error                     { return l.cl.Add(abs, nil) }
+func (l *Live) Remove(abs string) error                  { return l.cl.Remove(abs) }
+
+func (l *Live) AddMachine(ctx context.Context, alias string, out io.Writer) error {
+	return group.Add(ctx, l.cl, l.Paths, alias, "", out)
+}
+
+func (l *Live) RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error {
+	return group.Remove(ctx, l.cl, name, uninstall, out)
+}
+
+func (l *Live) Events(after uint64, wait time.Duration) ([]engine.Event, error) {
+	return l.cl.Events(after, wait)
+}
+
+func (l *Live) ReadFile(rel string) ([]byte, error) {
+	return os.ReadFile(filepath.Join(l.home, filepath.FromSlash(rel)))
+}

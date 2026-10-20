@@ -58,6 +58,9 @@ func main() {
 }
 
 func run(args []string, c *ctx) int {
+	if len(args) == 0 && c.stdout == os.Stdout && isTerminal(os.Stdout) && isTerminal(os.Stdin) {
+		args = []string{"tui"} // SPEC §12.1: bare enigma in a terminal
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		usage(c.stdout)
 		return 0

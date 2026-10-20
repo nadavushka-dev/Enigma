@@ -664,3 +664,14 @@ func TestE2E_UpdateMovesToTheLatestReleaseAndRestartsTheDaemon(t *testing.T) {
 		t.Fatalf("second update:\n%s", out)
 	}
 }
+
+func TestE2E_TUINeedsATerminal(t *testing.T) {
+	w := newWorld(t)
+	a := w.host("a")
+	if out, code := a.run("tui"); code == 0 || !strings.Contains(out, "needs a terminal") {
+		t.Fatalf("tui without a terminal: %d %s", code, out)
+	}
+	if out, code := a.run(); code != 0 || !strings.Contains(out, "Usage") {
+		t.Fatalf("bare enigma in a pipe prints help: %d %s", code, out)
+	}
+}
