@@ -19,7 +19,7 @@ func cmdService(c *ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	o, err := service.Defaults(filepath.Join(p.Data, "enigma.log"))
+	o, err := service.Defaults(filepath.Join(p.Data, "enigma.log"), filepath.Join(p.Data, "daemon.out"))
 	if err != nil {
 		return err
 	}

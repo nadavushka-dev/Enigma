@@ -20,8 +20,8 @@ func opts(t *testing.T, goos string) (Options, *fakeRunner) {
 	home := t.TempDir()
 	r := &fakeRunner{}
 	return Options{GOOS: goos, Home: home, UID: 501, Bin: "/opt/en & co/enigma",
-		LogPath: filepath.Join(home, "data", "enigma.log"),
-		Env:     map[string]string{"ENIGMA_HOME": "/tmp/eh"}, Runner: r}, r
+		LogPath: filepath.Join(home, "data", "enigma.log"), CrashLogPath: filepath.Join(home, "data", "daemon.out"),
+		Env: map[string]string{"ENIGMA_HOME": "/tmp/eh"}, Runner: r}, r
 }
 
 func TestPlistContent(t *testing.T) {
@@ -29,11 +29,12 @@ func TestPlistContent(t *testing.T) {
 	p := Plist(o)
 	for _, want := range []string{
 		"<string>dev.enigma.daemon</string>",
-		"<string>/opt/en &amp; co/enigma</string><string>daemon</string>", // XML-escaped
+		"<string>/opt/en &amp; co/enigma</string><string>daemon</string><string>--log</string><string>" + o.LogPath + "</string>", // XML-escaped
 		"<key>RunAtLoad</key><true/>",
 		"<key>KeepAlive</key><true/>",
 		"<key>ENIGMA_HOME</key><string>/tmp/eh</string>",
-		"<key>StandardErrorPath</key><string>" + o.LogPath + "</string>",
+		// The daemon rotates its own log; launchd only catches crashes.
+		"<key>StandardErrorPath</key><string>" + o.CrashLogPath + "</string>",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("plist missing %q:\n%s", want, p)
@@ -45,7 +46,8 @@ func TestUnitContent(t *testing.T) {
 	o, _ := opts(t, "linux")
 	u := Unit(o)
 	for _, want := range []string{
-		"ExecStart=\"/opt/en & co/enigma\" daemon",
+		"ExecStart=\"/opt/en & co/enigma\" daemon --log \"" + o.LogPath + "\"",
+		"StandardError=append:" + o.CrashLogPath,
 		"Restart=always",
 		"Environment=\"ENIGMA_HOME=/tmp/eh\"",
 		"WantedBy=default.target",

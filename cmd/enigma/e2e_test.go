@@ -282,3 +282,20 @@ func TestE2E_JoinRefusesAnotherGroup(t *testing.T) {
 		t.Fatalf("join across groups: %d %s", code, out)
 	}
 }
+
+func TestE2E_DaemonWritesItsOwnLog(t *testing.T) {
+	w := newWorld(t)
+	a := w.host("a")
+	a.must("init", "--name", "a")
+	logPath := filepath.Join(a.eh, "enigma.log")
+	cmd := exec.Command(bin, "daemon", "--log", logPath)
+	cmd.Env, cmd.Dir = a.env(), a.home
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Signal(os.Interrupt); cmd.Wait() }()
+	eventuallyT(t, "log written", func() bool {
+		b, _ := os.ReadFile(logPath)
+		return strings.Contains(string(b), "daemon started")
+	})
+}

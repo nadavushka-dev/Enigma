@@ -38,13 +38,14 @@ type Options struct {
 	XDGConfigHome string
 	UID           int
 	Bin           string            // absolute path of the enigma binary
-	LogPath       string            // daemon stdout/stderr
+	LogPath       string            // the daemon's own rotated log (--log)
+	CrashLogPath  string            // the service manager's capture of stdout/stderr: crashes, panics
 	Env           map[string]string // passed to the daemon (e.g. ENIGMA_HOME)
 	Runner        Runner
 }
 
 // Defaults fills Options for the current machine and binary.
-func Defaults(logPath string) (Options, error) {
+func Defaults(logPath, crashLogPath string) (Options, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Options{}, err
@@ -63,7 +64,7 @@ func Defaults(logPath string) (Options, error) {
 		}
 	}
 	return Options{GOOS: runtime.GOOS, Home: home, XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"), UID: os.Getuid(),
-		Bin: bin, LogPath: logPath, Env: env, Runner: execRunner{}}, nil
+		Bin: bin, LogPath: logPath, CrashLogPath: crashLogPath, Env: env, Runner: execRunner{}}, nil
 }
 
 // File is where the service definition lives.
@@ -140,7 +141,7 @@ func Plist(o Options) string {
 <dict>
 	<key>Label</key><string>%s</string>
 	<key>ProgramArguments</key>
-	<array><string>%s</string><string>daemon</string></array>
+	<array><string>%s</string><string>daemon</string><string>--log</string><string>%s</string></array>
 %s	<key>RunAtLoad</key><true/>
 	<key>KeepAlive</key><true/>
 	<key>ThrottleInterval</key><integer>10</integer>
@@ -148,7 +149,7 @@ func Plist(o Options) string {
 	<key>StandardErrorPath</key><string>%s</string>
 </dict>
 </plist>
-`, label, xmlEscape(o.Bin), env.String(), xmlEscape(o.LogPath), xmlEscape(o.LogPath))
+`, label, xmlEscape(o.Bin), xmlEscape(o.LogPath), env.String(), xmlEscape(o.CrashLogPath), xmlEscape(o.CrashLogPath))
 }
 
 func Unit(o Options) string {
@@ -161,7 +162,7 @@ Description=Enigma file sync daemon
 After=network-online.target
 
 [Service]
-ExecStart=%s daemon
+ExecStart=%s daemon --log %s
 %sRestart=always
 RestartSec=5
 StandardOutput=append:%s
@@ -169,7 +170,7 @@ StandardError=append:%s
 
 [Install]
 WantedBy=default.target
-`, strconv.Quote(o.Bin), env.String(), o.LogPath, o.LogPath)
+`, strconv.Quote(o.Bin), strconv.Quote(o.LogPath), env.String(), o.CrashLogPath, o.CrashLogPath)
 }
 
 func sortedKeys(m map[string]string) []string {
