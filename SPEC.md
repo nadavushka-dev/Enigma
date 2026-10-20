@@ -107,9 +107,10 @@ machines, in real time, over ssh.
   The first that connects is remembered.
 - **Reconnect** with backoff of 1 s doubling up to 60 s. Every reconnect
   starts with a catch-up (§6.5).
-- **Handshake:** `HELLO {group_id, machine_id, proto_version, enigma_version}`.
-  A different group or an incompatible protocol version closes the link with
-  a clear error, shown in status.
+- **Handshake:** `HELLO {group_id, machine_id, proto_version, enigma_version, platform}`.
+  A different group or a removed machine closes the link with a clear
+  error, shown in status. A different Enigma version turns the link into
+  an upgrade (§11).
 
 ## 6. Sync model
 
@@ -291,7 +292,8 @@ as a normal edit. Restore never overwrites an existing file.
 | `~/.local/share/enigma/backups/` | First-add backups (§9, D13) |
 | `~/.local/share/enigma/enigma.sock` | API socket, used by the CLI and TUI (HTTP + JSON). |
 | `~/.local/share/enigma/peer.sock` | Peer socket: `enigma bridge` relays an incoming ssh link here. |
-| `~/.local/share/enigma/identity.json`, `peers.json` | This machine's ID and group ID, and the peers it dials. |
+| `~/.local/share/enigma/identity.json` | This machine's ID, group ID and name. |
+| `~/.local/share/enigma/bin/` | `enigma-<os>-<arch>` binaries for adding and upgrading other platforms (`make dist`). |
 
 Sockets: macOS limits socket paths to 104 bytes, so a longer path falls
 back to `/tmp/enigma-<uid>-<hash>-<name>.sock`. The CLI and the bridge find
@@ -307,47 +309,71 @@ an online machine. Otherwise it could bring deleted files back.
 
 ## 11. Machines
 
-**Until milestone 4 (stopgap):** `enigma init` creates the group on the
-first machine. `enigma join <ssh-alias>` on another machine reads the group
-ID from that machine over ssh (`enigma identity`), adopts it, and records
-the alias as a peer to dial. Each machine dials only the peers it recorded;
-a link opened by either side serves both, and relaying (§6.3) covers
-missing pairs. `machine add` (below) replaces this.
+**Machine records** are part of the replicated group state (§6.4), one per
+member, last writer wins like entries:
+`{machine_id, name, alias, target, bin, clock, by, removed}`.
+- `alias`: the ssh alias it was added under; `target`:
+  `ssh://user@hostname:port` captured with `ssh -G` on the adding machine;
+  `bin`: path of its enigma binary.
+- Every machine dials every other member, resolving the target as in §5.
+- The first machine (from `init`) was never added, so it has no target: it
+  dials the others, and one direction per pair is enough (§5).
+  `enigma machine alias` overrides this locally.
 
 **Creating the group:** `enigma init` on the first machine creates the group
 (random `group_id`) with that machine as its only member.
 
 **Adding a machine:** `enigma machine add <ssh-alias>`, from any member.
 Every step is printed with the exact command it runs (D9):
-1. `ssh <alias> uname -sm` to detect the OS and CPU; unsupported platforms stop here.
+1. `ssh <alias> uname -sm` to detect the OS and CPU; unsupported platforms
+   stop here.
 2. Get a binary for that platform: this binary itself if it matches,
-   otherwise the matching release asset from `nadavushka-dev/enigma`,
-   checksum-verified (D17). Before releases exist, it cross-compiles if Go
-   is installed locally.
+   otherwise `<data>/bin/enigma-<os>-<arch>` (filled by `make dist` before
+   releases exist), otherwise the matching release asset from
+   `nadavushka-dev/enigma`, checksum-verified (D17, from M6). If none is
+   found, stop and say what to run.
 3. Copy it to `~/.local/bin/enigma` on the remote, with a temp name and
    rename.
-4. Run `enigma service install` on the remote (launchd or systemd user
-   unit), which starts the daemon.
-5. Run `enigma join` on the remote, passing the group state over stdin, so
-   the remote's daemon joins the group.
-6. Record the machine's connection info (§5) in group state. Every machine
-   then links to it, and it receives all entries (first-add rules apply).
+4. Run `enigma join` on the remote, passing the group (ID, name, member
+   records) over stdin. It creates the remote's identity and prints its
+   machine ID.
+5. Record the machine (§11 records) in group state through the local
+   daemon. Every machine then links to it, and it receives all entries
+   (first-add rules apply).
+6. Run `enigma service install` on the remote, which starts the daemon.
+   - Linux: the systemd user unit, plus `loginctl enable-linger` so it keeps
+     running after logout. Without a systemd user session (containers, WSL,
+     minimal servers) the daemon is started in the background instead, with
+     a warning that it will not survive a reboot.
 7. **Connectivity check:** the new machine reports which peers it could
    link to. Missing pairs are shown as warnings (D1 is assumed, not
    guaranteed).
 
-**Removing a machine:** `enigma machine remove <name> [--uninstall]`. The
-others stop linking to it. If it is reachable, it is told to leave: its
-daemon stops syncing, keeps its files, and with `--uninstall` also removes
-the service and binary.
+**Removing a machine:** `enigma machine remove <name> [--uninstall]`. Its
+record is marked removed, the others stop linking to it, and the handshake
+refuses it. If it is reachable, it is told to leave (`enigma leave` over
+ssh): its daemon stops, it forgets the group and keeps its files, and with
+`--uninstall` the service and binary are removed too.
 
 **Names:** a machine's display name is the alias it was added under; it can
-be renamed. Inside Enigma a machine is identified by a random `machine_id`
-created at install.
+be renamed (`enigma machine rename`). Inside Enigma a machine is identified
+by a random `machine_id` created at install.
 
-**Upgrades:** `enigma machine upgrade [--all]` repeats steps 1–4. During a
-rolling upgrade the protocol version check keeps mismatched pairs from
-linking (§5) rather than misbehaving.
+**One version everywhere.** Linked machines always run the same Enigma
+version.
+- `HELLO` carries the Enigma version and the platform (`os/arch`). A link
+  between different versions syncs nothing: it only carries an upgrade.
+- The newer side sends its binary for the older side's platform over the
+  link (this binary, or the `<data>/bin` cache). It works whichever side
+  dialed, so one-way ssh is enough.
+- The older side checks the hash and that the version is really newer
+  (never a downgrade), replaces its own binary atomically, and re-executes
+  itself. The link then comes back with matching versions and catches up.
+- If no binary for that platform is at hand, both sides show it in status
+  (`cannot upgrade <machine>: no linux/arm64 binary; run make dist`).
+- Upgrading one machine (a new binary and a daemon restart) therefore
+  upgrades the whole group. Version order: releases by semver; dev builds
+  (`make build`) carry the commit time, so a newer build wins.
 
 ## 12. Interface
 
@@ -357,7 +383,7 @@ Every command takes `--json` for agents and scripts.
 | Command | Does |
 |---|---|
 | `enigma init` | create the group on this machine |
-| `enigma machine add <alias>` · `list` · `remove <name> [--uninstall]` · `rename` · `alias` · `upgrade` | manage machines |
+| `enigma machine add <alias>` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §11) |
 | `enigma add <path> [--ignore GLOB]…` · `remove <path>` · `list` | manage entries |
 | `enigma status` | machines (link up/down, latency, last seen), entries, pending transfers, errors |
 | `enigma conflicts` | list conflict copies across the group (until M4: on this machine, which already covers folder entries, whose copies sync everywhere) |
@@ -366,7 +392,7 @@ Every command takes `--json` for agents and scripts.
 | `enigma doctor` | connectivity matrix between all machines, version check, socket and service check |
 | `enigma tui` | the TUI; also what bare `enigma` runs in a terminal |
 | `enigma daemon` · `service install` / `uninstall` | run in the foreground / as a background service |
-| `enigma bridge` · `join` | internal, used over ssh |
+| `enigma bridge` · `join` · `leave` | internal, used over ssh |
 | `enigma version` | version |
 
 ### 12.2 TUI
@@ -468,10 +494,11 @@ in `config.toml`.
    basic CLI (`init`, `add`, `status`). Machines are installed by hand.
 3. **Conflicts:** diff3 merge, conflict copies, trash, first-add backups,
    history store.
-4. **Machines:** replicated group state, `machine add` with self-install,
+4. **Machines:** replicated machine records, `machine add` with self-install,
+   automatic same-version upgrades over the link, `doctor`.
    `doctor`.
 5. **TUI.**
-6. **Polish:** notifications, upgrades, releases, end-to-end tests.
+6. **Polish:** notifications, releases (with release downloads in `machine add`), end-to-end tests.
 
 Each milestone ends with all tests passing and a review in tuicr.
 
