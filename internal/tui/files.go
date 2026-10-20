@@ -96,6 +96,27 @@ func (p *filesPane) load(s *Shared, n *fileNode) {
 	})
 }
 
+// reload re-reads every folder that was read, keeping the nodes (and so
+// what is open) of names that are still there.
+func (p *filesPane) reload(s *Shared, n *fileNode) {
+	if n == nil || !n.loaded {
+		return
+	}
+	old := map[string]*fileNode{}
+	for _, c := range n.children {
+		old[c.name] = c
+	}
+	n.loaded, n.children = false, nil
+	p.load(s, n)
+	for i, c := range n.children {
+		if o := old[c.name]; o != nil && o.dir == c.dir && o.symlink == c.symlink {
+			o.size, o.other = c.size, c.other
+			n.children[i] = o
+			p.reload(s, o)
+		}
+	}
+}
+
 func (p *filesPane) expand(s *Shared, n *fileNode) {
 	if !n.dir {
 		return
@@ -149,6 +170,12 @@ func (p *filesPane) selectNode(n *fileNode) {
 
 func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 	p.ensure(s)
+	switch msg.(type) {
+	case StatusMsg, RefreshMsg:
+		p.reload(s, p.root) // the disk may have changed
+		p.rebuild()
+		return nil
+	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return nil
@@ -263,6 +290,9 @@ func (p *filesPane) mark(s *Shared, n *fileNode) string {
 		if sk == n.rel {
 			return "skipped"
 		}
+	}
+	if ignoreMatcher.Ignored(strings.TrimPrefix(n.rel, e.Path+"/")) {
+		return "" // inside the folder, but not synced
 	}
 	return "·"
 }

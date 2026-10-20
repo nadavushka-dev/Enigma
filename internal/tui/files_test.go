@@ -356,3 +356,60 @@ func stripANSI(s string) string {
 	}
 	return b.String()
 }
+
+// An ignored item inside a synced folder does not sync: no "inside a
+// synced folder" dot, and dimmed.
+func TestFilesIgnoredInsideAnEntryIsNotMarkedAsSyncing(t *testing.T) {
+	f := newFake(t)
+	f.write(t, "proj/a.md", "x")
+	f.write(t, "proj/.git/HEAD", "x")
+	f.status.Entries = []engine.EntryStatus{{Path: "proj", Dir: true}}
+	m := filesModel(t, f)
+	p := files(m)
+	drive(t, m, key("l")) // open proj
+	var git *fileNode
+	for _, n := range p.rows {
+		if n.rel == "proj/.git" {
+			git = n
+		}
+	}
+	if git == nil {
+		t.Fatalf("rows %v", rows(m))
+	}
+	if mk := p.mark(m.s, git); mk != "" {
+		t.Fatalf("ignored .git marked %q", mk)
+	}
+	if !p.dimmed(m.s, git) {
+		t.Fatal("ignored .git inside an entry must be dimmed")
+	}
+}
+
+// Files that appear while the TUI is open show up on the next status
+// refresh; removed ones go; open folders stay open.
+func TestFilesTreeFollowsTheDisk(t *testing.T) {
+	f := newFake(t)
+	f.write(t, "notes/a.md", "x")
+	m := filesModel(t, f)
+	drive(t, m, key("l")) // open notes
+	f.write(t, "notes/b.md", "x")
+	f.write(t, "new.txt", "x")
+	os.Remove(filepath.Join(f.home, "notes/a.md"))
+	drive(t, m, m.fetchStatus()())
+	got := strings.Join(rows(m), " ")
+	if got != "notes notes/b.md new.txt" {
+		t.Fatalf("rows %q", got)
+	}
+}
+
+// One drive call with a key that opens a dialog and the key answering it:
+// the dialog must open first.
+func TestDriveRunsEachMessageToTheEndBeforeTheNext(t *testing.T) {
+	f := newFake(t)
+	f.write(t, "notes/a.md", "x")
+	f.status.Entries = []engine.EntryStatus{{Path: "notes", Dir: true}}
+	m := filesModel(t, f)
+	drive(t, m, key("x"), key("y"))
+	if got := strings.Join(f.Calls(), ","); !strings.Contains(got, "remove "+filepath.Join(f.home, "notes")) {
+		t.Fatalf("calls %q", got)
+	}
+}

@@ -110,19 +110,22 @@ func (f *fake) write(t *testing.T, rel, content string) {
 
 // ---- driving a Model ---------------------------------------------------------------
 
-// drive runs msg through m and every command it returns, recursively
-// (ticks and long polls excluded), so a test sees the settled result.
+// drive runs each msg through m with every command it returns, recursively
+// (ticks and long polls excluded), before the next msg, so a test sees the
+// settled result: drive(t, m, key("x"), key("y")) answers the dialog x opens.
 func drive(t *testing.T, m *Model, msgs ...tea.Msg) {
 	t.Helper()
-	queue := msgs
-	for steps := 0; len(queue) > 0; steps++ {
-		if steps > 500 {
-			t.Fatal("drive: too many steps")
+	for _, first := range msgs {
+		queue := []tea.Msg{first}
+		for steps := 0; len(queue) > 0; steps++ {
+			if steps > 500 {
+				t.Fatal("drive: too many steps")
+			}
+			msg := queue[0]
+			queue = queue[1:]
+			_, cmd := m.Update(msg)
+			queue = append(queue, run(cmd)...)
 		}
-		msg := queue[0]
-		queue = queue[1:]
-		_, cmd := m.Update(msg)
-		queue = append(queue, run(cmd)...)
 	}
 }
 
