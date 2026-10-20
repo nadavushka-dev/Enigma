@@ -105,6 +105,9 @@ machines, in real time, over ssh.
      machine that added P.
 
   The first that connects is remembered.
+- **Heartbeat:** each side pings every 15 s and drops a link that has been
+  silent for 45 s. ssh keepalive protects only the dialing side; without
+  this, the accepting side would keep a dead link "up" for many minutes.
 - **Reconnect** with backoff of 1 s doubling up to 60 s. Every reconnect
   starts with a catch-up (§6.5).
 - **Handshake:** `HELLO {group_id, machine_id, proto_version, enigma_version, platform}`.

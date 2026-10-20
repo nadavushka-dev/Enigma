@@ -34,6 +34,7 @@ const (
 	File        Type = "file"         // version + content
 	Machines    Type = "machines"     // group state: machine records
 	Upgrade     Type = "upgrade"      // a newer binary for the receiver (SPEC §11)
+	Ping        Type = "ping"         // heartbeat: a link silent for 3 intervals is dead
 )
 
 type HelloBody struct {

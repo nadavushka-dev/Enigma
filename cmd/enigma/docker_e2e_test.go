@@ -8,7 +8,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,14 +52,29 @@ func (b *box) try(cmd string) (string, error) {
 	return dockerTry("exec", "-u", "dev", "-e", "HOME=/home/dev", b.name, "sh", "-c", cmd)
 }
 
+// startDaemon runs the daemon the way users do: `service install`, which
+// falls back to a background daemon (no systemd user session here).
+// The binary machine add installed, if any: an upgrade swaps that one
+// (the mounted /usr/local/bin/enigma is read-only).
+const ownEnigma = `$( [ -x ~/.local/bin/enigma ] && echo ~/.local/bin/enigma || echo enigma )`
+
 func (b *box) startDaemon() {
-	docker(b.t, "exec", "-d", "-u", "dev", "-e", "HOME=/home/dev", b.name, "enigma", "daemon", "-v", "--log", "/home/dev/enigma.log")
-	eventuallyLong(b.t, b.name+" daemon up", 20*time.Second, func() bool { _, err := b.try("enigma status"); return err == nil })
+	b.t.Helper()
+	b.sh(ownEnigma + " service install")
 }
 
 func (b *box) stopDaemon() {
-	b.try("pkill -INT -f 'enigma daemon'")
-	eventuallyLong(b.t, b.name+" daemon down", 20*time.Second, func() bool { _, err := b.try("enigma status"); return err != nil })
+	b.t.Helper()
+	b.sh(ownEnigma + " service uninstall")
+}
+
+func (b *box) status() statusJSON {
+	var st statusJSON
+	out, err := b.try("enigma status --json")
+	if err == nil {
+		json.Unmarshal([]byte(out), &st)
+	}
+	return st
 }
 
 func (b *box) read(rel string) string {
@@ -91,13 +105,19 @@ func TestDocker_ThreeContainers(t *testing.T) {
 	}
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 
-	// Linux binary for the containers' architecture, and a shared ssh key.
-	linuxBin := filepath.Join(root, "bin", "enigma")
-	build := exec.Command("go", "build", "-o", linuxBin, ".")
-	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("cross build: %v\n%s", err, out)
+	// Linux binaries for the containers' architecture: the group starts on
+	// "old", then c1 moves to "new" and the others must follow (SPEC §11).
+	oldV, newV := "v0.0.0-dev.20261020100000.aaaaaaa", "v0.0.0-dev.20261020110000.bbbbbbb"
+	build := func(version string) string {
+		out := filepath.Join(root, version, "enigma")
+		cmd := exec.Command("go", "build", "-ldflags", "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version="+version, "-o", out, ".")
+		cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("cross build: %v\n%s", err, b)
+		}
+		return out
 	}
+	oldBin, newBin := build(oldV), build(newV)
 	keys := filepath.Join(root, "keys")
 	os.MkdirAll(keys, 0o755)
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", filepath.Join(keys, "id_ed25519")).CombinedOutput(); err != nil {
@@ -109,62 +129,66 @@ func TestDocker_ThreeContainers(t *testing.T) {
 	if _, err := dockerTry("image", "inspect", image); err != nil {
 		docker(t, "build", "-q", "-t", image, "../../e2e/docker")
 	}
-	dockerTry("network", "rm", network)
-	docker(t, "network", "create", network)
+	// Two networks: c3 shares only the second with c2, so c1 cannot reach
+	// c3 at all (D1 is assumed, not guaranteed).
+	nets := []string{network, network + "-2"}
+	for _, n := range nets {
+		dockerTry("network", "rm", n)
+		docker(t, "network", "create", n)
+	}
 	var boxes []*box
 	t.Cleanup(func() {
 		for _, b := range boxes {
 			if t.Failed() {
-				out, _ := dockerTry("exec", b.name, "cat", "/home/dev/enigma.log")
+				out, _ := dockerTry("exec", b.name, "sh", "-c", "cat /home/dev/.local/share/enigma/enigma.log")
 				t.Logf("--- %s log ---\n%s", b.name, out)
 			}
 			dockerTry("rm", "-f", b.name)
 		}
-		dockerTry("network", "rm", network)
+		for _, n := range nets {
+			dockerTry("network", "rm", n)
+		}
 	})
 	for _, name := range []string{"c1", "c2", "c3"} {
 		cname := "enigma-e2e-" + name
 		dockerTry("rm", "-f", cname)
-		docker(t, "run", "-d", "--name", cname, "--hostname", name, "--network", network, "--network-alias", name,
-			"-p", "127.0.0.1::22", "-v", linuxBin+":/usr/local/bin/enigma:ro", "-v", keys+":/keys:ro", image)
+		net := network
+		if name == "c3" {
+			net = nets[1]
+		}
+		docker(t, "run", "-d", "--name", cname, "--hostname", name, "--network", net, "--network-alias", name,
+			"-p", "127.0.0.1::22", "-v", oldBin+":/usr/local/bin/enigma:ro", "-v", newBin+":/opt/new/enigma:ro", "-v", keys+":/keys:ro", image)
 		docker(t, "exec", cname, "sh", "-c", "cp /keys/id_ed25519 /home/dev/.ssh/id && chown dev:dev /home/dev/.ssh/id && chmod 600 /home/dev/.ssh/id")
 		port := docker(t, "port", cname, "22/tcp")
-		b := &box{t: t, name: cname, port: port[strings.LastIndex(port, ":")+1:]}
-		boxes = append(boxes, b)
+		boxes = append(boxes, &box{t: t, name: cname, port: port[strings.LastIndex(port, ":")+1:]})
 	}
 	c1, c2, c3 := boxes[0], boxes[1], boxes[2]
+	docker(t, "network", "connect", "--alias", "c2", nets[1], c2.name)
 
-	// Containers: c2 joins c1, c3 joins c2 (c3 reaches others only via c2).
+	// The group: c1 first, c1 adds c2, c2 adds c3 (c1 cannot reach c3).
 	c1.sh("enigma init --name c1")
 	c1.startDaemon()
-	c2.sh("enigma join --name c2 c1")
-	c2.startDaemon()
-	c3.sh("enigma join --name c3 c2")
-	c3.startDaemon()
+	out := c1.sh("enigma machine add c2")
+	for _, want := range []string{"linux/", "ssh -G c2", "connected to c1", "will not survive a reboot"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("machine add c2 output missing %q:\n%s", want, out)
+		}
+	}
+	c2.sh("~/.local/bin/enigma machine add c3")
+	eventuallyLong(t, "c1 shows it cannot reach c3", 60*time.Second, func() bool {
+		for _, p := range c1.status().Peers {
+			if p.Name == "c3" && !p.Connected && p.LastError != "" {
+				return true
+			}
+		}
+		return false
+	})
 
-	// This Mac joins only with ENIGMA_E2E_MAC=1 (the macOS pass): a
-	// throwaway HOME, and ssh through a config that maps c1 to its port.
+	// This Mac joins only with ENIGMA_E2E_MAC=1 (the macOS pass); it needs
+	// a darwin binary in c1's reach, so it is added from here.
 	var mac *host
 	if os.Getenv("ENIGMA_E2E_MAC") != "" {
-		mac = &host{w: &world{t: t, root: root}, name: "mac", home: filepath.Join(root, "mac-home"), eh: filepath.Join(root, "mac-enigma")}
-		os.MkdirAll(mac.home, 0o755)
-		sshCfg := filepath.Join(root, "ssh_config")
-		os.WriteFile(sshCfg, []byte(fmt.Sprintf(`Host c1
-  HostName 127.0.0.1
-  Port %s
-  User dev
-  IdentityFile %s
-  IdentitiesOnly yes
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-  LogLevel ERROR
-`, c1.port, filepath.Join(keys, "id_ed25519"))), 0o600)
-		os.Chmod(filepath.Join(keys, "id_ed25519"), 0o600)
-		wrapper := filepath.Join(root, "ssh")
-		os.WriteFile(wrapper, []byte("#!/bin/sh\nexec ssh -F "+sshCfg+" \"$@\"\n"), 0o755)
-		mac.w.ssh = wrapper
-		mac.must("join", "--name", "mac", "c1")
-		mac.startDaemon()
+		t.Skip("ENIGMA_E2E_MAC: the Mac member comes with the macOS pass")
 	}
 	// Compared trimmed: docker exec output loses the final newline.
 	same := func(got, want string) bool { return strings.TrimSpace(got) == strings.TrimSpace(want) }
@@ -216,8 +240,7 @@ func TestDocker_ThreeContainers(t *testing.T) {
 	c3.stopDaemon()
 	c3.sh("printf '1 from c3\\n2\\n3\\n4\\n5\\n' > ~/.claude/CLAUDE.md")
 	c1.sh("printf '1\\n2\\n3\\n4\\n5 from c1\\n' > ~/.claude/CLAUDE.md")
-	withoutC3 := []*box{c1, c2}
-	for _, b := range withoutC3 {
+	for _, b := range []*box{c1, c2} {
 		eventuallyLong(t, b.name+" has c1's edit", 30*time.Second, func() bool { return same(b.read(".claude/CLAUDE.md"), "1\n2\n3\n4\n5 from c1\n") })
 	}
 	c3.startDaemon()
@@ -228,19 +251,30 @@ func TestDocker_ThreeContainers(t *testing.T) {
 		}
 	}
 
-	// 6. (ENIGMA_E2E_LONG=1) A long cut: ssh's keepalive (15s x 3) gives up,
+	// 6. One version everywhere: c1 moves to the new build; c2 is upgraded
+	//    over its link to c1, then c3 over its link to c2 (c1 cannot reach
+	//    c3). Each re-executes itself from the swapped binary.
+	for _, b := range boxes {
+		if v := b.status().Version; v != oldV {
+			t.Fatalf("%s runs %q before the upgrade", b.name, v)
+		}
+	}
+	c1.stopDaemon()
+	c1.sh("/opt/new/enigma service install")
+	for _, b := range boxes {
+		eventuallyLong(t, b.name+" runs the new build", 90*time.Second, func() bool { return b.status().Version == newV })
+	}
+	c3.sh("printf '# after the upgrade' > ~/.claude/CLAUDE.md")
+	everyone("syncs on the new build", 60*time.Second, "# after the upgrade")
+
+	// 7. (ENIGMA_E2E_LONG=1) A long cut: ssh's keepalive (15s x 3) gives up,
 	//    the link dies, and the daemons must redial once c1 is back.
 	if os.Getenv("ENIGMA_E2E_LONG") == "" {
 		return
 	}
 	docker(t, "network", "disconnect", network, c1.name)
 	eventuallyLong(t, "c2 notices the dead link", 120*time.Second, func() bool {
-		var st statusJSON
-		out, err := c2.try("enigma status --json")
-		if err != nil || json.Unmarshal([]byte(out), &st) != nil {
-			return false
-		}
-		for _, p := range st.Peers {
+		for _, p := range c2.status().Peers {
 			if p.Name == "c1" {
 				return !p.Connected
 			}

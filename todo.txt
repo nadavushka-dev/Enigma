@@ -25,9 +25,10 @@ x 2026-10-20 2026-10-20 M4 daemon: dial members from records, target resolution 
 x 2026-10-20 2026-10-20 M4 service: linger on Linux, background fallback without systemd user session +m4
 x 2026-10-20 2026-10-20 M4 cli: machine add/list/remove/rename/alias, join --stdin, leave; drop peers.json stopgap +m4
 2026-10-20 M4 doctor: connectivity matrix over ssh, version/socket/service checks +m4
-2026-10-20 M4 make dist: binaries for all platforms into <data>/bin +m4
-2026-10-20 M4 e2e: local + docker rewritten on machine add; one-way network; upgrade scenario +m4
+x 2026-10-20 2026-10-20 M4 make dist: binaries for all platforms into <data>/bin +m4
+x 2026-10-20 2026-10-20 M4 e2e: local + docker rewritten on machine add; one-way network; upgrade scenario +m4
 2026-10-20 M4 releases: goreleaser (darwin/linux x amd64/arm64, tar.gz + checksums.txt), release workflow on v* tags; NO push/tag without asking +m4
 2026-10-20 M4 install.sh: curl|sh installer like sasash (asset pick, sha256 check, ~/.local/bin, PATH hint), tested with file:// releases +m4
 2026-10-20 M4 enigma update: latest release in place (sha256, atomic swap, restart daemon -> group follows) +m4
 2026-10-20 M4 machine add step 2: download release asset for other platforms (checksum-verified) +m4
+2026-10-20 END architecture/ dir: how Enigma works, explained with d2 diagrams (topology, sync flow, versions/conflicts/merge, machine add, upgrades, storage) +docs

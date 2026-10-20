@@ -24,6 +24,7 @@ type peer struct {
 	dialedBy string // machine ID of the side that dialed this link
 	conn     io.ReadWriteCloser
 	sent     *atomic.Int64
+	lastRecv atomic.Int64 // unix nanos of the last frame received
 
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -33,6 +34,7 @@ type peer struct {
 
 func newPeer(id, name, dialedBy string, conn io.ReadWriteCloser, sent *atomic.Int64) *peer {
 	p := &peer{id: id, name: name, dialedBy: dialedBy, conn: conn, sent: sent}
+	p.lastRecv.Store(time.Now().UnixNano())
 	p.cond = sync.NewCond(&p.mu)
 	go p.writeLoop()
 	return p
@@ -178,6 +180,10 @@ func (e *Engine) readLoop(p *peer) {
 			return
 		}
 		e.received.Add(1)
+		p.lastRecv.Store(time.Now().UnixNano())
+		if m.Type == proto.Ping {
+			continue
+		}
 		e.post(func() { e.handleMsg(p, m) })
 	}
 }
@@ -224,6 +230,22 @@ func (e *Engine) attach(p *peer) bool {
 	flush()
 	p.send(&proto.Msg{Type: proto.SummaryDone})
 	return true
+}
+
+// heartbeat pings every link and drops those silent for three intervals.
+// A dead network can leave reads blocked forever, so the link is detached
+// here rather than by its read loop.
+func (e *Engine) heartbeat() {
+	now := time.Now().UnixNano()
+	for _, p := range e.peers {
+		if time.Duration(now-p.lastRecv.Load()) > 3*e.o.Heartbeat {
+			e.log.Warn("link silent; dropping it", "peer", p.name)
+			p.close()
+			e.detach(p)
+			continue
+		}
+		p.send(&proto.Msg{Type: proto.Ping})
+	}
 }
 
 func (e *Engine) detach(p *peer) {

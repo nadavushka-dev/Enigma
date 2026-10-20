@@ -28,6 +28,10 @@ const (
 	DefaultMaxFiles       = 2000
 	DefaultDebounce       = 200 * time.Millisecond
 	DefaultRescanInterval = 10 * time.Minute
+	// DefaultHeartbeat: each side pings every interval and drops a link
+	// silent for three. ssh keepalive only protects the dialing side; the
+	// accepting side would otherwise keep a dead link for many minutes.
+	DefaultHeartbeat = 15 * time.Second
 )
 
 var ErrClosed = errors.New("engine closed")
@@ -43,6 +47,7 @@ type Options struct {
 	MaxFiles       int
 	Debounce       time.Duration
 	RescanInterval time.Duration
+	Heartbeat      time.Duration
 	NoWatch        bool // no fs watcher: callers drive changes with Rescan (tests, simulation)
 	Log            *slog.Logger
 
@@ -110,6 +115,9 @@ func New(o Options) (*Engine, error) {
 	if o.RescanInterval == 0 {
 		o.RescanInterval = DefaultRescanInterval
 	}
+	if o.Heartbeat == 0 {
+		o.Heartbeat = DefaultHeartbeat
+	}
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
@@ -167,6 +175,8 @@ func (e *Engine) loop() {
 	}
 	tick := time.NewTicker(e.o.RescanInterval)
 	defer tick.Stop()
+	beat := time.NewTicker(e.o.Heartbeat)
+	defer beat.Stop()
 	for {
 		select {
 		case <-e.quit:
@@ -185,6 +195,8 @@ func (e *Engine) loop() {
 					e.onLocalPath(p)
 				}
 			}
+		case <-beat.C:
+			e.heartbeat()
 		case <-tick.C:
 			e.rescanAll()
 			e.prune()
