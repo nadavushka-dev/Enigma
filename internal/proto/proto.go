@@ -32,6 +32,8 @@ const (
 	Announce    Type = "announce"     // a new current version exists
 	Fetch       Type = "fetch"        // send me the content of path
 	File        Type = "file"         // version + content
+	Machines    Type = "machines"     // group state: machine records
+	Upgrade     Type = "upgrade"      // a newer binary for the receiver (SPEC §11)
 )
 
 type HelloBody struct {
@@ -39,6 +41,37 @@ type HelloBody struct {
 	MachineID string `json:"machine_id"`
 	Name      string `json:"name"`
 	Proto     int    `json:"proto"`
+	Version   string `json:"version,omitempty"`  // Enigma version; must match to sync (SPEC §11)
+	Platform  string `json:"platform,omitempty"` // os/arch, so a newer peer can send the right binary
+}
+
+// MachineRecord is one member in the replicated group state (SPEC §11).
+// The record with the highest (Clock, By) wins.
+type MachineRecord struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Alias   string `json:"alias,omitempty"`  // ssh alias it was added under
+	Target  string `json:"target,omitempty"` // ssh://user@host:port, from ssh -G on the adding machine
+	Bin     string `json:"bin,omitempty"`    // its enigma binary
+	Clock   uint64 `json:"clock"`
+	By      string `json:"by"`
+	Removed bool   `json:"removed,omitempty"`
+}
+
+func (r MachineRecord) Newer(o MachineRecord) bool {
+	if r.Clock != o.Clock {
+		return r.Clock > o.Clock
+	}
+	return r.By > o.By
+}
+
+// UpgradeBody describes the binary in an Upgrade frame's body, or why the
+// sender has none for the receiver's platform.
+type UpgradeBody struct {
+	Version  string `json:"version"`
+	Platform string `json:"platform"`
+	Hash     string `json:"hash,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // EntryRecord is one entry in the replicated group state (SPEC §6.4).
@@ -61,12 +94,14 @@ func (r EntryRecord) Newer(o EntryRecord) bool {
 }
 
 type Msg struct {
-	Type    Type                       `json:"type"`
-	Hello   *HelloBody                 `json:"hello,omitempty"`
-	Entries []EntryRecord              `json:"entries,omitempty"`
-	Summary map[string]version.Version `json:"summary,omitempty"`
-	Path    string                     `json:"path,omitempty"`
-	Version *version.Version           `json:"version,omitempty"`
+	Type     Type                       `json:"type"`
+	Hello    *HelloBody                 `json:"hello,omitempty"`
+	Entries  []EntryRecord              `json:"entries,omitempty"`
+	Machines []MachineRecord            `json:"machines,omitempty"`
+	Upgrade  *UpgradeBody               `json:"upgrade,omitempty"`
+	Summary  map[string]version.Version `json:"summary,omitempty"`
+	Path     string                     `json:"path,omitempty"`
+	Version  *version.Version           `json:"version,omitempty"`
 	// Ancestry of Version (File only), for picking a merge base (SPEC §7).
 	Ancestry []version.Node `json:"ancestry,omitempty"`
 	HasBody  bool           `json:"body,omitempty"`

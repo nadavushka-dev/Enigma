@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nadavushka-dev/enigma/internal/buildinfo"
 	"github.com/nadavushka-dev/enigma/internal/fsx"
 	"github.com/nadavushka-dev/enigma/internal/history"
 	"github.com/nadavushka-dev/enigma/internal/proto"
@@ -44,6 +45,17 @@ type Options struct {
 	RescanInterval time.Duration
 	NoWatch        bool // no fs watcher: callers drive changes with Rescan (tests, simulation)
 	Log            *slog.Logger
+
+	// Machines (SPEC §11).
+	Bin        string                      // this machine's enigma binary, for its own record
+	Bootstrap  []proto.MachineRecord       // records handed over by `join`
+	OnMachines func([]proto.MachineRecord) // called (off the loop) after the records change
+
+	// One version everywhere (SPEC §11).
+	Version       string                                 // default: buildinfo.Version
+	Platform      string                                 // default: buildinfo.Platform()
+	BinaryFor     func(platform string) ([]byte, error)  // a binary of this version for platform
+	InstallBinary func(version string, bin []byte) error // replace this binary and restart
 }
 
 // Engine is one machine's sync engine. All state is owned by a single loop
@@ -70,6 +82,8 @@ type Engine struct {
 	skipped   map[string]map[string]bool // entry -> rel -> skipped
 	missing   map[string]bool            // entry root vanished locally (§6.5 guard)
 	dirty     bool
+
+	machinesChanged chan struct{} // coalesced OnMachines notifications
 }
 
 func New(o Options) (*Engine, error) {
@@ -99,6 +113,12 @@ func New(o Options) (*Engine, error) {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
+	if o.Version == "" {
+		o.Version = buildinfo.Version
+	}
+	if o.Platform == "" {
+		o.Platform = buildinfo.Platform()
+	}
 	e := &Engine{
 		o: o, log: o.Log.With("machine", o.Name),
 		inbox: make(chan func(), 256), quit: make(chan struct{}), done: make(chan struct{}),
@@ -106,6 +126,7 @@ func New(o Options) (*Engine, error) {
 		hist:      history.Open(filepath.Join(o.DataDir, "history")),
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, missing: map[string]bool{},
+		machinesChanged: make(chan struct{}, 1),
 	}
 	if e.st, err = loadState(e.statePath); err != nil {
 		return nil, fmt.Errorf("load state: %w", err)
@@ -119,6 +140,17 @@ func New(o Options) (*Engine, error) {
 		if !r.Removed {
 			e.track(path, r)
 		}
+	}
+	for _, r := range o.Bootstrap {
+		e.applyMachine(r, nil)
+	}
+	if _, ok := e.st.Machines[o.MachineID]; !ok {
+		// The first machine: nobody added it, so it has no target (§11).
+		e.st.Lamport++
+		e.applyMachine(proto.MachineRecord{ID: o.MachineID, Name: o.Name, Bin: o.Bin, Clock: e.st.Lamport, By: o.MachineID}, nil)
+	}
+	if o.OnMachines != nil {
+		go e.notifyMachines()
 	}
 	e.rescanAll() // changes made while the daemon was not running (§6.5)
 	e.saveIfDirty()

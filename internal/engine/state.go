@@ -22,14 +22,15 @@ type fileState struct {
 
 // state is everything a machine persists about the group (SPEC §10).
 type state struct {
-	Counter uint64                       `json:"counter"` // this machine's vector counter, global across files
-	Lamport uint64                       `json:"lamport"` // group-state clock
-	Entries map[string]proto.EntryRecord `json:"entries"`
-	Files   map[string]*fileState        `json:"files"`
+	Counter  uint64                         `json:"counter"` // this machine's vector counter, global across files
+	Lamport  uint64                         `json:"lamport"` // group-state clock
+	Entries  map[string]proto.EntryRecord   `json:"entries"`
+	Machines map[string]proto.MachineRecord `json:"machines"`
+	Files    map[string]*fileState          `json:"files"`
 }
 
 func newState() *state {
-	return &state{Entries: map[string]proto.EntryRecord{}, Files: map[string]*fileState{}}
+	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Files: map[string]*fileState{}}
 }
 
 func loadState(p string) (*state, error) {
@@ -46,6 +47,9 @@ func loadState(p string) (*state, error) {
 	}
 	if s.Entries == nil {
 		s.Entries = map[string]proto.EntryRecord{}
+	}
+	if s.Machines == nil {
+		s.Machines = map[string]proto.MachineRecord{}
 	}
 	if s.Files == nil {
 		s.Files = map[string]*fileState{}

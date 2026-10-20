@@ -329,9 +329,9 @@ Every step is printed with the exact command it runs (D9):
    stop here.
 2. Get a binary for that platform: this binary itself if it matches,
    otherwise `<data>/bin/enigma-<os>-<arch>` (filled by `make dist` before
-   releases exist), otherwise the matching release asset from
-   `nadavushka-dev/enigma`, checksum-verified (D17, from M6). If none is
-   found, stop and say what to run.
+   releases exist), otherwise the matching release asset of this version
+   from `nadavushka-dev/enigma`, checksum-verified (D17). If none is found,
+   stop and say what to run.
 3. Copy it to `~/.local/bin/enigma` on the remote, with a temp name and
    rename.
 4. Run `enigma join` on the remote, passing the group (ID, name, member
@@ -354,6 +354,18 @@ record is marked removed, the others stop linking to it, and the handshake
 refuses it. If it is reachable, it is told to leave (`enigma leave` over
 ssh): its daemon stops, it forgets the group and keeps its files, and with
 `--uninstall` the service and binary are removed too.
+
+**Installing and updating** (releases, D17):
+- GoReleaser builds `enigma_<version>_<os>_<arch>.tar.gz` for macOS and
+  Linux (amd64, arm64) plus `checksums.txt` (sha256) on every `v*` tag.
+- `curl -fsSL https://raw.githubusercontent.com/nadavushka-dev/enigma/main/install.sh | sh`
+  picks the asset for the machine, verifies its checksum and installs to
+  `~/.local/bin` (`/usr/local/bin` with sudo as a fallback), with a PATH
+  hint. `ENIGMA_VERSION` pins a release. Next step: `enigma init` on the
+  first machine, `enigma machine add` for the others.
+- `enigma update` moves this binary to the latest release in place (same
+  checksum check, atomic swap) and restarts the daemon; the group then
+  follows over the links (below). `--check` only reports.
 
 **Names:** a machine's display name is the alias it was added under; it can
 be renamed (`enigma machine rename`). Inside Enigma a machine is identified
@@ -393,7 +405,7 @@ Every command takes `--json` for agents and scripts.
 | `enigma tui` | the TUI; also what bare `enigma` runs in a terminal |
 | `enigma daemon` · `service install` / `uninstall` | run in the foreground / as a background service |
 | `enigma bridge` · `join` · `leave` | internal, used over ssh |
-| `enigma version` | version |
+| `enigma version` · `update [--check]` | version / update from the latest release |
 
 ### 12.2 TUI
 Three panes:
@@ -495,9 +507,10 @@ in `config.toml`.
 3. **Conflicts:** diff3 merge, conflict copies, trash, first-add backups,
    history store.
 4. **Machines:** replicated machine records, `machine add` with self-install,
-   automatic same-version upgrades over the link, `doctor`.
+   automatic same-version upgrades over the link, `doctor`, releases with
+   `install.sh` and `enigma update`.
 5. **TUI.**
-6. **Polish:** notifications, releases (with release downloads in `machine add`), end-to-end tests.
+6. **Polish:** notifications, signed/notarized binaries, end-to-end tests.
 
 Each milestone ends with all tests passing and a review in tuicr.
 

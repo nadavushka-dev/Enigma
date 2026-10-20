@@ -96,7 +96,8 @@ func (e *Engine) Connect(conn io.ReadWriteCloser, dialed bool) error {
 // ConnectPeer is Connect that also reports who is on the other end.
 func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, error) {
 	hello := &proto.Msg{Type: proto.Hello, Hello: &proto.HelloBody{
-		GroupID: e.o.GroupID, MachineID: e.o.MachineID, Name: e.o.Name, Proto: proto.Version}}
+		GroupID: e.o.GroupID, MachineID: e.o.MachineID, Name: e.o.Name, Proto: proto.Version,
+		Version: e.o.Version, Platform: e.o.Platform}}
 	sendErr := make(chan error, 1)
 	go func() { sendErr <- proto.Write(conn, hello) }()
 
@@ -136,6 +137,18 @@ func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, 
 	if r.err != nil {
 		conn.Close()
 		return PeerStatus{}, r.err
+	}
+	removed := false
+	if err := e.do(func() { rec, ok := e.st.Machines[h.MachineID]; removed = ok && rec.Removed }); err != nil {
+		conn.Close()
+		return PeerStatus{}, err
+	}
+	if removed {
+		conn.Close()
+		return PeerStatus{}, fmt.Errorf("machine %q was removed from the group", h.Name)
+	}
+	if h.Version != e.o.Version {
+		return PeerStatus{ID: h.MachineID, Name: h.Name}, e.upgradeLink(conn, h)
 	}
 
 	dialedBy := h.MachineID
@@ -185,6 +198,11 @@ func (e *Engine) attach(p *peer) bool {
 	e.peers[p.id] = p
 	e.log.Info("peer up", "peer", p.name)
 
+	ms := make([]proto.MachineRecord, 0, len(e.st.Machines))
+	for _, r := range e.st.Machines {
+		ms = append(ms, r)
+	}
+	p.send(&proto.Msg{Type: proto.Machines, Machines: ms})
 	recs := make([]proto.EntryRecord, 0, len(e.st.Entries))
 	for _, r := range e.st.Entries {
 		recs = append(recs, r)
@@ -229,6 +247,10 @@ func (e *Engine) handleMsg(p *peer, m *proto.Msg) {
 		return // superseded link
 	}
 	switch m.Type {
+	case proto.Machines:
+		for _, r := range m.Machines {
+			e.applyMachine(r, p)
+		}
 	case proto.Entries:
 		for _, r := range m.Entries {
 			e.applyEntry(r, p)
