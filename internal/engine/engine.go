@@ -1,0 +1,339 @@
+package engine
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/nadavushka-dev/enigma/internal/fsx"
+	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/watch"
+)
+
+// Defaults from SPEC §8 (D18) and §6.1.
+const (
+	DefaultMaxFileSize    = 10 << 20
+	DefaultMaxFiles       = 2000
+	DefaultDebounce       = 200 * time.Millisecond
+	DefaultRescanInterval = 10 * time.Minute
+)
+
+var ErrClosed = errors.New("engine closed")
+
+type Options struct {
+	Home      string // the user's home directory; entries live under it
+	DataDir   string // state, trash, backups (SPEC §10)
+	MachineID string
+	Name      string // display name
+	GroupID   string
+
+	MaxFileSize    int64
+	MaxFiles       int
+	Debounce       time.Duration
+	RescanInterval time.Duration
+	NoWatch        bool // no fs watcher: callers drive changes with Rescan (tests, simulation)
+	Log            *slog.Logger
+}
+
+// Engine is one machine's sync engine. All state is owned by a single loop
+// goroutine; every input (fs events, peer messages, API calls) is a closure
+// run on that loop, so decisions never race.
+type Engine struct {
+	o   Options
+	log *slog.Logger
+	w   *watch.Watcher
+
+	inbox chan func()
+	quit  chan struct{}
+	done  chan struct{}
+	once  sync.Once
+
+	sent, received atomic.Int64
+
+	// Loop-owned.
+	st        *state
+	statePath string
+	peers     map[string]*peer
+	matchers  map[string]*fsx.Matcher
+	skipped   map[string]map[string]bool // entry -> rel -> skipped
+	missing   map[string]bool            // entry root vanished locally (§6.5 guard)
+	conflicts []string
+	dirty     bool
+}
+
+func New(o Options) (*Engine, error) {
+	if o.Home == "" || o.DataDir == "" || o.MachineID == "" || o.GroupID == "" {
+		return nil, errors.New("engine: Home, DataDir, MachineID and GroupID are required")
+	}
+	home, err := filepath.EvalSymlinks(o.Home)
+	if err != nil {
+		return nil, fmt.Errorf("home: %w", err)
+	}
+	o.Home = home
+	if o.Name == "" {
+		o.Name = o.MachineID
+	}
+	if o.MaxFileSize == 0 {
+		o.MaxFileSize = DefaultMaxFileSize
+	}
+	if o.MaxFiles == 0 {
+		o.MaxFiles = DefaultMaxFiles
+	}
+	if o.Debounce == 0 {
+		o.Debounce = DefaultDebounce
+	}
+	if o.RescanInterval == 0 {
+		o.RescanInterval = DefaultRescanInterval
+	}
+	if o.Log == nil {
+		o.Log = slog.Default()
+	}
+	e := &Engine{
+		o: o, log: o.Log.With("machine", o.Name),
+		inbox: make(chan func(), 256), quit: make(chan struct{}), done: make(chan struct{}),
+		statePath: filepath.Join(o.DataDir, "state.json"),
+		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
+		skipped: map[string]map[string]bool{}, missing: map[string]bool{},
+	}
+	if e.st, err = loadState(e.statePath); err != nil {
+		return nil, fmt.Errorf("load state: %w", err)
+	}
+	if !o.NoWatch {
+		if e.w, err = watch.New(o.Debounce); err != nil {
+			return nil, err
+		}
+	}
+	for path, r := range e.st.Entries {
+		if !r.Removed {
+			e.track(path, r)
+		}
+	}
+	e.rescanAll() // changes made while the daemon was not running (§6.5)
+	e.saveIfDirty()
+	go e.loop()
+	return e, nil
+}
+
+func (e *Engine) loop() {
+	defer close(e.done)
+	var events <-chan watch.Batch
+	if e.w != nil {
+		events = e.w.Events()
+	}
+	tick := time.NewTicker(e.o.RescanInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-e.quit:
+			return
+		case f := <-e.inbox:
+			f()
+		case b, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if b.Rescan {
+				e.rescanAll()
+			} else {
+				for _, p := range b.Paths {
+					e.onLocalPath(p)
+				}
+			}
+		case <-tick.C:
+			e.rescanAll()
+		}
+		e.saveIfDirty()
+	}
+}
+
+func (e *Engine) saveIfDirty() {
+	if !e.dirty {
+		return
+	}
+	if err := e.st.save(e.statePath); err != nil {
+		e.log.Error("save state", "err", err)
+		return
+	}
+	e.dirty = false
+}
+
+// post queues f on the loop without waiting.
+func (e *Engine) post(f func()) {
+	select {
+	case e.inbox <- f:
+	case <-e.quit:
+	}
+}
+
+// do runs f on the loop and waits for it.
+func (e *Engine) do(f func()) error {
+	ran := make(chan struct{})
+	select {
+	case e.inbox <- func() { f(); close(ran) }:
+	case <-e.quit:
+		return ErrClosed
+	}
+	select {
+	case <-ran:
+		return nil
+	case <-e.done:
+		return ErrClosed
+	}
+}
+
+func (e *Engine) Close() error {
+	e.once.Do(func() {
+		close(e.quit)
+		<-e.done
+		for _, p := range e.peers {
+			p.close()
+		}
+		if e.w != nil {
+			e.w.Close()
+		}
+		e.saveIfDirty()
+	})
+	return nil
+}
+
+// ---- public API -------------------------------------------------------------
+
+// Add starts syncing the file or folder at abs (D6, D7).
+func (e *Engine) Add(abs string, ignore []string) error {
+	var err error
+	if derr := e.do(func() { err = e.addEntry(abs, ignore) }); derr != nil {
+		return derr
+	}
+	return err
+}
+
+// Remove stops syncing the entry at abs on every machine; files stay (§9).
+func (e *Engine) Remove(abs string) error {
+	var err error
+	if derr := e.do(func() {
+		rel, ok := e.rel(abs)
+		r, exists := e.st.Entries[rel]
+		if !ok || !exists || r.Removed {
+			err = fmt.Errorf("%s is not synced", abs)
+			return
+		}
+		e.st.Lamport++
+		r.Clock, r.By, r.Removed = e.st.Lamport, e.o.MachineID, true
+		e.applyEntry(r, nil)
+	}); derr != nil {
+		return derr
+	}
+	return err
+}
+
+// Rescan compares every entry against disk now.
+func (e *Engine) Rescan() { e.do(e.rescanAll) }
+
+type EntryStatus struct {
+	Path    string
+	Dir     bool
+	Missing bool     // root vanished locally; deletes are not propagated
+	Skipped []string // files not synced: symlinks, oversized
+}
+
+type PeerStatus struct{ ID, Name string }
+
+type Status struct {
+	Entries        []EntryStatus
+	Peers          []PeerStatus
+	Files          int // tracked, not deleted
+	Conflicts      []string
+	Sent, Received int64
+}
+
+func (e *Engine) Status() Status {
+	var s Status
+	e.do(func() {
+		for path, r := range e.st.Entries {
+			if r.Removed {
+				continue
+			}
+			es := EntryStatus{Path: path, Dir: r.Dir, Missing: e.missing[path]}
+			for rel := range e.skipped[path] {
+				es.Skipped = append(es.Skipped, rel)
+			}
+			sort.Strings(es.Skipped)
+			s.Entries = append(s.Entries, es)
+		}
+		for _, p := range e.peers {
+			s.Peers = append(s.Peers, PeerStatus{ID: p.id, Name: p.name})
+		}
+		for _, f := range e.st.Files {
+			if !f.V.IsDeleted() {
+				s.Files++
+			}
+		}
+		s.Conflicts = append(s.Conflicts, e.conflicts...)
+	})
+	sort.Slice(s.Entries, func(i, j int) bool { return s.Entries[i].Path < s.Entries[j].Path })
+	sort.Slice(s.Peers, func(i, j int) bool { return s.Peers[i].Name < s.Peers[j].Name })
+	s.Sent, s.Received = e.sent.Load(), e.received.Load()
+	return s
+}
+
+// ---- paths ------------------------------------------------------------------
+
+// rel maps an absolute path to a slash-separated path relative to ~.
+func (e *Engine) rel(abs string) (string, bool) {
+	r, err := filepath.Rel(e.o.Home, filepath.Clean(abs))
+	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.ToSlash(r), true
+}
+
+func (e *Engine) abs(rel string) string { return filepath.Join(e.o.Home, filepath.FromSlash(rel)) }
+
+// entryFor returns the active entry covering rel.
+func (e *Engine) entryFor(rel string) (string, proto.EntryRecord, bool) {
+	for path, r := range e.st.Entries {
+		if r.Removed {
+			continue
+		}
+		if rel == path || (r.Dir && strings.HasPrefix(rel, path+"/")) {
+			return path, r, true
+		}
+	}
+	return "", proto.EntryRecord{}, false
+}
+
+// ignored reports whether rel (inside entry path) must not sync.
+func (e *Engine) ignored(entry, rel string) bool {
+	if rel == entry {
+		return false
+	}
+	m := e.matchers[entry]
+	return m != nil && m.Ignored(strings.TrimPrefix(rel, entry+"/"))
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// rootPresent: a folder entry's folder, or a file entry's parent, exists.
+func (e *Engine) rootPresent(entry string, r proto.EntryRecord) bool {
+	p := e.abs(entry)
+	if !r.Dir {
+		p = filepath.Dir(p)
+	}
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
