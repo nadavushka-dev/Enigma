@@ -412,18 +412,38 @@ Every command takes `--json` for agents and scripts.
 | `enigma version` · `update [--check]` | version / update from the latest release |
 
 ### 12.2 TUI
-Three panes:
-- **Machines:** hosts from `~/.ssh/config` (and its `Include`s, without
-  wildcard patterns). Members show link status; pressing `a` on a non-member
-  adds it, through the same flow as the CLI, showing each step.
-- **Files:** a file browser rooted at `~`. Entries are marked; `a` adds the
-  selected file or folder, `x` removes it. Ignored and oversized items are
-  dimmed.
-- **Activity:** live sync events, conflicts and errors. `enter` on a
-  conflict shows the two versions side by side.
+`enigma tui`, and bare `enigma` in a terminal. A client of the local daemon
+(it needs one running). Layout: two columns with an activity strip below.
 
-Keys are vim-style, with `?` for help. Library: bubbletea, bubbles and
-lipgloss.
+```
+┌ Machines ─────────┐┌ Files ~/ ─────────────────────┐
+│ ● mac    this     ││   .claude/            synced  │
+│ ● devbox linked   ││ ▸   CLAUDE.md         synced  │
+│ ○ laptop down     ││   notes/              synced  │
+│ · nas    ssh only ││   Downloads/                  │
+└───────────────────┘└───────────────────────────────┘
+┌ Activity ─────────────────────────────────────────┐
+│ 14:02 CLAUDE.md ← devbox                          │
+│ 14:05 ! conflict notes/todo.md (copy kept)        │
+└───────────────────────────────────────────────────┘
+ tab focus  a add  x remove  enter open  ? help  q quit
+```
+
+- **Machines:** members with their link state, then hosts from
+  `~/.ssh/config` (and its `Include`s, without wildcard patterns) that are
+  not members. `a` on a host adds it (the `machine add` steps, shown live);
+  `x` on a member removes it, after a confirmation (`u` also uninstalls).
+- **Files:** a lazy tree rooted at `~`, dotfiles included. Synced entries
+  are marked; ignored, oversized and non-regular items are dimmed. `a` adds
+  the selected file or folder, `x` stops syncing an entry (after a
+  confirmation).
+- **Activity:** the daemon's recent events (a ring of the last 500: changes
+  received and made, merges, conflict copies, deletes, links up and down,
+  upgrades, errors), live. `enter` on a conflict shows the original and the
+  copy side by side, differing lines marked.
+- Keys: `tab`/`shift+tab` move focus; `j`/`k`, `g`/`G`, `ctrl+d`/`ctrl+u`;
+  `l`/`enter` opens a folder, `h` closes it; `?` help; `q` quits.
+- Library: bubbletea, bubbles and lipgloss.
 
 ### 12.3 Notifications
 For a conflict copy, a vanished entry root, or a failed merge write:
