@@ -21,9 +21,9 @@ x 2026-10-20 2026-10-20 M4 version: build version (semver / dev commit time), en
 x 2026-10-20 2026-10-20 M4 engine: machine records in group state (LWW), handshake carries version+platform, refuses removed +m4
 x 2026-10-20 2026-10-20 M4 upgrade over the link: newer sends binary, older verifies, swaps, re-execs; no sync on mismatch +m4
 x 2026-10-20 2026-10-20 M4 sshconfig: hosts from ~/.ssh/config (+Include), ssh -G target capture +m4
-2026-10-20 M4 daemon: dial members from records, target resolution (override, alias, ssh://), local alias overrides +m4
-2026-10-20 M4 service: linger on Linux, background fallback without systemd user session +m4
-2026-10-20 M4 cli: machine add/list/remove/rename/alias, join --stdin, leave; drop peers.json stopgap +m4
+x 2026-10-20 2026-10-20 M4 daemon: dial members from records, target resolution (override, alias, ssh://), local alias overrides +m4
+x 2026-10-20 2026-10-20 M4 service: linger on Linux, background fallback without systemd user session +m4
+x 2026-10-20 2026-10-20 M4 cli: machine add/list/remove/rename/alias, join --stdin, leave; drop peers.json stopgap +m4
 2026-10-20 M4 doctor: connectivity matrix over ssh, version/socket/service checks +m4
 2026-10-20 M4 make dist: binaries for all platforms into <data>/bin +m4
 2026-10-20 M4 e2e: local + docker rewritten on machine add; one-way network; upgrade scenario +m4

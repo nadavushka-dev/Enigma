@@ -1,5 +1,6 @@
 // Package service runs the daemon in the background at login: a launchd
-// agent on macOS, a systemd user unit on Linux (SPEC §4).
+// agent on macOS, a systemd user unit with linger on Linux, or a plain
+// background process where there is no service manager (SPEC §4, §11).
 package service
 
 import (
@@ -8,21 +9,36 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const label = "dev.enigma.daemon"
 
-// Runner executes service-manager commands (launchctl, systemctl).
+// Runner executes service-manager commands (launchctl, systemctl), and
+// starts a detached process for the background fallback.
 type Runner interface {
 	Run(name string, args ...string) error
+	Start(env []string, name string, args ...string) error
 }
 
 type execRunner struct{}
+
+// Start runs name detached from this process: its own session, no stdio.
+func (execRunner) Start(env []string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
 
 func (execRunner) Run(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
@@ -37,6 +53,8 @@ type Options struct {
 	Home          string
 	XDGConfigHome string
 	UID           int
+	User          string            // for loginctl enable-linger
+	Mode          string            // "" picks the service manager; "background" forces the fallback (ENIGMA_SERVICE)
 	Bin           string            // absolute path of the enigma binary
 	LogPath       string            // the daemon's own rotated log (--log)
 	CrashLogPath  string            // the service manager's capture of stdout/stderr: crashes, panics
@@ -63,8 +81,12 @@ func Defaults(logPath, crashLogPath string) (Options, error) {
 			env[k] = v
 		}
 	}
-	return Options{GOOS: runtime.GOOS, Home: home, XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"), UID: os.Getuid(),
-		Bin: bin, LogPath: logPath, CrashLogPath: crashLogPath, Env: env, Runner: execRunner{}}, nil
+	name := os.Getenv("USER")
+	if u, err := user.Current(); err == nil {
+		name = u.Username
+	}
+	return Options{GOOS: runtime.GOOS, Home: home, XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"), UID: os.Getuid(), User: name,
+		Mode: os.Getenv("ENIGMA_SERVICE"), Bin: bin, LogPath: logPath, CrashLogPath: crashLogPath, Env: env, Runner: execRunner{}}, nil
 }
 
 // File is where the service definition lives.
@@ -79,12 +101,21 @@ func File(o Options) string {
 	return filepath.Join(cfg, "systemd", "user", "enigma.service")
 }
 
-func Install(o Options) error {
+// Result says how the daemon now runs, and what the user should know.
+type Result struct {
+	Mode     string // launchd, systemd or background
+	Warnings []string
+}
+
+func Install(o Options) (Result, error) {
 	if o.Runner == nil {
 		o.Runner = execRunner{}
 	}
 	if err := os.MkdirAll(filepath.Dir(o.LogPath), 0o700); err != nil {
-		return err
+		return Result{}, err
+	}
+	if o.Mode == "background" {
+		return background(o)
 	}
 	p := File(o)
 	switch o.GOOS {
@@ -92,24 +123,53 @@ func Install(o Options) error {
 		domain := "gui/" + strconv.Itoa(o.UID)
 		_ = o.Runner.Run("launchctl", "bootout", domain, p) // not loaded yet is fine
 		if err := writeFile(p, Plist(o)); err != nil {
-			return err
+			return Result{}, err
 		}
-		return o.Runner.Run("launchctl", "bootstrap", domain, p)
+		return Result{Mode: "launchd"}, o.Runner.Run("launchctl", "bootstrap", domain, p)
 	case "linux":
+		if o.Runner.Run("systemctl", "--user", "show-environment") != nil {
+			return background(o) // containers, WSL, minimal servers
+		}
 		if err := writeFile(p, Unit(o)); err != nil {
-			return err
+			return Result{}, err
 		}
 		if err := o.Runner.Run("systemctl", "--user", "daemon-reload"); err != nil {
-			return err
+			return Result{}, err
 		}
-		return o.Runner.Run("systemctl", "--user", "enable", "--now", "enigma.service")
+		if err := o.Runner.Run("systemctl", "--user", "enable", "--now", "enigma.service"); err != nil {
+			return Result{}, err
+		}
+		res := Result{Mode: "systemd"}
+		if err := o.Runner.Run("loginctl", "enable-linger", o.User); err != nil {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("could not enable linger (%v): the daemon stops at logout until you run `loginctl enable-linger %s`", err, o.User))
+		}
+		return res, nil
 	}
-	return fmt.Errorf("background service is not supported on %s; run `enigma daemon` under your own supervisor", o.GOOS)
+	return Result{}, fmt.Errorf("background service is not supported on %s; run `enigma daemon` under your own supervisor", o.GOOS)
 }
 
+// background starts the daemon as a detached process: no service manager,
+// so it does not survive a reboot.
+func background(o Options) (Result, error) {
+	env := os.Environ()
+	for _, k := range sortedKeys(o.Env) {
+		env = append(env, k+"="+o.Env[k])
+	}
+	if err := o.Runner.Start(env, o.Bin, "daemon", "--log", o.LogPath); err != nil {
+		return Result{}, err
+	}
+	return Result{Mode: "background", Warnings: []string{
+		"no service manager here: the daemon runs in the background but will not survive a reboot; run `enigma service install` again after one"}}, nil
+}
+
+// Uninstall removes the service. A background daemon is not managed here;
+// the caller stops it through its API.
 func Uninstall(o Options) error {
 	if o.Runner == nil {
 		o.Runner = execRunner{}
+	}
+	if o.Mode == "background" {
+		return nil
 	}
 	p := File(o)
 	switch o.GOOS {
@@ -117,6 +177,9 @@ func Uninstall(o Options) error {
 		_ = o.Runner.Run("launchctl", "bootout", "gui/"+strconv.Itoa(o.UID), p)
 		return removeIfExists(p)
 	case "linux":
+		if o.Runner.Run("systemctl", "--user", "show-environment") != nil {
+			return removeIfExists(p) // no systemd user session: nothing was installed with it
+		}
 		_ = o.Runner.Run("systemctl", "--user", "disable", "--now", "enigma.service")
 		if err := removeIfExists(p); err != nil {
 			return err

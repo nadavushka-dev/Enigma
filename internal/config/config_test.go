@@ -2,9 +2,13 @@ package config
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
 func envOf(m map[string]string) func(string) string {
@@ -70,49 +74,59 @@ func TestIdentityInitLoadJoin(t *testing.T) {
 	if err != nil || got != id {
 		t.Fatalf("load = %+v, %v", got, err)
 	}
-	// Joining the group you already belong to is fine; another group is not.
-	if _, err := Join(p, id.GroupID, "mac"); err != nil {
+	// Joining as the same machine of the same group is fine; anything else is not.
+	if err := Join(p, id, nil); err != nil {
 		t.Fatalf("rejoin same group: %v", err)
 	}
-	if _, err := Join(p, "another-group", "mac"); err == nil {
+	if err := Join(p, Identity{MachineID: id.MachineID, GroupID: "another-group", Name: "mac"}, nil); err == nil {
 		t.Fatal("joining a different group must fail")
 	}
+	if err := Join(p, Identity{MachineID: NewID(), GroupID: id.GroupID, Name: "mac"}, nil); err == nil {
+		t.Fatal("joining again as another machine must fail")
+	}
 }
 
-func TestJoinFreshMachine(t *testing.T) {
+func TestJoinWritesIdentityAndBootstrap(t *testing.T) {
 	p := Paths{Data: t.TempDir()}
-	id, err := Join(p, "group-123", "box")
-	if err != nil || id.GroupID != "group-123" || id.MachineID == "" {
-		t.Fatalf("join = %+v, %v", id, err)
+	id := Identity{MachineID: NewID(), GroupID: "group-123", Name: "box"}
+	members := []proto.MachineRecord{{ID: "a", Name: "mac", Clock: 1, By: "a"}, {ID: id.MachineID, Name: "box", Target: "ssh://me@box:22", Clock: 2, By: "a"}}
+	if err := Join(p, id, members); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LoadIdentity(p); err != nil || got != id {
+		t.Fatalf("identity %+v %v", got, err)
+	}
+	got, err := LoadBootstrap(p)
+	if err != nil || !reflect.DeepEqual(got, members) {
+		t.Fatalf("bootstrap %+v %v", got, err)
+	}
+	ClearBootstrap(p)
+	if got, err := LoadBootstrap(p); err != nil || len(got) != 0 {
+		t.Fatalf("after clear %+v %v", got, err)
 	}
 }
 
-func TestPeers(t *testing.T) {
-	p := Paths{Data: filepath.Join(t.TempDir(), "nested")}
-	peers, err := LoadPeers(p)
-	if err != nil || len(peers) != 0 {
-		t.Fatalf("empty load: %v %v", peers, err)
+func TestLocalAliasOverrides(t *testing.T) {
+	p := Paths{Config: filepath.Join(t.TempDir(), "cfg")}
+	l, err := LoadLocal(p)
+	if err != nil || len(l.Aliases) != 0 {
+		t.Fatalf("empty: %+v %v", l, err)
 	}
-	if err := AddPeer(p, Peer{Name: "devbox", Target: "devbox"}); err != nil {
+	if err := SetAlias(p, "devbox", "devbox-vpn"); err != nil {
 		t.Fatal(err)
 	}
-	if err := AddPeer(p, Peer{Name: "devbox", Target: "devbox", RemoteCmd: "~/bin/enigma"}); err != nil {
+	if err := SetAlias(p, "laptop", "lap"); err != nil {
 		t.Fatal(err)
 	}
-	if err := AddPeer(p, Peer{Name: "laptop", Target: "me@laptop"}); err != nil {
+	if err := SetAlias(p, "laptop", ""); err != nil { // clears
 		t.Fatal(err)
 	}
-	peers, _ = LoadPeers(p)
-	if len(peers) != 2 || peers[0].RemoteCmd != "~/bin/enigma" {
-		t.Fatalf("peers = %+v (same target must update, not duplicate)", peers)
+	l, _ = LoadLocal(p)
+	if !reflect.DeepEqual(l.Aliases, map[string]string{"devbox": "devbox-vpn"}) {
+		t.Fatalf("aliases %+v", l.Aliases)
 	}
-	if err := RemovePeer(p, "devbox"); err != nil {
-		t.Fatal(err)
-	}
-	if peers, _ = LoadPeers(p); len(peers) != 1 || peers[0].Name != "laptop" {
-		t.Fatalf("after remove: %+v", peers)
-	}
-	if err := RemovePeer(p, "nope"); err == nil {
-		t.Fatal("removing an unknown peer must fail")
+	b, _ := os.ReadFile(filepath.Join(p.Config, "config.toml"))
+	if !strings.Contains(string(b), "[aliases]") {
+		t.Fatalf("config.toml:\n%s", b)
 	}
 }

@@ -1,8 +1,9 @@
-// Package config locates Enigma's files on a machine and stores the
-// machine's identity and peers (SPEC §10, §11).
+// Package config locates Enigma's files on a machine and stores its
+// identity, the records it joined with, and its local settings (SPEC §10, §11).
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/BurntSushi/toml"
+
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
 // Paths are the two roots Enigma uses on a machine.
@@ -62,7 +67,7 @@ func (p Paths) socket(name string) string {
 
 // ---- identity ---------------------------------------------------------------
 
-var ErrNotInitialized = errors.New("this machine is not in a group yet: run `enigma init` (first machine) or `enigma join <ssh-alias>`")
+var ErrNotInitialized = errors.New("this machine is not in a group yet: run `enigma init` (first machine), or add it from a member with `enigma machine add <ssh-alias>`")
 
 type Identity struct {
 	MachineID string `json:"machine_id"`
@@ -92,18 +97,40 @@ func Init(p Paths, name string) (Identity, error) {
 	return id, writeJSON(p.identityPath(), id)
 }
 
-// Join makes this machine a member of groupID. Re-joining the same group
-// is a no-op; joining another group is refused.
-func Join(p Paths, groupID, name string) (Identity, error) {
-	if id, err := LoadIdentity(p); err == nil {
-		if id.GroupID != groupID {
-			return id, fmt.Errorf("this machine already belongs to another group (%s)", id.GroupID)
+// Leave forgets the group: identity, state and history go; trash and
+// backups (the user's own data) stay.
+func Leave(p Paths) error {
+	for _, f := range []string{p.identityPath(), p.bootstrapPath(), filepath.Join(p.Data, "state.json")} {
+		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
-		return id, nil
 	}
-	id := Identity{MachineID: randomID(), GroupID: groupID, Name: name}
-	return id, writeJSON(p.identityPath(), id)
+	return os.RemoveAll(filepath.Join(p.Data, "history"))
 }
+
+// Join makes this machine a member of a group, as the identity the adding
+// machine chose for it, and leaves members (the group's machine records)
+// for the daemon to start from (SPEC §11). Joining again as the same
+// machine is a no-op; anything else is refused.
+func Join(p Paths, id Identity, members []proto.MachineRecord) error {
+	if cur, err := LoadIdentity(p); err == nil {
+		switch {
+		case cur.GroupID != id.GroupID:
+			return fmt.Errorf("this machine already belongs to another group (%s)", cur.GroupID)
+		case cur.MachineID != id.MachineID:
+			return fmt.Errorf("this machine is already in this group as %s", cur.Name)
+		}
+	} else if !errors.Is(err, ErrNotInitialized) {
+		return err
+	}
+	if err := writeJSON(p.bootstrapPath(), members); err != nil {
+		return err
+	}
+	return writeJSON(p.identityPath(), id)
+}
+
+// NewID is a random machine or group ID.
+func NewID() string { return randomID() }
 
 func randomID() string {
 	b := make([]byte, 16)
@@ -113,51 +140,64 @@ func randomID() string {
 	return hex.EncodeToString(b)
 }
 
-// ---- peers ------------------------------------------------------------------
+func (p Paths) bootstrapPath() string { return filepath.Join(p.Data, "join.json") }
 
-// Peer is a machine this one dials (the M2 stopgap, SPEC §11).
-type Peer struct {
-	Name      string `json:"name"`
-	Target    string `json:"target"`               // ssh destination
-	RemoteCmd string `json:"remote_cmd,omitempty"` // enigma on the peer, default "enigma"
-}
-
-func (p Paths) peersPath() string { return filepath.Join(p.Data, "peers.json") }
-
-func LoadPeers(p Paths) ([]Peer, error) {
-	var peers []Peer
-	if err := readJSON(p.peersPath(), &peers); err != nil && !errors.Is(err, fs.ErrNotExist) {
+// LoadBootstrap returns the machine records left by Join, if any.
+func LoadBootstrap(p Paths) ([]proto.MachineRecord, error) {
+	var rs []proto.MachineRecord
+	if err := readJSON(p.bootstrapPath(), &rs); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	return peers, nil
+	return rs, nil
 }
 
-// AddPeer adds peer, or updates the one with the same target.
-func AddPeer(p Paths, peer Peer) error {
-	peers, err := LoadPeers(p)
+// ClearBootstrap drops them once the engine holds them.
+func ClearBootstrap(p Paths) { os.Remove(p.bootstrapPath()) }
+
+// ---- local settings (config.toml, never synced) ----------------------------
+
+type Local struct {
+	// Aliases override how this machine reaches a member, by member name.
+	Aliases map[string]string `toml:"aliases"`
+}
+
+func (p Paths) localPath() string { return filepath.Join(p.Config, "config.toml") }
+
+func LoadLocal(p Paths) (Local, error) {
+	l := Local{Aliases: map[string]string{}}
+	if _, err := toml.DecodeFile(p.localPath(), &l); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return l, fmt.Errorf("%s: %w", p.localPath(), err)
+	}
+	if l.Aliases == nil {
+		l.Aliases = map[string]string{}
+	}
+	return l, nil
+}
+
+// SetAlias sets (or, with alias "", clears) the local override for name.
+func SetAlias(p Paths, name, alias string) error {
+	l, err := LoadLocal(p)
 	if err != nil {
 		return err
 	}
-	for i := range peers {
-		if peers[i].Target == peer.Target {
-			peers[i] = peer
-			return writeJSON(p.peersPath(), peers)
-		}
+	if alias == "" {
+		delete(l.Aliases, name)
+	} else {
+		l.Aliases[name] = alias
 	}
-	return writeJSON(p.peersPath(), append(peers, peer))
-}
-
-func RemovePeer(p Paths, name string) error {
-	peers, err := LoadPeers(p)
-	if err != nil {
+	var buf bytes.Buffer
+	buf.WriteString("# Enigma local settings for this machine (never synced).\n")
+	if err := toml.NewEncoder(&buf).Encode(l); err != nil {
 		return err
 	}
-	for i := range peers {
-		if peers[i].Name == name {
-			return writeJSON(p.peersPath(), append(peers[:i], peers[i+1:]...))
-		}
+	if err := os.MkdirAll(p.Config, 0o700); err != nil {
+		return err
 	}
-	return fmt.Errorf("no peer named %q", name)
+	tmp := p.localPath() + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p.localPath())
 }
 
 // ---- helpers ----------------------------------------------------------------

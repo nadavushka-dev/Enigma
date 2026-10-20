@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/config"
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
 // Client talks to the local daemon over its API socket.
@@ -44,6 +45,20 @@ func (c *Client) Remove(abs string) error {
 
 // Reload makes the daemon re-read peers.json.
 func (c *Client) Reload() error { return c.do(http.MethodPost, "/reload", nil, nil) }
+
+// Shutdown stops the daemon.
+func (c *Client) Shutdown() error { return c.do(http.MethodPost, "/shutdown", nil, nil) }
+
+// Machines returns every machine record in the group state.
+func (c *Client) Machines() ([]proto.MachineRecord, error) {
+	var rs []proto.MachineRecord
+	return rs, c.do(http.MethodGet, "/machines", nil, &rs)
+}
+
+// SetMachine records r (add, rename, remove) in the group state.
+func (c *Client) SetMachine(r proto.MachineRecord) error {
+	return c.do(http.MethodPost, "/machine", r, nil)
+}
 
 func (c *Client) do(method, path string, body, out any) error {
 	var rd *bytes.Reader

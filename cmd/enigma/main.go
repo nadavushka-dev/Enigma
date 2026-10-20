@@ -5,11 +5,12 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/nadavushka-dev/enigma/internal/buildinfo"
 	"io"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/nadavushka-dev/enigma/internal/buildinfo"
 )
 
 // command is one subcommand; each registers itself from its own file.

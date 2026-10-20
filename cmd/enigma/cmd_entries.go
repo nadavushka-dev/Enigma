@@ -126,7 +126,7 @@ func cmdStatus(c *ctx, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(st)
 	}
-	fmt.Fprintf(c.stdout, "machine %s (group %s)\n\n", st.Machine, short(st.Group))
+	fmt.Fprintf(c.stdout, "machine %s (group %s, enigma %s)\n\n", st.Machine, short(st.Group), st.Version)
 	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "PEER\tLINK\tDETAIL")
 	if len(st.Peers) == 0 {

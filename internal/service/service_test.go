@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,17 +10,29 @@ import (
 	"testing"
 )
 
-type fakeRunner struct{ calls [][]string }
+type fakeRunner struct {
+	calls   [][]string
+	started [][]string
+	fail    map[string]bool // "name arg0" -> fails
+}
 
 func (f *fakeRunner) Run(name string, args ...string) error {
 	f.calls = append(f.calls, append([]string{name}, args...))
+	if len(args) > 0 && f.fail[name+" "+args[0]+" "+args[len(args)-1]] {
+		return errors.New(name + " failed")
+	}
+	return nil
+}
+
+func (f *fakeRunner) Start(env []string, name string, args ...string) error {
+	f.started = append(f.started, append([]string{name}, args...))
 	return nil
 }
 
 func opts(t *testing.T, goos string) (Options, *fakeRunner) {
 	home := t.TempDir()
 	r := &fakeRunner{}
-	return Options{GOOS: goos, Home: home, UID: 501, Bin: "/opt/en & co/enigma",
+	return Options{GOOS: goos, Home: home, UID: 501, User: "dev", Bin: "/opt/en & co/enigma",
 		LogPath: filepath.Join(home, "data", "enigma.log"), CrashLogPath: filepath.Join(home, "data", "daemon.out"),
 		Env: map[string]string{"ENIGMA_HOME": "/tmp/eh"}, Runner: r}, r
 }
@@ -60,7 +73,7 @@ func TestUnitContent(t *testing.T) {
 
 func TestInstallLaunchd(t *testing.T) {
 	o, r := opts(t, "darwin")
-	if err := Install(o); err != nil {
+	if _, err := Install(o); err != nil {
 		t.Fatal(err)
 	}
 	plist := filepath.Join(o.Home, "Library/LaunchAgents/dev.enigma.daemon.plist")
@@ -81,7 +94,7 @@ func TestInstallLaunchd(t *testing.T) {
 
 func TestInstallSystemd(t *testing.T) {
 	o, r := opts(t, "linux")
-	if err := Install(o); err != nil {
+	if _, err := Install(o); err != nil {
 		t.Fatal(err)
 	}
 	unit := filepath.Join(o.Home, ".config/systemd/user/enigma.service")
@@ -89,8 +102,10 @@ func TestInstallSystemd(t *testing.T) {
 		t.Fatalf("unit not written: %v", err)
 	}
 	want := [][]string{
+		{"systemctl", "--user", "show-environment"}, // is there a user session?
 		{"systemctl", "--user", "daemon-reload"},
 		{"systemctl", "--user", "enable", "--now", "enigma.service"},
+		{"loginctl", "enable-linger", "dev"}, // keep running after logout
 	}
 	if !reflect.DeepEqual(r.calls, want) {
 		t.Fatalf("calls = %q", r.calls)
@@ -100,7 +115,7 @@ func TestInstallSystemd(t *testing.T) {
 func TestSystemdRespectsXDGConfigHome(t *testing.T) {
 	o, _ := opts(t, "linux")
 	o.XDGConfigHome = filepath.Join(o.Home, "xdg")
-	if err := Install(o); err != nil {
+	if _, err := Install(o); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(o.XDGConfigHome, "systemd/user/enigma.service")); err != nil {
@@ -130,7 +145,7 @@ func TestUninstall(t *testing.T) {
 
 func TestUnsupportedOS(t *testing.T) {
 	o, _ := opts(t, "windows")
-	if err := Install(o); err == nil || !strings.Contains(err.Error(), "windows") {
+	if _, err := Install(o); err == nil || !strings.Contains(err.Error(), "windows") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -147,5 +162,54 @@ func TestPlistPassesPlutil(t *testing.T) {
 	os.WriteFile(p, []byte(Plist(o)), 0o644)
 	if out, err := exec.Command(plutil, "-lint", p).CombinedOutput(); err != nil {
 		t.Fatalf("plutil: %v\n%s", err, out)
+	}
+}
+
+func TestLingerFailureIsAWarning(t *testing.T) {
+	o, r := opts(t, "linux")
+	r.fail = map[string]bool{"loginctl enable-linger dev": true}
+	res, err := Install(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != "systemd" || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "logout") {
+		t.Fatalf("result %+v", res)
+	}
+}
+
+func TestNoSystemdUserSessionFallsBackToBackground(t *testing.T) {
+	o, r := opts(t, "linux")
+	r.fail = map[string]bool{"systemctl --user show-environment": true}
+	res, err := Install(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != "background" || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "reboot") {
+		t.Fatalf("result %+v", res)
+	}
+	want := [][]string{{o.Bin, "daemon", "--log", o.LogPath}}
+	if !reflect.DeepEqual(r.started, want) {
+		t.Fatalf("started %q", r.started)
+	}
+	if fileExists(File(o)) {
+		t.Fatal("unit written without systemd")
+	}
+}
+
+func TestForcedBackgroundNeverTouchesTheServiceManager(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		o, r := opts(t, goos)
+		o.Mode = "background"
+		res, err := Install(o)
+		if err != nil || res.Mode != "background" {
+			t.Fatalf("%s: %+v %v", goos, res, err)
+		}
+		if len(r.calls) != 0 || len(r.started) != 1 {
+			t.Fatalf("%s: calls %q started %q", goos, r.calls, r.started)
+		}
+		r.calls = nil
+		if err := Uninstall(o); err != nil || len(r.calls) != 0 {
+			t.Fatalf("%s: uninstall %v calls %q", goos, err, r.calls)
+		}
 	}
 }

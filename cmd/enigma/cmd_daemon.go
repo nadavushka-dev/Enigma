@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/nadavushka-dev/enigma/internal/daemon"
@@ -41,18 +43,35 @@ func cmdDaemon(c *ctx, args []string) error {
 		level = slog.LevelDebug
 	}
 	var out io.Writer = c.stderr
+	var logw *logfile.Writer
 	if *logPath != "" {
-		w, err := logfile.Open(*logPath, logRotateSize)
-		if err != nil {
+		if logw, err = logfile.Open(*logPath, logRotateSize); err != nil {
 			return err
 		}
-		defer w.Close()
-		out = w
+		out = logw
 	}
 	log := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: level}))
+	// Resolved now: after an upgrade renames over it, Linux reports the old,
+	// deleted inode as this executable.
+	bin, err := os.Executable()
+	if err == nil {
+		bin, err = filepath.EvalSymlinks(bin)
+	}
+	if err != nil {
+		return err
+	}
 	sigctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return daemon.Run(sigctx, daemon.Options{Paths: p, Home: home, Log: log})
+	err = daemon.Run(sigctx, daemon.Options{Paths: p, Home: home, Log: log, Bin: bin})
+	stop()
+	if logw != nil {
+		logw.Close()
+	}
+	if errors.Is(err, daemon.ErrRestart) {
+		// Upgraded in place (SPEC §11): become the new binary, same
+		// arguments, same process (launchd and systemd keep tracking it).
+		return syscall.Exec(bin, append([]string{bin}, os.Args[1:]...), os.Environ())
+	}
+	return err
 }
 
 func cmdBridge(c *ctx, args []string) error {
