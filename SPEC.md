@@ -296,7 +296,7 @@ as a normal edit. Restore never overwrites an existing file.
 | `~/.local/share/enigma/enigma.sock` | API socket, used by the CLI and TUI (HTTP + JSON). |
 | `~/.local/share/enigma/peer.sock` | Peer socket: `enigma bridge` relays an incoming ssh link here. |
 | `~/.local/share/enigma/identity.json` | This machine's ID, group ID and name. |
-| `~/.local/share/enigma/bin/` | `enigma-<os>-<arch>` binaries for adding and upgrading other platforms (`make dist`). |
+| `~/.local/share/enigma/bin/<version>/` | `enigma-<os>-<arch>` binaries for adding and upgrading other platforms (`make dist`, release downloads). |
 
 Sockets: macOS limits socket paths to 104 bytes, so a longer path falls
 back to `/tmp/enigma-<uid>-<hash>-<name>.sock`. The CLI and the bridge find
@@ -331,8 +331,8 @@ Every step is printed with the exact command it runs (D9):
 1. `ssh <alias> uname -sm` to detect the OS and CPU; unsupported platforms
    stop here.
 2. Get a binary for that platform: this binary itself if it matches,
-   otherwise `<data>/bin/enigma-<os>-<arch>` (filled by `make dist` before
-   releases exist), otherwise the matching release asset of this version
+   otherwise `<data>/bin/<version>/enigma-<os>-<arch>` (filled by `make dist`
+   and by downloads), otherwise the matching release asset of this version
    from `nadavushka-dev/enigma`, checksum-verified (D17). If none is found,
    stop and say what to run.
 3. Copy it to `~/.local/bin/enigma` on the remote, with a temp name and
@@ -379,7 +379,8 @@ version.
 - `HELLO` carries the Enigma version and the platform (`os/arch`). A link
   between different versions syncs nothing: it only carries an upgrade.
 - The newer side sends its binary for the older side's platform over the
-  link (this binary, or the `<data>/bin` cache). It works whichever side
+  link (this binary, the `<data>/bin/<version>` cache, or its release
+  download). It works whichever side
   dialed, so one-way ssh is enough.
 - The older side checks the hash and that the version is really newer
   (never a downgrade), replaces its own binary atomically, and re-executes

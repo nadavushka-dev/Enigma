@@ -19,7 +19,18 @@ import (
 // (download/<tag>/, checksums.txt, latest) and returns the file:// URL.
 func fileRelease(t *testing.T, dir, tag string, corrupt bool) string {
 	t.Helper()
-	b, err := os.ReadFile(bin)
+	return fileReleaseBuild(t, dir, tag, bin, corrupt)
+}
+
+// fileReleaseOf publishes binary as release tag (this platform only).
+func fileReleaseOf(t *testing.T, dir, tag, binary string) string {
+	t.Helper()
+	return fileReleaseBuild(t, dir, tag, binary, false)
+}
+
+func fileReleaseBuild(t *testing.T, dir, tag, binary string, corrupt bool) string {
+	t.Helper()
+	b, err := os.ReadFile(binary)
 	if err != nil {
 		t.Fatal(err)
 	}

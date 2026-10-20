@@ -4,7 +4,7 @@
 VERSION ?= v0.0.0-dev.$(shell TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD).$(shell git rev-parse --short=7 HEAD)
 LDFLAGS := -X github.com/nadavushka-dev/enigma/internal/buildinfo.Version=$(VERSION)
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
-DIST ?= $(HOME)/.local/share/enigma/bin
+DIST ?= $(HOME)/.local/share/enigma/bin/$(VERSION)
 
 check: ## everything the pre-commit hook runs
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && false)
@@ -17,7 +17,7 @@ test:
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/enigma ./cmd/enigma
 
-dist: ## binaries for every platform, for machine add and upgrades (DIST=<data>/bin)
+dist: ## binaries for every platform, for machine add and upgrades (DIST=<data>/bin/<version>)
 	@mkdir -p $(DIST)
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; \

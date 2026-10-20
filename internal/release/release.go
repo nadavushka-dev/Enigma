@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -163,4 +164,50 @@ func extract(tb []byte) ([]byte, error) {
 			return io.ReadAll(io.LimitReader(tr, maxAsset))
 		}
 	}
+}
+
+// IsRelease reports whether version was published as a release (not a
+// dev build or a local snapshot), so its assets can be downloaded.
+func IsRelease(version string) bool {
+	if !strings.HasPrefix(version, "v") {
+		return false
+	}
+	_, pre, _ := strings.Cut(version, "-")
+	return !strings.HasPrefix(pre, "dev.") && !strings.HasPrefix(pre, "SNAPSHOT")
+}
+
+// CachePath is where a binary of version for platform is kept on this
+// machine: <dataDir>/bin/<version>/enigma-<os>-<arch> (filled by
+// `make dist` and by downloads).
+func CachePath(dataDir, version, platform string) string {
+	return filepath.Join(dataDir, "bin", version, "enigma-"+strings.ReplaceAll(platform, "/", "-"))
+}
+
+// BinaryFor finds an enigma binary of version (the running one's) for
+// platform: the running binary self when the platform is its own, the
+// cache, or the release download, which is then cached. It says where the
+// binary came from.
+func BinaryFor(ctx context.Context, src Source, dataDir, self, version, selfPlatform, platform string) ([]byte, string, error) {
+	if platform == selfPlatform {
+		b, err := os.ReadFile(self)
+		return b, self, err
+	}
+	cached := CachePath(dataDir, version, platform)
+	if b, err := os.ReadFile(cached); err == nil {
+		return b, cached, nil
+	}
+	if !IsRelease(version) {
+		return nil, "", fmt.Errorf("no %s binary of %s: this is a development build and %s does not exist; run `make dist`", platform, version, cached)
+	}
+	b, err := src.Fetch(ctx, version, platform)
+	if err != nil {
+		return nil, "", fmt.Errorf("no %s binary of %s: %w", platform, version, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cached), 0o755); err == nil {
+		tmp := cached + ".tmp"
+		if os.WriteFile(tmp, b, 0o755) == nil {
+			os.Rename(tmp, cached)
+		}
+	}
+	return b, "the " + version + " release", nil
 }

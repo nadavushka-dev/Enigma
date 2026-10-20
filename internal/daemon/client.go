@@ -46,6 +46,9 @@ func (c *Client) Remove(abs string) error {
 // Reload makes the daemon re-read peers.json.
 func (c *Client) Reload() error { return c.do(http.MethodPost, "/reload", nil, nil) }
 
+// Restart makes the daemon re-execute its binary.
+func (c *Client) Restart() error { return c.do(http.MethodPost, "/restart", nil, nil) }
+
 // Shutdown stops the daemon.
 func (c *Client) Shutdown() error { return c.do(http.MethodPost, "/shutdown", nil, nil) }
 

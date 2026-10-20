@@ -26,6 +26,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/link"
 	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/release"
 	"github.com/nadavushka-dev/enigma/internal/sshconfig"
 )
 
@@ -351,18 +352,13 @@ func sleep(ctx context.Context, d time.Duration) bool {
 
 // ---- one version everywhere (SPEC §11) ------------------------------------------
 
-// binaryFor is this version's binary for platform: this one, or the
-// <data>/bin cache that `make dist` fills.
+// binaryFor is this version's binary for platform: this one, the cache,
+// or the release download (SPEC §11).
 func (d *daemon) binaryFor(platform string) ([]byte, error) {
-	if platform == buildinfo.Platform() {
-		return os.ReadFile(d.o.Bin)
-	}
-	p := filepath.Join(d.o.Paths.Data, "bin", "enigma-"+strings.ReplaceAll(platform, "/", "-"))
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil, fmt.Errorf("no %s binary at %s; run `make dist`", platform, p)
-	}
-	return b, nil
+	ctx, cancel := context.WithTimeout(d.ctx, 2*time.Minute)
+	defer cancel()
+	b, _, err := release.BinaryFor(ctx, release.Default(), d.o.Paths.Data, d.o.Bin, d.o.Version, buildinfo.Platform(), platform)
+	return b, err
 }
 
 // installBinary replaces this binary with bin, once bin itself says it is
@@ -491,6 +487,14 @@ func (d *daemon) api() http.Handler {
 	})
 	mux.HandleFunc("POST /reload", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, struct{}{}, d.reload())
+	})
+	mux.HandleFunc("POST /restart", func(w http.ResponseWriter, r *http.Request) {
+		// Re-execute this binary (after `enigma update` replaced it).
+		reply(w, struct{}{}, nil)
+		d.mu.Lock()
+		d.restart = true
+		d.mu.Unlock()
+		go d.stop()
 	})
 	mux.HandleFunc("POST /shutdown", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, struct{}{}, nil)

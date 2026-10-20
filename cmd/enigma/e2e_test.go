@@ -43,11 +43,12 @@ type world struct {
 }
 
 type host struct {
-	w    *world
-	name string
-	home string
-	eh   string // ENIGMA_HOME
-	bin  string // enigma binary this machine's CLI runs (default: the test build)
+	w     *world
+	name  string
+	home  string
+	eh    string   // ENIGMA_HOME
+	bin   string   // enigma binary this machine's CLI runs (default: the test build)
+	extra []string // more environment for its CLI and daemon
 }
 
 func newWorld(t *testing.T) *world {
@@ -76,8 +77,19 @@ func (w *world) host(name string) *host {
 	return h
 }
 
+// buildVersion builds enigma stamped with version, under dir.
+func buildVersion(t *testing.T, dir, version string) string {
+	t.Helper()
+	out := filepath.Join(dir, version, "enigma")
+	cmd := exec.Command("go", "build", "-ldflags", "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version="+version, "-o", out, ".")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build %s: %v\n%s", version, err, b)
+	}
+	return out
+}
+
 func (h *host) env() []string {
-	return append(os.Environ(), "HOME="+h.home, "ENIGMA_HOME="+h.eh, "ENIGMA_SSH="+h.w.ssh, "ENIGMA_SERVICE=background")
+	return append(append(os.Environ(), "HOME="+h.home, "ENIGMA_HOME="+h.eh, "ENIGMA_SSH="+h.w.ssh, "ENIGMA_SERVICE=background"), h.extra...)
 }
 
 // run executes enigma as this machine and returns combined output and exit code.
@@ -407,16 +419,8 @@ func TestE2E_MachineRename(t *testing.T) {
 // upgrades the others over the link.
 func TestE2E_NewerBuildUpgradesTheGroup(t *testing.T) {
 	dir := t.TempDir()
-	build := func(version string) string {
-		out := filepath.Join(dir, version, "enigma")
-		cmd := exec.Command("go", "build", "-ldflags", "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version="+version, "-o", out, ".")
-		if b, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("build %s: %v\n%s", version, err, b)
-		}
-		return out
-	}
 	oldV, newV := "v0.0.0-dev.20261020100000.aaaaaaa", "v0.0.0-dev.20261020110000.bbbbbbb"
-	oldBin, newBin := build(oldV), build(newV)
+	oldBin, newBin := buildVersion(t, dir, oldV), buildVersion(t, dir, newV)
 
 	w := newWorld(t)
 	a, b := w.host("a"), w.host("b")
@@ -619,5 +623,44 @@ func TestE2E_ConflictsAcrossTheGroup(t *testing.T) {
 	eventuallyT(t, "resolved everywhere", func() bool { return len(list(a)) == 0 })
 	if got := list(a, "--local"); len(got) != 0 {
 		t.Fatalf("--local: %+v", got)
+	}
+}
+
+func TestE2E_UpdateMovesToTheLatestReleaseAndRestartsTheDaemon(t *testing.T) {
+	dir := t.TempDir()
+	v1, v2 := buildVersion(t, dir, "v0.1.0"), buildVersion(t, dir, "v0.2.0")
+	rel := filepath.Join(dir, "releases")
+	url := fileReleaseOf(t, rel, "v0.2.0", v2)
+
+	w := newWorld(t)
+	a := w.host("a")
+	installed := filepath.Join(a.home, ".local/bin/enigma")
+	os.MkdirAll(filepath.Dir(installed), 0o755)
+	b, _ := os.ReadFile(v1)
+	os.WriteFile(installed, b, 0o755)
+	a.bin = installed
+	a.extra = []string{"ENIGMA_RELEASES_URL=" + url}
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	if v := a.status().Version; v != "v0.1.0" {
+		t.Fatalf("daemon runs %q", v)
+	}
+
+	if out := a.must("update", "--check"); !strings.Contains(out, "v0.1.0 -> v0.2.0") {
+		t.Fatalf("update --check:\n%s", out)
+	}
+	if v, _ := exec.Command(installed, "version").Output(); !strings.Contains(string(v), "v0.1.0") {
+		t.Fatal("--check changed the binary")
+	}
+	out := a.must("update")
+	if !strings.Contains(out, "updated to v0.2.0") {
+		t.Fatalf("update:\n%s", out)
+	}
+	if v, _ := exec.Command(installed, "version").Output(); !strings.Contains(string(v), "v0.2.0") {
+		t.Fatalf("binary not replaced: %s", v)
+	}
+	eventuallyLongT(t, "daemon restarted on v0.2.0", 30*time.Second, func() bool { return a.status().Version == "v0.2.0" })
+	if out := a.must("update"); !strings.Contains(out, "up to date") {
+		t.Fatalf("second update:\n%s", out)
 	}
 }

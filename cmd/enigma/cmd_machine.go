@@ -16,6 +16,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/link"
 	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/release"
 	"github.com/nadavushka-dev/enigma/internal/sshconfig"
 )
 
@@ -71,23 +72,6 @@ func byName(rs []proto.MachineRecord, name string) (proto.MachineRecord, bool) {
 	return proto.MachineRecord{}, false
 }
 
-// localBinaryFor finds an enigma binary of this version for platform:
-// this one, or the <data>/bin cache (`make dist`).
-func localBinaryFor(p config.Paths, platform string) (string, error) {
-	if platform == buildinfo.Platform() {
-		bin, err := os.Executable()
-		if err != nil {
-			return "", err
-		}
-		return filepath.EvalSymlinks(bin)
-	}
-	cached := filepath.Join(p.Data, "bin", "enigma-"+strings.ReplaceAll(platform, "/", "-"))
-	if _, err := os.Stat(cached); err == nil {
-		return cached, nil
-	}
-	return "", fmt.Errorf("no %s binary: this one is %s and %s does not exist; run `make dist` to build every platform", platform, buildinfo.Platform(), cached)
-}
-
 func machineAdd(c *ctx, args []string) error {
 	fs := flags("machine add")
 	name := fs.String("name", "", "")
@@ -139,11 +123,14 @@ func machineAdd(c *ctx, args []string) error {
 	}
 	fmt.Fprintf(c.stdout, "   %s\n", platform)
 
-	src, err := localBinaryFor(p, platform)
+	self, err := os.Executable()
+	if err == nil {
+		self, err = filepath.EvalSymlinks(self)
+	}
 	if err != nil {
 		return err
 	}
-	binary, err := os.ReadFile(src)
+	binary, src, err := release.BinaryFor(ctx, release.Default(), p.Data, self, buildinfo.Version, buildinfo.Platform(), platform)
 	if err != nil {
 		return err
 	}
