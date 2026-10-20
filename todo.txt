@@ -35,6 +35,7 @@ x 2026-10-20 2026-10-20 M4 machine add step 2: download release asset for other 
 x 2026-10-20 2026-10-20 M5 spec: TUI layout (two columns + activity strip), event feed, keys +m5
 x 2026-10-20 2026-10-20 M5 engine: activity events ring (changes, merges, conflicts, links, upgrades, errors) + daemon GET /events long-poll +m5
 x 2026-10-20 2026-10-20 M5 machine add as a reusable step runner (CLI and TUI share it) +m5
-2026-10-20 M5 tui: machines pane (members + ssh config hosts, a add with live steps, x remove) (delegated: herdr agent tui-machines, worktree ../enigma-wt/machines, branch tui-machines) +m5
-2026-10-20 M5 tui: files pane (lazy tree of ~, synced marks, dim ignored/oversized/symlinks, a add, x remove) (delegated: herdr agent tui-files, worktree ../enigma-wt/files, branch tui-files) +m5
-2026-10-20 M5 tui: activity pane + side-by-side conflict view, help overlay, bare `enigma` opens the TUI (delegated: herdr agent tui-activity, worktree ../enigma-wt/activity, branch tui-activity) +m5
+x 2026-10-20 2026-10-20 M5 tui: machines pane (members + ssh config hosts, a add with live steps, x remove) (delegated: herdr agent tui-machines, worktree ../enigma-wt/machines, branch tui-machines) +m5
+x 2026-10-20 2026-10-20 M5 tui: files pane (lazy tree of ~, synced marks, dim ignored/oversized/symlinks, a add, x remove) (delegated: herdr agent tui-files, worktree ../enigma-wt/files, branch tui-files) +m5
+x 2026-10-20 2026-10-20 M5 tui: activity pane + side-by-side conflict view, help overlay, bare `enigma` opens the TUI (delegated: herdr agent tui-activity, worktree ../enigma-wt/activity, branch tui-activity) +m5
+2026-10-20 M5 tuicr: user reviews all of M5 in tuicr (agreed: lead reviews delegate branches, one tuicr pass at the end) +m5
