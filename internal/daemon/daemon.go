@@ -383,7 +383,8 @@ func (d *daemon) installBinary(version string, bin []byte) error {
 	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Generous: the first run of a new binary can be slow (macOS checks it).
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, tmp.Name(), "version").Output()
 	if f := strings.Fields(string(out)); err != nil || len(f) < 2 || f[1] != version {

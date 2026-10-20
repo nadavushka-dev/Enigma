@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -212,5 +213,96 @@ func TestS11_UnorderedVersionsDoNotLink(t *testing.T) {
 	}
 	if len(in.list()) != 0 {
 		t.Fatalf("installed %v", in.list())
+	}
+}
+
+// lossyConn is one end of a link whose writes are delivered later, in
+// chunks, like ssh's stdio through `enigma bridge`; closing it drops what
+// was not delivered yet.
+type lossyConn struct {
+	r       *io.PipeReader
+	w       *io.PipeWriter // the peer's reader side
+	mu      sync.Mutex
+	pending [][]byte
+	closed  bool
+	wake    chan struct{}
+}
+
+func lossyPair() (*lossyConn, *lossyConn) {
+	r1, w1 := io.Pipe()
+	r2, w2 := io.Pipe()
+	a := &lossyConn{r: r1, w: w2, wake: make(chan struct{}, 1)}
+	b := &lossyConn{r: r2, w: w1, wake: make(chan struct{}, 1)}
+	go a.deliver()
+	go b.deliver()
+	return a, b
+}
+
+func (c *lossyConn) deliver() {
+	for range c.wake {
+		for {
+			c.mu.Lock()
+			if c.closed || len(c.pending) == 0 {
+				c.mu.Unlock()
+				break
+			}
+			chunk := c.pending[0]
+			c.pending = c.pending[1:]
+			c.mu.Unlock()
+			time.Sleep(time.Millisecond) // the network takes its time
+			c.w.Write(chunk)
+		}
+	}
+}
+
+func (c *lossyConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+func (c *lossyConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return 0, io.ErrClosedPipe
+	}
+	n0 := len(p)
+	for len(p) > 0 {
+		n := min(len(p), 64<<10)
+		c.pending = append(c.pending, append([]byte(nil), p[:n]...))
+		p = p[n:]
+	}
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+	return n0, nil
+}
+
+func (c *lossyConn) Close() error {
+	c.mu.Lock()
+	if !c.closed {
+		c.closed = true
+		c.pending = nil // undelivered bytes are lost
+		close(c.wake)
+	}
+	c.mu.Unlock()
+	c.w.Close()
+	return c.r.Close()
+}
+
+// Regression: the newer side closed the link right after writing the
+// binary; over ssh that dropped the frame's tail and the older side never
+// got a whole upgrade.
+func TestS11_UpgradeSurvivesALinkThatDeliversLate(t *testing.T) {
+	var old installs
+	big := strings.Repeat("B", 4<<20) // a binary is megabytes
+	a := newMachine(t, "a", versioned("v1.1.0", map[string]string{"linux/arm64": big}, nil))
+	b := newMachine(t, "b", versioned("v1.0.0", nil, &old))
+	ca, cb := lossyPair()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); a.e.Connect(ca, true) }()
+	go func() { defer wg.Done(); b.e.Connect(cb, false) }()
+	wg.Wait()
+	if got := old.list(); len(got) != 1 || got[0] != "v1.1.0:"+big {
+		t.Fatalf("installed %d upgrades", len(got))
 	}
 }

@@ -1,4 +1,4 @@
-.PHONY: check test build dist hooks e2e e2e-long
+.PHONY: check test build dist snapshot hooks e2e e2e-long
 
 # Dev builds are ordered by commit time (SPEC §11): a newer build upgrades the group.
 VERSION ?= v0.0.0-dev.$(shell TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD).$(shell git rev-parse --short=7 HEAD)
@@ -24,6 +24,9 @@ dist: ## binaries for every platform, for machine add and upgrades (DIST=<data>/
 		echo "$(DIST)/enigma-$$os-$$arch"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o $(DIST)/enigma-$$os-$$arch ./cmd/enigma || exit 1; \
 	done
+
+snapshot: ## a local release build with GoReleaser, nothing published (dist/)
+	goreleaser release --snapshot --clean
 
 hooks:
 	git config core.hooksPath .githooks

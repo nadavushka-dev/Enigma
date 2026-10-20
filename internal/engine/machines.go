@@ -113,23 +113,37 @@ func (e *Engine) upgradeLink(conn io.ReadWriteCloser, h *proto.HelloBody) error 
 		if err := proto.Write(conn, &proto.Msg{Type: proto.Upgrade, Upgrade: &up, Content: bin}); err != nil {
 			return fmt.Errorf("%w: sending the upgrade to %s: %v", ErrUpgrade, h.Name, err)
 		}
+		// The older side closes once it has the whole binary. Closing first
+		// could drop the frame's tail still in flight (ssh, the bridge).
+		closed := make(chan struct{})
+		go func() { io.Copy(io.Discard, conn); close(closed) }()
+		select {
+		case <-closed:
+		case <-time.After(upgradeTimeout):
+		}
 		e.log.Info("upgrading peer", "peer", h.Name, "from", h.Version, "to", e.o.Version)
 		return fmt.Errorf("%w: upgrading %s from %s to %s", ErrUpgrade, h.Name, h.Version, e.o.Version)
 	}
 
-	got := make(chan *proto.Msg, 1)
+	type res struct {
+		m   *proto.Msg
+		err error
+	}
+	got := make(chan res, 1)
 	go func() {
-		m, _ := proto.Read(conn)
-		got <- m
+		m, err := proto.Read(conn)
+		got <- res{m, err}
 	}()
-	var m *proto.Msg
+	var r res
 	select {
-	case m = <-got:
+	case r = <-got:
 	case <-time.After(upgradeTimeout):
+		r.err = errors.New("timed out")
 	}
-	if m == nil || m.Type != proto.Upgrade || m.Upgrade == nil {
-		return fmt.Errorf("%w: %s runs %s (this machine %s) but sent no upgrade", ErrUpgrade, h.Name, h.Version, e.o.Version)
+	if r.err != nil || r.m.Type != proto.Upgrade || r.m.Upgrade == nil {
+		return fmt.Errorf("%w: %s runs %s (this machine %s) but no upgrade arrived (%v)", ErrUpgrade, h.Name, h.Version, e.o.Version, r.err)
 	}
+	m := r.m
 	if m.Upgrade.Error != "" {
 		return fmt.Errorf("%w: %s runs %s but cannot upgrade this machine (%s): %s", ErrUpgrade, h.Name, h.Version, e.o.Version, m.Upgrade.Error)
 	}

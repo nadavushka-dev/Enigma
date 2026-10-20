@@ -19,6 +19,25 @@ import (
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+// logBuffer collects one node's debug log; it is printed if the test fails.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
+}
+
 // node is one simulated machine: its own home, Enigma dirs and daemon.
 type node struct {
 	t       *testing.T
@@ -30,6 +49,7 @@ type node struct {
 	net     *network
 	aliases map[string]bool // ssh aliases this machine's ssh config has
 	mods    []func(*Options)
+	log     *logBuffer
 }
 
 // network routes ssh targets to nodes' peer sockets, standing in for ssh +
@@ -86,8 +106,13 @@ func (n *network) node(t *testing.T, name string, mods ...func(*Options)) *node 
 	t.Helper()
 	base, _ := filepath.EvalSymlinks(t.TempDir())
 	nd := &node{t: t, name: name, home: filepath.Join(base, "home"), net: n, aliases: map[string]bool{}, mods: mods,
-		paths: config.Paths{Config: filepath.Join(base, "e"), Data: filepath.Join(base, "e")}}
+		paths: config.Paths{Config: filepath.Join(base, "e"), Data: filepath.Join(base, "e")}, log: &logBuffer{}}
 	os.MkdirAll(nd.home, 0o755)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("--- %s log ---\n%s", name, nd.log)
+		}
+	})
 	return nd
 }
 
@@ -98,7 +123,8 @@ func (nd *node) hasAlias(a string) bool {
 }
 
 func (nd *node) options(ready func()) Options {
-	o := Options{Paths: nd.paths, Home: nd.home, Log: quiet, Dial: nd.net.dialer(nd.name), HasAlias: nd.hasAlias,
+	logger := slog.New(slog.NewTextHandler(nd.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	o := Options{Paths: nd.paths, Home: nd.home, Log: logger, Dial: nd.net.dialer(nd.name), HasAlias: nd.hasAlias,
 		MinBackoff: 20 * time.Millisecond, MaxBackoff: 100 * time.Millisecond,
 		Debounce: 30 * time.Millisecond, Ready: ready}
 	for _, f := range nd.mods {
@@ -398,7 +424,7 @@ func TestUpgradeSwapsTheBinaryAndRestarts(t *testing.T) {
 			t.Fatalf("b exited with %v, want ErrRestart", err)
 		}
 		b.cancel = nil
-	case <-time.After(6 * time.Second):
+	case <-time.After(30 * time.Second): // macOS scans a new executable on its first run: seconds under load
 		t.Fatal("b was not upgraded")
 	}
 	got, _ := os.ReadFile(oldBin)

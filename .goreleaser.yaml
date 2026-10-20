@@ -1,0 +1,55 @@
+# GoReleaser config: prebuilt releases for macOS and Linux (SPEC §11, D17).
+#
+# Local proof, no push:   make snapshot   (goreleaser release --snapshot --clean)
+# Real release:           git tag vX.Y.Z && git push origin vX.Y.Z  -> .github/workflows/release.yml
+#
+# Asset names are read by install.sh and internal/release (AssetName):
+# enigma_<version without v>_<os>_<arch>.tar.gz, plus checksums.txt.
+# Change all three together.
+version: 2
+
+project_name: enigma
+
+builds:
+  - id: enigma
+    main: ./cmd/enigma
+    binary: enigma
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      # Machines compare this version to stay on one (SPEC §11). v+Version,
+      # not Tag: in a snapshot Tag is v0.0.0 while assets carry the snapshot version.
+      - -s -w -X github.com/nadavushka-dev/enigma/internal/buildinfo.Version=v{{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: tarball
+    ids:
+      - enigma
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - SPEC.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+release:
+  github:
+    owner: nadavushka-dev
+    name: enigma
+  # v0.1.0-rc.1 style tags become pre-releases.
+  prerelease: auto
+
+changelog:
+  use: git

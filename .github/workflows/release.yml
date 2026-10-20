@@ -1,0 +1,31 @@
+# Release: on a v* tag, run the gates, build all four targets with
+# GoReleaser and publish a GitHub Release (tarballs + checksums.txt).
+# Secrets: only the automatic GITHUB_TOKEN.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the changelog and the version need tags
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gate
+        run: make check
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2.18"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

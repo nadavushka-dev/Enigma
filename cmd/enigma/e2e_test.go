@@ -146,7 +146,13 @@ func (h *host) startDaemon() (stop func()) {
 // installed in b's ~/.local/bin) until the test ends.
 func (h *host) add(b *host) string {
 	h.w.t.Helper()
-	h.w.t.Cleanup(func() { b.run("service", "uninstall") })
+	h.w.t.Cleanup(func() {
+		b.run("service", "uninstall")
+		if h.w.t.Failed() {
+			log, _ := os.ReadFile(filepath.Join(b.eh, "enigma.log"))
+			h.w.t.Logf("--- %s daemon log (background) ---\n%s", b.name, log)
+		}
+	})
 	return h.must("machine", "add", b.name)
 }
 
@@ -180,7 +186,12 @@ func (h *host) read(rel string) string {
 
 func eventuallyT(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	eventuallyLongT(t, what, 10*time.Second, cond)
+}
+
+func eventuallyLongT(t *testing.T, what string, d time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out: %s", what)
