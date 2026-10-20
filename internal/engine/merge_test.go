@@ -102,3 +102,37 @@ func dirSnapshot(m *machine, dir string) string {
 	sort.Strings(out)
 	return strings.Join(out, "\n")
 }
+
+func TestConflictListComesFromDisk(t *testing.T) {
+	a, b := newMachine(t, "a"), newMachine(t, "b")
+	concurrentEdits(t, a, b, "c/f.md", "base\n", "on a\n", "on b\n")
+	link(t, a, b)
+	eventually(t, "copy listed on a", func() bool { return len(a.e.Status().Conflicts) == 1 })
+	a.restart()
+	if got := a.e.Status().Conflicts; len(got) != 1 || !strings.HasPrefix(got[0], "c/f.conflict-") {
+		t.Fatalf("after restart: %v", got)
+	}
+	os.Remove(a.path(a.e.Status().Conflicts[0])) // the user resolved it
+	a.e.Rescan()
+	if got := a.e.Status().Conflicts; len(got) != 0 {
+		t.Fatalf("after deleting the copy: %v", got)
+	}
+}
+
+func TestConflictListIncludesSingleFileEntryCopies(t *testing.T) {
+	a, b := newMachine(t, "a"), newMachine(t, "b")
+	a.write("cfg/rc", "base\n")
+	a.add("cfg/rc")
+	cut := link(t, a, b)
+	eventually(t, "synced", hasFile(b, "cfg/rc", "base\n"))
+	cut()
+	a.writeAged("cfg/rc", "on a\n", time.Hour)
+	a.e.Rescan()
+	b.write("cfg/rc", "on b\n")
+	b.e.Rescan()
+	link(t, a, b)
+	eventually(t, "copy listed on a", func() bool {
+		got := a.e.Status().Conflicts
+		return len(got) == 1 && strings.HasPrefix(got[0], "cfg/rc.conflict-")
+	})
+}

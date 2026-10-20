@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -97,7 +98,9 @@ func (h *host) must(args ...string) string {
 	return out
 }
 
-func (h *host) startDaemon() {
+// startDaemon starts this machine's daemon; stop (also run at cleanup)
+// stops it.
+func (h *host) startDaemon() (stop func()) {
 	h.w.t.Helper()
 	cmd := exec.Command(bin, "daemon")
 	cmd.Env, cmd.Dir = h.env(), h.home
@@ -106,22 +109,29 @@ func (h *host) startDaemon() {
 	if err := cmd.Start(); err != nil {
 		h.w.t.Fatal(err)
 	}
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			cmd.Process.Signal(os.Interrupt)
+			done := make(chan struct{})
+			go func() { cmd.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				cmd.Process.Kill()
+			}
+			logf.Close()
+		})
+	}
 	h.w.t.Cleanup(func() {
-		cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() { cmd.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-			cmd.Process.Kill()
-		}
-		logf.Close()
+		stop()
 		if h.w.t.Failed() {
 			b, _ := os.ReadFile(logf.Name())
 			h.w.t.Logf("--- %s daemon log ---\n%s", h.name, b)
 		}
 	})
 	eventuallyT(h.w.t, h.name+" daemon up", func() bool { _, code := h.run("status"); return code == 0 })
+	return stop
 }
 
 func (h *host) write(rel, s string) {
@@ -337,4 +347,38 @@ func TestE2E_TrashListRestoreEmpty(t *testing.T) {
 	if out := a.must("trash", "list"); !strings.Contains(out, "trash is empty") {
 		t.Fatalf("after empty:\n%s", out)
 	}
+}
+
+func TestE2E_ConflictsListsCopiesWithTheirOriginal(t *testing.T) {
+	w := newWorld(t)
+	a, b := w.host("a"), w.host("b")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	b.must("join", "--name", "b", "a")
+	stopB := b.startDaemon()
+	a.write("n/f.md", "base")
+	a.must("add", "n")
+	eventuallyT(t, "synced", func() bool { return b.read("n/f.md") == "base" })
+
+	stopB()
+	b.write("n/f.md", "edit on b")
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(filepath.Join(b.home, "n/f.md"), old, old) // b's edit is the older: it loses
+	a.write("n/f.md", "edit on a")
+	time.Sleep(300 * time.Millisecond)
+	b.startDaemon()
+
+	eventuallyT(t, "conflict listed on a", func() bool { return strings.Contains(a.must("conflicts"), "~/n/f.md") })
+	var got []struct{ Path, Original, Machine string }
+	if err := json.Unmarshal([]byte(a.must("conflicts", "--json")), &got); err != nil || len(got) != 1 {
+		t.Fatalf("conflicts --json: %v %+v", err, got)
+	}
+	if got[0].Original != "n/f.md" || got[0].Machine != "b" || !strings.HasPrefix(got[0].Path, "n/f.conflict-b-") {
+		t.Fatalf("copy %+v", got[0])
+	}
+	if c := a.read(got[0].Path); c != "edit on b" {
+		t.Fatalf("copy holds %q", c)
+	}
+	os.Remove(filepath.Join(a.home, got[0].Path)) // resolved
+	eventuallyT(t, "resolved everywhere", func() bool { return strings.Contains(b.must("conflicts"), "no conflict copies") })
 }

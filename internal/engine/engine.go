@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -68,7 +69,6 @@ type Engine struct {
 	matchers  map[string]*fsx.Matcher
 	skipped   map[string]map[string]bool // entry -> rel -> skipped
 	missing   map[string]bool            // entry root vanished locally (§6.5 guard)
-	conflicts []string
 	dirty     bool
 }
 
@@ -256,8 +256,8 @@ type PeerStatus struct{ ID, Name string }
 type Status struct {
 	Entries        []EntryStatus
 	Peers          []PeerStatus
-	Files          int // tracked, not deleted
-	Conflicts      []string
+	Files          int      // tracked, not deleted
+	Conflicts      []string // conflict copies on this machine's disk, from ~
 	Sent, Received int64
 }
 
@@ -283,12 +283,42 @@ func (e *Engine) Status() Status {
 				s.Files++
 			}
 		}
-		s.Conflicts = append(s.Conflicts, e.conflicts...)
+		s.Conflicts = e.conflictCopies()
 	})
 	sort.Slice(s.Entries, func(i, j int) bool { return s.Entries[i].Path < s.Entries[j].Path })
 	sort.Slice(s.Peers, func(i, j int) bool { return s.Peers[i].Name < s.Peers[j].Name })
 	s.Sent, s.Received = e.sent.Load(), e.received.Load()
 	return s
+}
+
+// conflictCopies lists the conflict copies on disk (SPEC §7): tracked ones
+// inside folder entries, and those beside single-file entries, which are
+// outside every entry. A copy the user deleted is resolved.
+func (e *Engine) conflictCopies() []string {
+	var out []string
+	isFile := func(rel string) bool {
+		info, err := fsx.Stat(e.abs(rel))
+		return err == nil && info.Kind == fsx.Regular
+	}
+	for rel, fs := range e.st.Files {
+		if _, ok := ParseConflictName(rel); ok && !fs.V.IsDeleted() && isFile(rel) {
+			out = append(out, rel)
+		}
+	}
+	for entry, r := range e.st.Entries {
+		if r.Removed || r.Dir {
+			continue
+		}
+		names, _ := os.ReadDir(filepath.Dir(e.abs(entry)))
+		for _, n := range names {
+			rel := path.Join(path.Dir(entry), n.Name())
+			if c, ok := ParseConflictName(rel); ok && c.Original == entry && isFile(rel) {
+				out = append(out, rel)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ---- paths ------------------------------------------------------------------

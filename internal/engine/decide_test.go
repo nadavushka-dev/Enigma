@@ -340,3 +340,25 @@ func TestD4_FullTieBreaksOnHash(t *testing.T) {
 		t.Fatalf("copies differ: %+v / %+v", dx.Copy, dy.Copy)
 	}
 }
+
+func TestParseConflictNameRoundTrips(t *testing.T) {
+	mt := time.Date(2026, 10, 20, 15, 30, 12, 0, time.UTC).UnixNano()
+	for _, orig := range []string{".claude/CLAUDE.md", ".zshrc", "a/b/notes", "x.tar.gz"} {
+		for _, machine := range []string{"devbox", "my-mac-2"} {
+			name := ConflictName(orig, machine, mt, "1a2b3c4d")
+			got, ok := ParseConflictName(name)
+			if !ok || got.Original != orig || got.Machine != machine || got.Time.UnixNano() != mt {
+				t.Errorf("%s -> %+v %v", name, got, ok)
+			}
+		}
+	}
+	// The numbered fallback for a taken name.
+	if got, ok := ParseConflictName("n/CLAUDE.conflict-a-20261020-153012-1a2b3c.2.md"); !ok || got.Original != "n/CLAUDE.md" {
+		t.Errorf("numbered: %+v %v", got, ok)
+	}
+	for _, not := range []string{"CLAUDE.md", "notes.conflict.md", "a.conflict-x-2026-1a2b3c.md"} {
+		if _, ok := ParseConflictName(not); ok {
+			t.Errorf("%q parsed as a conflict copy", not)
+		}
+	}
+}

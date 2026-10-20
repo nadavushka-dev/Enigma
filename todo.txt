@@ -15,4 +15,5 @@ x 2026-10-20 2026-10-20 M3 history store: content by hash, per-file version ance
 x 2026-10-20 2026-10-20 M3 diff3: line diff + three-way merge, text detection +m3
 x 2026-10-20 2026-10-20 M3 engine: merge concurrent text edits on a common base, fallback to conflict copy +m3
 x 2026-10-20 2026-10-20 M3 trash: purge after 30 days, trash list/restore/empty CLI +m3
-2026-10-20 M3 conflicts CLI: enigma conflicts +m3
+x 2026-10-20 2026-10-20 M3 conflicts CLI: enigma conflicts +m3
+2026-10-20 M4 enigma conflicts across the group (ask peers for single-file entry copies) +m4

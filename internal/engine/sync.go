@@ -599,7 +599,6 @@ func (e *Engine) writeCopy(c Copy, data []byte) {
 	}
 	e.keep(data)
 	e.log.Warn("conflict", "kept", c.Path)
-	e.conflicts = append(e.conflicts, c.Path)
 	if entry, _, ok := e.entryFor(c.Path); ok && !e.ignored(entry, c.Path) {
 		if cur := e.current(c.Path); cur == nil || version.Compare(c.Version.Vector, cur.Vector) == version.After {
 			e.setCurrent(c.Path, c.Version, true)

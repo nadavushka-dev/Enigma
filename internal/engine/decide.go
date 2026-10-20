@@ -194,3 +194,27 @@ func ConflictName(p, machine string, mtime int64, hash string) string {
 	ts := time.Unix(0, mtime).UTC().Format("20060102-150405")
 	return fmt.Sprintf("%s%s.conflict-%s-%s-%s%s", dir, stem, unsafeName.ReplaceAllString(machine, "_"), ts, hash[:min(6, len(hash))], ext)
 }
+
+// ConflictCopy describes a conflict copy, parsed back from its name.
+type ConflictCopy struct {
+	Original string    `json:"original"` // the file it is a copy of, relative to ~
+	Machine  string    `json:"machine"`  // whose edit it holds
+	Time     time.Time `json:"time"`     // that edit's mtime, to the second
+}
+
+// The numbered fallback (.N) is optional; a real extension is preferred.
+var conflictName = regexp.MustCompile(`^(.*)\.conflict-([A-Za-z0-9._-]+)-(\d{8}-\d{6})-[0-9a-f]{1,6}(?:\.\d+)??(\.[^./]*)?$`)
+
+// ParseConflictName reverses ConflictName.
+func ParseConflictName(p string) (ConflictCopy, bool) {
+	dir, base := path.Split(p)
+	m := conflictName.FindStringSubmatch(base)
+	if m == nil || m[1] == "" {
+		return ConflictCopy{}, false
+	}
+	ts, err := time.Parse("20060102-150405", m[3])
+	if err != nil {
+		return ConflictCopy{}, false
+	}
+	return ConflictCopy{Original: dir + m[1] + m[4], Machine: m[2], Time: ts}, true
+}
