@@ -278,7 +278,13 @@ as a normal edit.
 | `~/.local/share/enigma/history/` | Content of past versions, by hash, used as merge bases. The last 20 versions per file or 30 days, capped at 200 MB in total. |
 | `~/.local/share/enigma/trash/` | §9 |
 | `~/.local/share/enigma/backups/` | First-add backups (§9, D13) |
-| `~/.local/share/enigma/enigma.sock` | Daemon socket. macOS limits socket paths to 104 bytes; a longer path falls back to `/tmp/enigma-<uid>.sock`. |
+| `~/.local/share/enigma/enigma.sock` | API socket, used by the CLI and TUI (HTTP + JSON). |
+| `~/.local/share/enigma/peer.sock` | Peer socket: `enigma bridge` relays an incoming ssh link here. |
+| `~/.local/share/enigma/identity.json`, `peers.json` | This machine's ID and group ID, and the peers it dials. |
+
+Sockets: macOS limits socket paths to 104 bytes, so a longer path falls
+back to `/tmp/enigma-<uid>-<hash>-<name>.sock`. The CLI and the bridge find
+the sockets the same way.
 | `~/.local/share/enigma/enigma.log` | Daemon log, rotated at 10 MB. |
 
 `XDG_CONFIG_HOME` and `XDG_DATA_HOME` are respected. `ENIGMA_HOME` puts
@@ -289,6 +295,13 @@ A machine offline for longer is told to rejoin, which runs a first add from
 an online machine. Otherwise it could bring deleted files back.
 
 ## 11. Machines
+
+**Until milestone 4 (stopgap):** `enigma init` creates the group on the
+first machine. `enigma join <ssh-alias>` on another machine reads the group
+ID from that machine over ssh (`enigma identity`), adopts it, and records
+the alias as a peer to dial. Each machine dials only the peers it recorded;
+a link opened by either side serves both, and relaying (§6.3) covers
+missing pairs. `machine add` (below) replaces this.
 
 **Creating the group:** `enigma init` on the first machine creates the group
 (random `group_id`) with that machine as its only member.
