@@ -145,3 +145,25 @@ func TestBridgeWithoutDaemonExplains(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestResolveUsesSSHG(t *testing.T) {
+	fakeSSH(t, `[ "$1" = "-G" ] || exit 9
+printf 'user me\nhostname 10.0.0.2\nport 2222\nidentityfile ~/.ssh/id\n'`)
+	got, err := Resolve(context.Background(), "devbox")
+	if err != nil || got != "ssh://me@10.0.0.2:2222" {
+		t.Fatalf("%q %v", got, err)
+	}
+}
+
+func TestShellPassesStdinAndReportsStderr(t *testing.T) {
+	fakeSSH(t, `while [ $# -gt 0 ]; do case "$1" in -T) shift;; -o) shift 2;; *) break;; esac; done
+shift; sh -c "$*"`)
+	out, err := Shell(context.Background(), "box", "cat; echo done", strings.NewReader("hello "))
+	if err != nil || string(out) != "hello done\n" {
+		t.Fatalf("%q %v", out, err)
+	}
+	_, err = Shell(context.Background(), "box", "echo boom >&2; exit 3", nil)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err %v", err)
+	}
+}

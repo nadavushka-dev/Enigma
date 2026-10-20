@@ -116,6 +116,52 @@ func Run(ctx context.Context, target, remoteCmd string, sub ...string) ([]byte, 
 	return out.Bytes(), nil
 }
 
+// Shell runs a shell command on target (one ssh session, with stdin) and
+// returns its stdout; errors carry ssh's or the command's stderr.
+func Shell(ctx context.Context, target, command string, stdin io.Reader) ([]byte, error) {
+	args := SSHArgs(target, "")
+	args[len(args)-1] = command // a shell command, not an enigma subcommand
+	cmd := exec.CommandContext(ctx, sshBinary(), args...)
+	var out, errb bytes.Buffer
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, &out, &errb
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(errb.String()); msg != "" {
+			return out.Bytes(), fmt.Errorf("ssh %s: %s", target, msg)
+		}
+		return out.Bytes(), fmt.Errorf("ssh %s: %w", target, err)
+	}
+	return out.Bytes(), nil
+}
+
+// Resolve captures how this machine reaches alias, from `ssh -G`, as
+// ssh://user@hostname:port: a target other machines can use even without
+// the alias (SPEC §5).
+func Resolve(ctx context.Context, alias string) (string, error) {
+	out, err := exec.CommandContext(ctx, sshBinary(), "-G", alias).Output()
+	if err != nil {
+		return "", fmt.Errorf("ssh -G %s: %w", alias, err)
+	}
+	var user, host, port string
+	for _, line := range strings.Split(string(out), "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), " ")
+		switch k {
+		case "user":
+			user = v
+		case "hostname":
+			host = v
+		case "port":
+			port = v
+		}
+	}
+	if user == "" || host == "" || port == "" {
+		return "", fmt.Errorf("ssh -G %s: no user, hostname or port in its output", alias)
+	}
+	if strings.Contains(host, ":") { // IPv6
+		host = "[" + host + "]"
+	}
+	return "ssh://" + user + "@" + host + ":" + port, nil
+}
+
 // Bridge relays in/out (an ssh session's stdio) to the daemon's peer socket
 // until either side ends.
 func Bridge(in io.Reader, out io.Writer, peerSocket string) error {
