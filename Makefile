@@ -14,7 +14,7 @@ build:
 hooks:
 	git config core.hooksPath .githooks
 
-e2e: ## Docker end-to-end: 3 containers with sshd + this Mac (needs Docker, ~20s)
+e2e: ## Docker end-to-end: 3 Linux containers with sshd (needs Docker, ~20s; ENIGMA_E2E_MAC=1 adds this Mac)
 	go test -tags docker -count=1 -timeout 15m -run TestDocker ./cmd/enigma/
 
 e2e-long: ## e2e plus a long network cut that outlives ssh keepalive (~80s)

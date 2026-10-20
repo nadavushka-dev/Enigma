@@ -10,7 +10,7 @@ x 2026-10-20 2026-10-20 M2 spec: two sockets (§10), M2 init/join stopgap (§11)
 x 2026-10-20 2026-10-20 M2 RESUME HERE: next is service install (launchd + systemd), then docker e2e +m2
 x 2026-10-20 2026-10-20 M2 daemon log rotation at 10 MB (SPEC §10) +m2
 2026-10-20 END macOS pass: real service install on this Mac (ASK USER first, touches ~/Library/LaunchAgents) + Mac in docker e2e +macos
-2026-10-20 M3 docker e2e: Linux containers only for now (Mac member deferred to the macOS pass) +m3
+x 2026-10-20 2026-10-20 M3 docker e2e: Linux containers only for now (Mac member deferred to the macOS pass) +m3
 x 2026-10-20 2026-10-20 M3 history store: content by hash, per-file version ancestry, retention 20/30d/200MB +m3
 x 2026-10-20 2026-10-20 M3 diff3: line diff + three-way merge, text detection +m3
 x 2026-10-20 2026-10-20 M3 engine: merge concurrent text edits on a common base, fallback to conflict copy +m3

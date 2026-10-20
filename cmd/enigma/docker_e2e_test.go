@@ -1,12 +1,13 @@
 //go:build docker
 
 // Docker end-to-end suite (SPEC §13): three Linux containers running sshd
-// and real daemons, plus this Mac as a fourth member, all over real ssh.
-// Run with `make e2e` (needs Docker). The Mac side uses a throwaway HOME,
+// and real daemons, over real ssh. Run with `make e2e` (needs Docker).
+// ENIGMA_E2E_MAC=1 adds this Mac as a fourth member, with a throwaway HOME
 // so no real files are touched.
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -81,7 +82,7 @@ func eventuallyLong(t *testing.T, what string, d time.Duration, cond func() bool
 	}
 }
 
-func TestDocker_ThreeContainersAndThisMac(t *testing.T) {
+func TestDocker_ThreeContainers(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not installed")
 	}
@@ -141,12 +142,14 @@ func TestDocker_ThreeContainersAndThisMac(t *testing.T) {
 	c3.sh("enigma join --name c3 c2")
 	c3.startDaemon()
 
-	// This Mac: throwaway HOME; ssh through a config that maps c1 to its
-	// published port.
-	mac := &host{w: &world{t: t, root: root}, name: "mac", home: filepath.Join(root, "mac-home"), eh: filepath.Join(root, "mac-enigma")}
-	os.MkdirAll(mac.home, 0o755)
-	sshCfg := filepath.Join(root, "ssh_config")
-	os.WriteFile(sshCfg, []byte(fmt.Sprintf(`Host c1
+	// This Mac joins only with ENIGMA_E2E_MAC=1 (the macOS pass): a
+	// throwaway HOME, and ssh through a config that maps c1 to its port.
+	var mac *host
+	if os.Getenv("ENIGMA_E2E_MAC") != "" {
+		mac = &host{w: &world{t: t, root: root}, name: "mac", home: filepath.Join(root, "mac-home"), eh: filepath.Join(root, "mac-enigma")}
+		os.MkdirAll(mac.home, 0o755)
+		sshCfg := filepath.Join(root, "ssh_config")
+		os.WriteFile(sshCfg, []byte(fmt.Sprintf(`Host c1
   HostName 127.0.0.1
   Port %s
   User dev
@@ -156,72 +159,95 @@ func TestDocker_ThreeContainersAndThisMac(t *testing.T) {
   UserKnownHostsFile /dev/null
   LogLevel ERROR
 `, c1.port, filepath.Join(keys, "id_ed25519"))), 0o600)
-	os.Chmod(filepath.Join(keys, "id_ed25519"), 0o600)
-	wrapper := filepath.Join(root, "ssh")
-	os.WriteFile(wrapper, []byte("#!/bin/sh\nexec ssh -F "+sshCfg+" \"$@\"\n"), 0o755)
-	mac.w.ssh = wrapper
-	mac.must("join", "--name", "mac", "c1")
-	mac.startDaemon()
-
-	// 1. Added on the Mac, reaches every container (c3 through c2).
-	mac.write(".claude/CLAUDE.md", "# rules from the mac")
-	mac.must("add", "~/.claude/CLAUDE.md")
-	for _, b := range boxes {
-		eventuallyLong(t, b.name+" has the file", 30*time.Second, func() bool { return b.read(".claude/CLAUDE.md") == "# rules from the mac" })
+		os.Chmod(filepath.Join(keys, "id_ed25519"), 0o600)
+		wrapper := filepath.Join(root, "ssh")
+		os.WriteFile(wrapper, []byte("#!/bin/sh\nexec ssh -F "+sshCfg+" \"$@\"\n"), 0o755)
+		mac.w.ssh = wrapper
+		mac.must("join", "--name", "mac", "c1")
+		mac.startDaemon()
+	}
+	// Compared trimmed: docker exec output loses the final newline.
+	same := func(got, want string) bool { return strings.TrimSpace(got) == strings.TrimSpace(want) }
+	everyone := func(what string, d time.Duration, want string) {
+		t.Helper()
+		for _, b := range boxes {
+			eventuallyLong(t, b.name+" "+what, d, func() bool { return same(b.read(".claude/CLAUDE.md"), want) })
+		}
+		if mac != nil {
+			eventuallyLong(t, "mac "+what, d, func() bool { return same(mac.read(".claude/CLAUDE.md"), want) })
+		}
 	}
 
-	// 2. Edited on c3, reaches the Mac.
+	// 1. Added on c1, reaches every machine (c3 through c2).
+	c1.sh("mkdir -p ~/.claude && printf '# rules from c1' > ~/.claude/CLAUDE.md")
+	c1.sh("enigma add ~/.claude/CLAUDE.md")
+	everyone("has the file", 30*time.Second, "# rules from c1")
+
+	// 2. Edited on c3 (reachable only through c2), reaches c1.
 	c3.sh("printf '# edited on c3' > ~/.claude/CLAUDE.md")
-	eventuallyLong(t, "mac has c3's edit", 30*time.Second, func() bool { return mac.read(".claude/CLAUDE.md") == "# edited on c3" })
+	everyone("has c3's edit", 30*time.Second, "# edited on c3")
 
 	// 3. c3 is cut off (its only link, c2, is down); its offline edit
 	//    arrives once c2 is back.
 	c2.stopDaemon()
 	c3.sh("printf '# offline edit on c3' > ~/.claude/CLAUDE.md")
 	time.Sleep(time.Second)
-	if mac.read(".claude/CLAUDE.md") == "# offline edit on c3" {
+	if c1.read(".claude/CLAUDE.md") == "# offline edit on c3" {
 		t.Fatal("c3 should be unreachable while c2 is down")
 	}
 	c2.startDaemon()
-	eventuallyLong(t, "offline edit reaches the mac", 60*time.Second, func() bool { return mac.read(".claude/CLAUDE.md") == "# offline edit on c3" })
+	everyone("has the offline edit", 60*time.Second, "# offline edit on c3")
 
-	// 4. A real network cut: c1 leaves the network (links die by ssh
-	//    keepalive), the Mac edits meanwhile, c1 returns and catches up.
+	// 4. A real network cut: c1 leaves the network, c2 edits meanwhile,
+	//    c1 returns and catches up.
 	docker(t, "network", "disconnect", network, c1.name)
-	mac.write(".claude/CLAUDE.md", "# edited while c1 was cut off")
+	c2.sh("printf '# edited while c1 was cut off' > ~/.claude/CLAUDE.md")
 	time.Sleep(5 * time.Second)
-	// The cut must be real: the Mac reaches the others only through c1.
-	for _, b := range []*box{c2, c3} {
-		if b.read(".claude/CLAUDE.md") == "# edited while c1 was cut off" {
-			t.Fatalf("%s got the edit during the cut: the cut is not real", b.name)
-		}
+	if c1.read(".claude/CLAUDE.md") == "# edited while c1 was cut off" {
+		t.Fatal("c1 got the edit during the cut: the cut is not real")
 	}
 	docker(t, "network", "connect", "--alias", "c1", network, c1.name)
+	everyone("converges after the cut", 120*time.Second, "# edited while c1 was cut off")
+
+	// 5. Concurrent edits to different lines merge over real links, with
+	//    no conflict copy (SPEC §7 step 3).
+	c1.sh("printf '1\\n2\\n3\\n4\\n5\\n' > ~/.claude/CLAUDE.md")
+	everyone("has the five lines", 30*time.Second, "1\n2\n3\n4\n5\n")
+	c3.stopDaemon()
+	c3.sh("printf '1 from c3\\n2\\n3\\n4\\n5\\n' > ~/.claude/CLAUDE.md")
+	c1.sh("printf '1\\n2\\n3\\n4\\n5 from c1\\n' > ~/.claude/CLAUDE.md")
+	withoutC3 := []*box{c1, c2}
+	for _, b := range withoutC3 {
+		eventuallyLong(t, b.name+" has c1's edit", 30*time.Second, func() bool { return same(b.read(".claude/CLAUDE.md"), "1\n2\n3\n4\n5 from c1\n") })
+	}
+	c3.startDaemon()
+	everyone("has the merge", 60*time.Second, "1 from c3\n2\n3\n4\n5 from c1\n")
 	for _, b := range boxes {
-		eventuallyLong(t, b.name+" converges after the cut", 120*time.Second, func() bool {
-			return b.read(".claude/CLAUDE.md") == "# edited while c1 was cut off"
-		})
+		if out := b.sh("enigma conflicts"); !strings.Contains(out, "no conflict copies") {
+			t.Fatalf("%s: a clean merge left conflicts:\n%s", b.name, out)
+		}
 	}
 
-	// 5. (ENIGMA_E2E_LONG=1) A long cut: ssh's keepalive (15s x 3) gives up,
+	// 6. (ENIGMA_E2E_LONG=1) A long cut: ssh's keepalive (15s x 3) gives up,
 	//    the link dies, and the daemons must redial once c1 is back.
 	if os.Getenv("ENIGMA_E2E_LONG") == "" {
 		return
 	}
 	docker(t, "network", "disconnect", network, c1.name)
-	eventuallyLong(t, "mac notices the dead link", 120*time.Second, func() bool {
-		for _, p := range mac.status().Peers {
+	eventuallyLong(t, "c2 notices the dead link", 120*time.Second, func() bool {
+		var st statusJSON
+		out, err := c2.try("enigma status --json")
+		if err != nil || json.Unmarshal([]byte(out), &st) != nil {
+			return false
+		}
+		for _, p := range st.Peers {
 			if p.Name == "c1" {
 				return !p.Connected
 			}
 		}
 		return false
 	})
-	mac.write(".claude/CLAUDE.md", "# after the link died")
+	c2.sh("printf '# after the link died' > ~/.claude/CLAUDE.md")
 	docker(t, "network", "connect", "--alias", "c1", network, c1.name)
-	for _, b := range boxes {
-		eventuallyLong(t, b.name+" converges after redial", 180*time.Second, func() bool {
-			return b.read(".claude/CLAUDE.md") == "# after the link died"
-		})
-	}
+	everyone("converges after redial", 180*time.Second, "# after the link died")
 }
