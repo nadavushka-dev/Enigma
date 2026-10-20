@@ -496,7 +496,6 @@ in `config.toml`.
    history store.
 4. **Machines:** replicated machine records, `machine add` with self-install,
    automatic same-version upgrades over the link, `doctor`.
-   `doctor`.
 5. **TUI.**
 6. **Polish:** notifications, releases (with release downloads in `machine add`), end-to-end tests.
 
