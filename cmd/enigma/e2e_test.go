@@ -514,3 +514,99 @@ func TestE2E_ConflictsListsCopiesWithTheirOriginal(t *testing.T) {
 	os.Remove(filepath.Join(a.home, got[0].Path)) // resolved
 	eventuallyT(t, "resolved everywhere", func() bool { return strings.Contains(b.must("conflicts"), "no conflict copies") })
 }
+
+func TestE2E_DoctorShowsTheConnectivityMatrix(t *testing.T) {
+	w := newWorld(t)
+	a, b, c := w.host("a"), w.host("b"), w.host("c")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	a.add(b)
+	c.blockFrom(a) // a cannot ssh to c; b can
+	b.add(c)
+	eventuallyT(t, "b linked to c", func() bool { return b.connectedTo("c") })
+
+	var rep struct {
+		Machines []struct {
+			Name    string          `json:"name"`
+			Version string          `json:"version"`
+			Error   string          `json:"error"`
+			Links   map[string]bool `json:"links"`
+		} `json:"machines"`
+		Problems []string `json:"problems"`
+	}
+	out, _ := a.run("doctor", "--json") // stdout and stderr: the JSON, then the exit message
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&rep); err != nil {
+		t.Fatalf("doctor --json: %v\n%s", err, out)
+	}
+	rows := map[string]int{}
+	for i, m := range rep.Machines {
+		rows[m.Name] = i
+	}
+	if len(rows) != 3 {
+		t.Fatalf("machines %+v", rep.Machines)
+	}
+	ra, rb, rc := rep.Machines[rows["a"]], rep.Machines[rows["b"]], rep.Machines[rows["c"]]
+	if !ra.Links["b"] || ra.Links["c"] || !rb.Links["a"] || !rb.Links["c"] {
+		t.Fatalf("links a=%v b=%v", ra.Links, rb.Links)
+	}
+	if rc.Error == "" || !strings.Contains(rc.Error, "refused") {
+		t.Fatalf("c should be unreachable from a: %+v", rc)
+	}
+	if rb.Version != "dev" {
+		t.Fatalf("b's version %q", rb.Version)
+	}
+	problems := strings.Join(rep.Problems, "\n")
+	if !strings.Contains(problems, "a is not linked to c") {
+		t.Fatalf("problems:\n%s", problems)
+	}
+
+	text, code := a.run("doctor")
+	if code == 0 {
+		t.Fatal("doctor must exit non-zero when there are problems")
+	}
+	for _, want := range []string{"FROM \\ TO", "a is not linked to c", "daemon running"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestE2E_ConflictsAcrossTheGroup(t *testing.T) {
+	w := newWorld(t)
+	a, b := w.host("a"), w.host("b")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	a.add(b)
+	a.write("cfg/rc", "base")
+	a.must("add", "cfg/rc") // a single-file entry: its copies sync nowhere
+	eventuallyT(t, "synced", func() bool { return b.read("cfg/rc") == "base" })
+
+	b.must("service", "uninstall")
+	b.write("cfg/rc", "edit on b")
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(filepath.Join(b.home, "cfg/rc"), old, old)
+	a.write("cfg/rc", "edit on a")
+	time.Sleep(300 * time.Millisecond)
+	b.must("service", "install")
+
+	type entry struct {
+		Path string   `json:"path"`
+		On   []string `json:"on"`
+	}
+	list := func(h *host, args ...string) []entry {
+		var got []entry
+		json.Unmarshal([]byte(h.must(append([]string{"conflicts", "--json"}, args...)...)), &got)
+		return got
+	}
+	eventuallyT(t, "the copy on b is listed from a", func() bool {
+		got := list(a)
+		return len(got) == 1 && strings.Contains(strings.Join(got[0].On, ","), "b")
+	})
+	copyPath := list(a)[0].Path
+	os.Remove(filepath.Join(a.home, copyPath))
+	os.Remove(filepath.Join(b.home, copyPath))
+	eventuallyT(t, "resolved everywhere", func() bool { return len(list(a)) == 0 })
+	if got := list(a, "--local"); len(got) != 0 {
+		t.Fatalf("--local: %+v", got)
+	}
+}

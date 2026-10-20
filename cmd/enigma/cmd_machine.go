@@ -326,14 +326,7 @@ func machineRemove(c *ctx, args []string) error {
 	if *uninstall {
 		leave += " --uninstall"
 	}
-	home, _ := os.UserHomeDir()
-	var targets []string
-	if r.Alias != "" && sshconfig.Has(home, r.Alias) {
-		targets = append(targets, r.Alias)
-	}
-	if r.Target != "" {
-		targets = append(targets, r.Target)
-	}
+	targets := targetsOf(r)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	var lastErr error
@@ -403,4 +396,16 @@ func machineAlias(c *ctx, args []string) error {
 		fmt.Fprintf(c.stdout, "this machine now reaches %s with `ssh %s`\n", args[0], alias)
 	}
 	return nil
+}
+
+// targetsOf is how this machine reaches r, as its daemon would (SPEC §5).
+func targetsOf(r proto.MachineRecord) []string {
+	home, _ := os.UserHomeDir()
+	overrides := map[string]string{}
+	if p, err := paths(); err == nil {
+		if l, err := config.LoadLocal(p); err == nil {
+			overrides = l.Aliases
+		}
+	}
+	return daemon.Targets(r, overrides, func(a string) bool { return sshconfig.Has(home, a) })
 }

@@ -401,10 +401,10 @@ Every command takes `--json` for agents and scripts.
 | `enigma machine add <alias>` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §11) |
 | `enigma add <path> [--ignore GLOB]…` · `remove <path>` · `list` | manage entries |
 | `enigma status` | machines (link up/down, latency, last seen), entries, pending transfers, errors |
-| `enigma conflicts` | list conflict copies across the group (until M4: on this machine, which already covers folder entries, whose copies sync everywhere) |
+| `enigma conflicts [--local]` | list conflict copies across the group (asks every member over ssh), with the machines that hold each |
 | `enigma trash list` · `restore <id>` · `empty` | trash on this machine |
 | `enigma log [-f]` | daemon log |
-| `enigma doctor` | connectivity matrix between all machines, version check, socket and service check |
+| `enigma doctor` | connectivity matrix between all machines (each asked over ssh), versions, daemon and service check; exits non-zero on problems |
 | `enigma tui` | the TUI; also what bare `enigma` runs in a terminal |
 | `enigma daemon` · `service install` / `uninstall` | run in the foreground / as a background service |
 | `enigma bridge` · `join` · `leave` | internal, used over ssh |

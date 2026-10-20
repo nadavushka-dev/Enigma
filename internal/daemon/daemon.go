@@ -209,23 +209,17 @@ func (d *daemon) acceptPeers(ln net.Listener) {
 	}
 }
 
-// targets lists how to reach r, in order (SPEC §5): a local override, its
+// Targets lists how to reach r, in order (SPEC §5): a local override, its
 // alias if this machine's ssh config has it, its captured target.
-func (d *daemon) targets(r proto.MachineRecord, overrides map[string]string) []string {
+func Targets(r proto.MachineRecord, overrides map[string]string, hasAlias func(string) bool) []string {
 	var out []string
 	add := func(t string) {
-		if t == "" {
-			return
+		if t != "" && !slices.Contains(out, t) {
+			out = append(out, t)
 		}
-		for _, x := range out {
-			if x == t {
-				return
-			}
-		}
-		out = append(out, t)
 	}
 	add(overrides[r.Name])
-	if r.Alias != "" && d.o.HasAlias(r.Alias) {
+	if r.Alias != "" && hasAlias(r.Alias) {
 		add(r.Alias)
 	}
 	add(r.Target)
@@ -243,7 +237,7 @@ func (d *daemon) reload() error {
 		if r.ID == d.id.MachineID || r.Removed {
 			continue
 		}
-		want[r.ID] = &peerState{rec: r, targets: d.targets(r, local.Aliases)}
+		want[r.ID] = &peerState{rec: r, targets: Targets(r, local.Aliases, d.o.HasAlias)}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
