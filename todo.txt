@@ -17,7 +17,7 @@ x 2026-10-20 2026-10-20 M3 engine: merge concurrent text edits on a common base,
 x 2026-10-20 2026-10-20 M3 trash: purge after 30 days, trash list/restore/empty CLI +m3
 x 2026-10-20 2026-10-20 M3 conflicts CLI: enigma conflicts +m3
 2026-10-20 M4 enigma conflicts across the group (ask peers for single-file entry copies) +m4
-2026-10-20 M4 version: build version (semver / dev commit time), enigma version, ordering +m4
+x 2026-10-20 2026-10-20 M4 version: build version (semver / dev commit time), enigma version, ordering +m4
 2026-10-20 M4 engine: machine records in group state (LWW), handshake carries version+platform, refuses removed +m4
 2026-10-20 M4 upgrade over the link: newer sends binary, older verifies, swaps, re-execs; no sync on mismatch +m4
 2026-10-20 M4 sshconfig: hosts from ~/.ssh/config (+Include), ssh -G target capture +m4

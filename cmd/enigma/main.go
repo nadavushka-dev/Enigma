@@ -5,13 +5,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/nadavushka-dev/enigma/internal/buildinfo"
 	"io"
 	"os"
 	"sort"
 	"strings"
 )
-
-var version = "dev"
 
 // command is one subcommand; each registers itself from its own file.
 type command struct {
@@ -82,7 +81,7 @@ func run(args []string, c *ctx) int {
 
 func init() {
 	register(&command{name: "version", summary: "print the version", run: func(c *ctx, _ []string) error {
-		fmt.Fprintln(c.stdout, "enigma", version)
+		fmt.Fprintln(c.stdout, "enigma", buildinfo.Version, buildinfo.Platform())
 		return nil
 	}})
 }
