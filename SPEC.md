@@ -198,13 +198,20 @@ When two versions are concurrent (neither vector is newer):
 2. **Edit vs delete:** the edit wins (D8). The file is restored where it was
    deleted.
 3. **Both text, base found:** three-way line merge (diff3) using the closest
-   common ancestor as base. The base content comes from the history store
-   (§10), found by walking the incoming version's ancestry until a hash is
-   in the local history.
+   common ancestor as base.
+   - **Ancestry:** each machine keeps, per file, the graph of recent content
+     hashes and their parents (the 64 nearest the current version). `FILE`
+     carries the sender's ancestry list for its version.
+   - **Base:** among hashes in both ancestries, the one closest to both
+     (smallest of the two distances, then smallest sum, then lowest hash).
+     Both machines have the same two lists, so both pick the same base.
+   - The base content comes from the local history store (§10). If it is
+     not there, go to step 4.
    - Clean merge: the result becomes a new version with both versions as
-     parents and the vectors merged, plus the merging machine's own
-     counter.
-   - Overlapping hunks: go to step 4.
+     parents and the vectors merged (no extra counter, so both machines make
+     the identical version). Its mtime is the later of the two; its exec bit
+     and author come from the version that would win in step 4.
+   - Overlapping or touching hunks: go to step 4.
 4. **Fallback (binary file, no base, or overlapping edits):**
    - The newer version by mtime wins in place; on equal mtimes, the higher
      machine ID wins.
@@ -275,7 +282,7 @@ as a normal edit.
 |---|---|
 | `~/.config/enigma/config.toml` | Local-only settings: alias overrides, notifications on/off. Group settings are not here. |
 | `~/.local/share/enigma/state/` | Group state and current versions, as JSON files written atomically (temp + rename). |
-| `~/.local/share/enigma/history/` | Content of past versions, by hash, used as merge bases. The last 20 versions per file or 30 days, capped at 200 MB in total. |
+| `~/.local/share/enigma/history/` | Content of past versions, by hash, used as merge bases. A blob is kept while it is among the last 20 versions of some file or younger than 30 days; the store is capped at 200 MB, oldest first, never dropping a current version. |
 | `~/.local/share/enigma/trash/` | §9 |
 | `~/.local/share/enigma/backups/` | First-add backups (§9, D13) |
 | `~/.local/share/enigma/enigma.sock` | API socket, used by the CLI and TUI (HTTP + JSON). |
