@@ -260,6 +260,9 @@ func TestE2E_UsefulErrors(t *testing.T) {
 	if out, code := a.run("add", "/etc/hosts"); code == 0 || !strings.Contains(out, "home folder") {
 		t.Fatalf("add outside home: %d %s", code, out)
 	}
+	if out, code := a.run("service", "bogus"); code != 2 || !strings.Contains(out, "install") {
+		t.Fatalf("service with a bad action: %d %s", code, out)
+	}
 	if out, code := a.run("bogus"); code != 2 || !strings.Contains(out, "unknown command") {
 		t.Fatalf("unknown command: %d %s", code, out)
 	}
