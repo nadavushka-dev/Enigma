@@ -67,8 +67,10 @@ type Msg struct {
 	Summary map[string]version.Version `json:"summary,omitempty"`
 	Path    string                     `json:"path,omitempty"`
 	Version *version.Version           `json:"version,omitempty"`
-	HasBody bool                       `json:"body,omitempty"`
-	Content []byte                     `json:"-"`
+	// Ancestry of Version (File only), for picking a merge base (SPEC §7).
+	Ancestry []version.Node `json:"ancestry,omitempty"`
+	HasBody  bool           `json:"body,omitempty"`
+	Content  []byte         `json:"-"`
 }
 
 func Write(w io.Writer, m *Msg) error {

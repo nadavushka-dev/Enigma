@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/fsx"
+	"github.com/nadavushka-dev/enigma/internal/history"
 	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/version"
 	"github.com/nadavushka-dev/enigma/internal/watch"
 )
 
@@ -59,6 +61,7 @@ type Engine struct {
 
 	// Loop-owned.
 	st        *state
+	hist      *history.Store
 	statePath string
 	peers     map[string]*peer
 	matchers  map[string]*fsx.Matcher
@@ -99,6 +102,7 @@ func New(o Options) (*Engine, error) {
 		o: o, log: o.Log.With("machine", o.Name),
 		inbox: make(chan func(), 256), quit: make(chan struct{}), done: make(chan struct{}),
 		statePath: filepath.Join(o.DataDir, "state.json"),
+		hist:      history.Open(filepath.Join(o.DataDir, "history")),
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, missing: map[string]bool{},
 	}
@@ -117,6 +121,7 @@ func New(o Options) (*Engine, error) {
 	}
 	e.rescanAll() // changes made while the daemon was not running (§6.5)
 	e.saveIfDirty()
+	e.pruneHistory()
 	go e.loop()
 	return e, nil
 }
@@ -149,6 +154,7 @@ func (e *Engine) loop() {
 			}
 		case <-tick.C:
 			e.rescanAll()
+			e.pruneHistory()
 		}
 		e.saveIfDirty()
 	}
@@ -336,4 +342,17 @@ func (e *Engine) rootPresent(entry string, r proto.EntryRecord) bool {
 	}
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
+}
+
+// pruneHistory applies the retention policy (SPEC §10): each file's latest
+// versions are protected, current versions are never dropped.
+func (e *Engine) pruneHistory() {
+	protected, current := map[string]bool{}, map[string]bool{}
+	for _, fs := range e.st.Files {
+		current[fs.V.Hash] = true
+		for _, n := range version.Walk(fs.Anc, fs.V.Hash, history.KeepPerFile) {
+			protected[n.Hash] = true
+		}
+	}
+	e.hist.Prune(history.DefaultPolicy, protected, current)
 }

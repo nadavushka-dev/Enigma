@@ -246,7 +246,7 @@ func (e *Engine) handleMsg(p *peer, m *proto.Msg) {
 		e.onFetch(p, m.Path)
 	case proto.File:
 		if m.Version != nil {
-			e.onFile(p, m.Path, *m.Version, m.Content)
+			e.onFile(p, m.Path, *m.Version, m.Ancestry, m.Content)
 		}
 	default:
 		e.log.Warn("unknown message", "type", m.Type, "peer", p.name)

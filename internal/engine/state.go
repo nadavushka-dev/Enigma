@@ -16,6 +16,8 @@ type fileState struct {
 	// Materialized: this machine has written or seen this version on disk.
 	// A missing file that was never materialized here is not a delete (§6.5).
 	Materialized bool `json:"materialized,omitempty"`
+	// Anc is the hash graph nearest V, for merge bases (SPEC §7 step 3).
+	Anc version.Graph `json:"anc,omitempty"`
 }
 
 // state is everything a machine persists about the group (SPEC §10).

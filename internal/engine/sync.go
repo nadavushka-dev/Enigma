@@ -307,6 +307,9 @@ func (e *Engine) newLocalVersion(rel string, info fsx.Info, origin version.Origi
 	v := version.Version{Hash: info.Hash, Vector: e.bump(vec), Parents: parents, Mtime: info.Mtime,
 		Exec: info.Exec, By: e.o.MachineID, ByName: e.o.Name, Origin: origin}
 	e.log.Debug("local version", "path", rel, "v", fmtVersion(&v))
+	if data, err := os.ReadFile(e.abs(rel)); err == nil && fsx.Hash(data) == v.Hash {
+		e.keep(data)
+	}
 	e.setCurrent(rel, v, true)
 	e.broadcast(&proto.Msg{Type: proto.Announce, Path: rel, Version: &v}, nil)
 }
@@ -321,9 +324,24 @@ func (e *Engine) bump(vec version.Vector) version.Vector {
 	return out
 }
 
-func (e *Engine) setCurrent(rel string, v version.Version, materialized bool) {
-	e.st.Files[rel] = &fileState{V: v, Materialized: materialized}
+// setCurrent makes v the current version of rel. Its ancestry grows by v
+// and by what a peer sent about it (learned), trimmed to the nearest hashes.
+func (e *Engine) setCurrent(rel string, v version.Version, materialized bool, learned ...version.Node) {
+	g := version.Graph{}
+	if old := e.st.Files[rel]; old != nil {
+		g.Add(version.Walk(old.Anc, old.V.Hash, version.AncestryLimit))
+	}
+	g.Add(learned)
+	g.Add([]version.Node{{Hash: v.Hash, Parents: v.Parents}})
+	e.st.Files[rel] = &fileState{V: v, Materialized: materialized, Anc: version.Trim(g, v.Hash, version.AncestryLimit)}
 	e.dirty = true
+}
+
+// keep stores content in the history store, as a future merge base.
+func (e *Engine) keep(data []byte) {
+	if _, err := e.hist.Put(data); err != nil {
+		e.log.Error("history", "err", err)
+	}
 }
 
 func (e *Engine) current(rel string) *version.Version {
@@ -352,7 +370,7 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	}
 	e.refreshFile(entry, rel)
 	d := Decide(rel, e.current(rel), in, false)
-	if err := e.execute(p, entry, rel, in, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
+	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
 		e.log.Error("apply", "path", rel, "err", err)
 	}
 }
@@ -369,20 +387,21 @@ func (e *Engine) onFetch(p *peer, rel string) {
 			return
 		}
 		v := fs.V
+		anc := version.Walk(fs.Anc, v.Hash, version.AncestryLimit)
 		if v.IsDeleted() {
-			p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v})
+			p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Ancestry: anc})
 			return
 		}
 		data, err := os.ReadFile(e.abs(rel))
 		if err == nil && fsx.Hash(data) == v.Hash {
-			p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Content: data})
+			p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Ancestry: anc, Content: data})
 			return
 		}
 		// Changed between refresh and read: refresh again.
 	}
 }
 
-func (e *Engine) onFile(p *peer, rel string, in version.Version, content []byte) {
+func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.Node, content []byte) {
 	entry, ok := e.accept(rel)
 	if !ok {
 		return
@@ -391,10 +410,13 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, content []byte)
 		e.log.Error("content does not match its hash; dropped", "path", rel, "peer", p.name)
 		return
 	}
+	if !in.IsDeleted() {
+		e.keep(content)
+	}
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
 		e.refreshFile(entry, rel)
 		d := Decide(rel, e.current(rel), in, true)
-		err := e.execute(p, entry, rel, in, content, d)
+		err := e.execute(p, entry, rel, in, anc, content, d)
 		if !errors.Is(err, fsx.ErrChanged) {
 			if err != nil {
 				e.log.Error("apply", "path", rel, "err", err)
@@ -404,7 +426,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, content []byte)
 	}
 }
 
-func (e *Engine) execute(p *peer, entry, rel string, in version.Version, content []byte, d Decision) error {
+func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []version.Node, content []byte, d Decision) error {
 	e.log.Debug("decide", "path", rel, "peer", p.name, "action", d.Action, "cur", fmtVersion(e.current(rel)),
 		"in", fmtVersion(&in), "content", content != nil, "backup", d.Backup, "copy", d.Copy != nil)
 	if hook := afterDecide.Load(); hook != nil {
@@ -430,7 +452,7 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, content
 			e.writeCopy(*d.Copy, content)
 		}
 		fs := e.st.Files[rel]
-		e.setCurrent(rel, d.Result, fs != nil && fs.Materialized)
+		e.setCurrent(rel, d.Result, fs != nil && fs.Materialized, anc...)
 		announce(d.Result)
 		return nil
 	case Apply:
@@ -471,7 +493,7 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, content
 			}
 			return err
 		}
-		e.setCurrent(rel, d.Result, true)
+		e.setCurrent(rel, d.Result, true, anc...)
 		announce(d.Result)
 		return nil
 	case Delete:
@@ -491,7 +513,7 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, content
 				fsx.RemoveEmptyDirs(filepath.Dir(abs), e.abs(entry))
 			}
 		}
-		e.setCurrent(rel, d.Result, false)
+		e.setCurrent(rel, d.Result, false, anc...)
 		announce(d.Result)
 		return nil
 	}
@@ -531,6 +553,7 @@ func (e *Engine) writeCopy(c Copy, data []byte) {
 			}
 		}
 	}
+	e.keep(data)
 	e.log.Warn("conflict", "kept", c.Path)
 	e.conflicts = append(e.conflicts, c.Path)
 	if entry, _, ok := e.entryFor(c.Path); ok && !e.ignored(entry, c.Path) {

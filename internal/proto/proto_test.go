@@ -43,7 +43,7 @@ func TestRoundTripAllTypes(t *testing.T) {
 		{Type: Entries, Entries: []EntryRecord{{Path: ".claude/skills", Dir: true, Ignore: []string{"*.log"}, Clock: 3, By: "a"}}},
 		{Type: Announce, Path: ".claude/CLAUDE.md", Version: &v},
 		{Type: Fetch, Path: ".claude/CLAUDE.md"},
-		{Type: File, Path: ".claude/CLAUDE.md", Version: &v, Content: []byte("# rules\x00binary-safe")},
+		{Type: File, Path: ".claude/CLAUDE.md", Version: &v, Ancestry: []version.Node{{Hash: "h", Parents: []string{"p"}}, {Hash: "p"}}, Content: []byte("# rules\x00binary-safe")},
 		{Type: Summary, Summary: map[string]version.Version{"x": v}},
 		{Type: SummaryDone},
 	}
