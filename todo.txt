@@ -1,0 +1,15 @@
+x 2026-10-20 2026-10-20 M1 setup: module, pre-commit hook, Makefile +m1
+x 2026-10-20 2026-10-20 M1 fsx: hash, stat, atomic write w/ precondition, ignore, scan, limits, symlink skip +m1
+x 2026-10-20 2026-10-20 M1 version: vectors compare/merge/bump +m1
+x 2026-10-20 2026-10-20 M1 proto: frame codec +m1
+x 2026-10-20 2026-10-20 M1 engine decide: pure decision table (D4 fallback, D7, D8) +m1
+x 2026-10-20 2026-10-20 M1 watch: recursive watcher w/ debounce +m1
+x 2026-10-20 2026-10-20 M1 engine: two machines over pipes, entries, catch-up, relay, restart +m1
+x 2026-10-20 2026-10-20 M1 simulation: random ops, convergence + no data loss +m1
+x 2026-10-20 2026-10-20 M1 RESUME HERE: sim still loses content on seeds 1009 1018 1043 (seed timing not fully deterministic); trace with ENIGMA_SIM_TRACE=1 +m1
+x 2026-10-20 2026-10-20 M1 fix: conflict copy name collision (hash suffix) +m1
+x 2026-10-20 2026-10-20 M1 fix: user write racing the commit (link-based safe commit) +m1
+x 2026-10-20 2026-10-20 M1 fix: precondition from decision, not disk +m1
+2026-10-20 M1 commit by feature, each commit green +m1
+x 2026-10-20 2026-10-20 M1 spec: update conflict name format in §7; note single-file copies are local +m1
+2026-10-20 M1 run 200 sim seeds under -race +m1

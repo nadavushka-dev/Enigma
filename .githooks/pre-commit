@@ -1,0 +1,9 @@
+#!/bin/sh
+# Enigma pre-commit gate (SPEC §13): format, vet, race tests. Regression is the enemy.
+set -e
+unformatted=$(gofmt -l $(git ls-files '*.go') 2>/dev/null || true)
+if [ -n "$unformatted" ]; then
+  echo "pre-commit: gofmt needed:"; echo "$unformatted"; exit 1
+fi
+go vet ./...
+go test -race -count=1 ./...
