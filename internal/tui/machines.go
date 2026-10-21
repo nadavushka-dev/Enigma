@@ -205,9 +205,15 @@ func (p *machinesPane) View(s *Shared, width, height int, focused bool) string {
 	if height <= 0 {
 		return ""
 	}
-	listH := height
+	// The detail wraps onto up to 3 lines under a blank one; a short pane
+	// gives it fewer lines so that at least one list row stays.
+	var detail []string
 	if height >= 3 {
-		listH = height - 2 // detail line and a blank one above it
+		detail = wrapWords(p.detail(), width, min(3, height-2))
+	}
+	listH := height
+	if len(detail) > 0 {
+		listH = height - 1 - len(detail)
 	}
 	p.height = listH
 	// keep the cursor visible
@@ -233,10 +239,49 @@ func (p *machinesPane) View(s *Shared, width, height int, focused bool) string {
 		}
 		lines = append(lines, fit(l, width))
 	}
-	if listH < height {
-		lines = append(lines, fit("", width), fit(StyleDim.Render(fit(p.detail(), width)), width))
+	if len(detail) > 0 {
+		lines = append(lines, fit("", width))
+		for _, d := range detail {
+			lines = append(lines, fit(StyleDim.Render(fit(d, width)), width))
+		}
 	}
 	return strings.Join(lines[:height], "\n")
+}
+
+// wrapWords breaks s at spaces into at most n lines of at most width cells.
+// A word wider than width is cut; text beyond the last line is dropped.
+func wrapWords(s string, width, n int) []string {
+	if width <= 0 || n <= 0 {
+		return nil
+	}
+	var lines []string
+	cur := ""
+	for _, w := range strings.Fields(s) {
+		for lipgloss.Width(w) > width {
+			if cur != "" {
+				lines = append(lines, cur)
+				cur = ""
+			}
+			lines = append(lines, strings.TrimRight(fit(w, width), " "))
+			w = w[len(strings.TrimRight(fit(w, width), " ")):]
+		}
+		switch {
+		case cur == "":
+			cur = w
+		case lipgloss.Width(cur)+1+lipgloss.Width(w) <= width:
+			cur += " " + w
+		default:
+			lines = append(lines, cur)
+			cur = w
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return lines
 }
 
 // detail describes the selected row.

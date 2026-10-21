@@ -221,3 +221,59 @@ func TestMachinesStateColumnIsAligned(t *testing.T) {
 		t.Fatalf("state columns at %v:\n%s", cols, m.View())
 	}
 }
+
+func TestMachinesDetailWrapsAtNarrowWidth(t *testing.T) {
+	m := started(t, groupFake(t))
+	p := m.panes[0]
+	drive(t, m, key("j"), key("j")) // laptop: target plus an error
+	v := p.View(m.s, 33, 12, true)
+	for _, w := range []string{"ssh://me@laptop:22", "connection refused"} {
+		if !strings.Contains(v, w) {
+			t.Fatalf("detail cut at width 33, missing %q:\n%s", w, v)
+		}
+	}
+	lines := strings.Split(v, "\n")
+	if len(lines) != 12 {
+		t.Fatalf("%d lines, want 12", len(lines))
+	}
+	for _, l := range lines {
+		if lipgloss.Width(l) > 33 {
+			t.Fatalf("line %q too wide", l)
+		}
+	}
+	// the list still shows the rows above the cursor
+	if !strings.Contains(lines[0], "mac") || !strings.Contains(lines[2], "laptop") {
+		t.Fatalf("list rows wrong:\n%s", v)
+	}
+	// a short pane keeps at least one list row and drops detail lines instead
+	for _, h := range []int{3, 4} {
+		v := p.View(m.s, 33, h, true)
+		lines := strings.Split(v, "\n")
+		if len(lines) != h {
+			t.Fatalf("height %d: %d lines", h, len(lines))
+		}
+		if !strings.Contains(lines[0], "laptop") {
+			t.Fatalf("height %d: cursor row not visible:\n%s", h, v)
+		}
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	cases := []struct {
+		in   string
+		w, n int
+		want []string
+	}{
+		{"", 10, 3, nil},
+		{"ssh://me@laptop:22  error: connection refused", 33, 3, []string{"ssh://me@laptop:22 error:", "connection refused"}},
+		{"a b c d", 3, 2, []string{"a b", "c d"}},
+		{"a b c d e f", 3, 2, []string{"a b", "c d"}},
+		{"abcdefgh", 4, 3, []string{"abcd", "efgh"}},
+	}
+	for _, c := range cases {
+		got := wrapWords(c.in, c.w, c.n)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("wrapWords(%q, %d, %d) = %q, want %q", c.in, c.w, c.n, got, c.want)
+		}
+	}
+}
