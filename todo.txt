@@ -39,3 +39,4 @@ x 2026-10-20 2026-10-20 M5 tui: machines pane (members + ssh config hosts, a add
 x 2026-10-20 2026-10-20 M5 tui: files pane (lazy tree of ~, synced marks, dim ignored/oversized/symlinks, a add, x remove) (delegated: herdr agent tui-files, worktree ../enigma-wt/files, branch tui-files) +m5
 x 2026-10-20 2026-10-20 M5 tui: activity pane + side-by-side conflict view, help overlay, bare `enigma` opens the TUI (delegated: herdr agent tui-activity, worktree ../enigma-wt/activity, branch tui-activity) +m5
 2026-10-20 M5 tuicr: user reviews all of M5 in tuicr (agreed: lead reviews delegate branches, one tuicr pass at the end) +m5
+x 2026-10-21 2026-10-21 M5 fixer: Machines detail line wraps (tuicr QUESTION, option a) +m5
