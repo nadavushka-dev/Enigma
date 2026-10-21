@@ -1,0 +1,24 @@
+# One edit reaching every machine: announce, then fetch (SPEC §6)
+shape: sequence_diagram
+
+user: you edit ~/notes/todo.md on A
+wa: A watcher
+a: A engine
+b: B engine
+c: C engine
+
+user -> wa: save (editors write in bursts)
+wa -> a: path changed (after 200 ms of quiet)
+a -> a: "hash it; same as current? stop (this is also how echoes stop)"
+a -> a: "new version: vector[A]+1, parent = previous"
+a -> b: "ANNOUNCE {path, hash, vector, mtime}"
+b -> b: "compare vectors: newer → fetch\nolder/equal → ignore\nconcurrent → fetch, then resolve (diagram 04)"
+b -> a: FETCH path
+a -> b: "FILE {version, ancestry, content}"
+b -> b: "apply: temp file, fsync, re-check the target, rename"
+b -> c: "ANNOUNCE (passed on, never back to A)"
+c -> b: FETCH
+b -> c: FILE
+c -> c: apply
+a -> c: "ANNOUNCE (if A–C is up too)"
+c -> c: "already have it: equal vector, ignore"

@@ -1,0 +1,17 @@
+# One version everywhere: upgrading over the link (SPEC §11)
+shape: sequence_diagram
+
+n: "newer daemon (v1.1)"
+o: "older daemon (v1.0)"
+
+n -> o: "HELLO {version v1.1, platform}"
+o -> n: "HELLO {version v1.0, linux/arm64}"
+n -> n: "versions differ: this link syncs nothing.\nbinary for linux/arm64: this one, bin/v1.1/ cache, or release"
+n -> o: "UPGRADE {version, platform, hash} + binary"
+n -> n: "wait for the other side to close (ssh may still be delivering)"
+o -> o: "check: platform matches, hash matches, version really newer"
+o -> o: "write temp, run `tmp version`, rename over own binary"
+o -> n: closes the link
+o -> o: "re-exec itself (same pid)"
+o -> n: "dial again: HELLO v1.1 = v1.1 → normal catch-up"
+

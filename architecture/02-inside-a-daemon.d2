@@ -1,0 +1,59 @@
+# The packages inside one daemon (internal/...)
+direction: down
+
+cmd: cmd/enigma {
+  label: "cmd/enigma\nCLI subcommands, daemon, bridge"
+}
+tui: internal/tui {label: "tui\nMachines · Files · Activity"}
+group: internal/group {label: "group\nmachine add / remove"}
+
+daemon: internal/daemon {
+  label: "daemon\nAPI on enigma.sock · dial loops · peer.sock"
+}
+
+engine: internal/engine {
+  label: "engine — one loop owns all state"
+  style.fill: "#e8f0fe"
+  loop: "actor loop\n(every change goes through it)" {shape: queue}
+  sync: "sync.go\nscan · announce · fetch · apply"
+  decide: "decide.go\nnewer / older / concurrent"
+  peer: "peer.go\nhandshake · catch-up · heartbeat"
+  machines: "machines.go\nrecords · upgrades"
+  events: "events.go\nactivity ring (500)"
+  loop -> sync
+  sync -> decide
+  loop -> peer
+  loop -> machines
+  sync -> events
+}
+
+watch: internal/watch {label: "watch\nfsnotify + debounce"}
+version: internal/version {label: "version\nvectors · ancestry · common base"}
+merge: internal/merge {label: "merge\ndiff3 · line marks"}
+history: internal/history {label: "history\npast contents by hash"}
+trash: internal/trash
+fsx: internal/fsx {label: "fsx\natomic writes · hashing"}
+proto: internal/proto {label: "proto\nwire messages"}
+sshlink: internal/link {label: "link\nssh runner · ssh -G"}
+config: internal/config {label: "config\nidentity · join · aliases"}
+service: internal/service {label: "service\nlaunchd · systemd · background"}
+release: internal/release {label: "release\nbinaries for other platforms"}
+
+cmd -> tui
+cmd -> group
+cmd -> daemon
+cmd -> service
+tui -> daemon: client
+group -> daemon: client
+group -> sshlink
+daemon -> engine
+daemon -> sshlink: dial peers
+daemon -> release
+daemon -> config
+watch -> engine.loop: changed paths
+engine.decide -> version
+engine.sync -> merge
+engine.sync -> history
+engine.sync -> trash
+engine.sync -> fsx
+engine.peer -> proto

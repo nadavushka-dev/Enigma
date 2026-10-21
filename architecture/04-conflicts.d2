@@ -1,0 +1,42 @@
+# What a machine does with an incoming version (SPEC §6.3, §7)
+direction: down
+
+in: "incoming version\n(from FILE)" {shape: oval}
+cmp: "compare version vectors" {shape: diamond}
+in -> cmp
+
+old: "ignore" {shape: oval}
+newer: "apply it" {shape: oval; style.fill: "#e6f4ea"}
+cmp -> old: older or equal
+cmp -> newer: newer
+cmp -> same: concurrent
+
+same: "same content?" {shape: diamond}
+same -> joined: yes
+joined: "no conflict:\nmerge the vectors" {shape: oval; style.fill: "#e6f4ea"}
+same -> del: no
+
+del: "one side deleted?" {shape: diamond}
+del -> editwins: yes
+editwins: "the edit wins:\nfile restored" {shape: oval; style.fill: "#e6f4ea"}
+del -> text: no
+
+text: "both text, and a common\nancestor in history?" {shape: diamond}
+text -> diff3: yes
+text -> fallback: "no (binary / no base)"
+
+diff3: "three-way merge (diff3)\nbase = closest common ancestor\nfrom both ancestries" {shape: rectangle}
+diff3 -> clean: no overlapping hunks
+diff3 -> fallback: overlapping or touching
+
+clean: "merged version\nparents = both hashes (sorted)\nvector = both merged, no extra counter\n→ both machines make the identical one" {shape: oval; style.fill: "#e6f4ea"}
+
+fallback: "fallback: one wins in place\nlater mtime, then higher machine ID,\nthen higher hash (a total order)" {shape: rectangle; style.fill: "#fdecea"}
+fallback -> copy
+copy: "loser written next to it:\nname.conflict-<machine>-<UTC time>-<hash6>.ext\n(same name on every machine)" {shape: oval; style.fill: "#fdecea"}
+
+note: |md
+  Every step uses only data both machines have, so when both detect the
+  same conflict at once they reach the same result, and identical results
+  collapse by the "same content" rule. Nothing is ever dropped.
+| {near: bottom-center}

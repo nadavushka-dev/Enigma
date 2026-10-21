@@ -1,0 +1,31 @@
+# What Enigma keeps on each machine (SPEC §10)
+direction: right
+
+cfg: "~/.config/enigma/" {
+  toml: "config.toml\nlocal alias overrides"
+}
+
+data: "~/.local/share/enigma/" {
+  identity: "identity.json\nmachine ID, group ID, name"
+  state: "state/\ngroup state + current versions (JSON, atomic)"
+  history: "history/\npast contents by hash: merge bases\nlast 20 per file or 30 days, 200 MB cap"
+  trash: "trash/<day>[.N]/<path>\ndeleted files, 30 days"
+  backups: "backups/\nyour copy, before a first add replaced it"
+  bin: "bin/<version>/enigma-<os>-<arch>\nfor adding and upgrading other platforms"
+  sockets: "enigma.sock (CLI, TUI)\npeer.sock (incoming links)"
+  log: "enigma.log (rotated at 10 MB)"
+}
+
+home: "~ (your files)" {
+  e1: "~/.claude/  (folder entry)"
+  e2: "~/.zshrc  (file entry)"
+}
+
+svc: "service" {
+  mac: "~/Library/LaunchAgents/…plist (macOS)"
+  linux: "~/.config/systemd/user/enigma.service\n+ linger (Linux)"
+}
+
+home -> data.state: "versions of"
+home -> data.trash: "deletes go to"
+data.history -> home: "bases for merges of"

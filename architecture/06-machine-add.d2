@@ -1,0 +1,20 @@
+# enigma machine add devbox (SPEC §11)
+shape: sequence_diagram
+
+you: you
+x: "this machine (CLI)"
+d: this daemon
+r: "devbox (over ssh)"
+
+you -> x: enigma machine add devbox
+x -> r: "1. ssh devbox uname -sm → linux/arm64"
+x -> x: "2. binary for linux/arm64: this one, bin/<version>/ cache, or the release"
+x -> r: "3. copy to ~/.local/bin/enigma (temp name, then rename)"
+x -> r: "4. enigma join  (group + member records on stdin)"
+r -> x: its new machine ID
+x -> d: "5. record the machine (ssh -G target, alias, bin)"
+d -> d: "replicates to every member; all start dialing devbox"
+x -> r: "6. enigma service install (launchd / systemd + linger / background)"
+r -> d: links come up; devbox gets every entry (first-add rules)
+x -> r: "7. which peers can you reach?"
+r -> x: "links report → missing pairs shown as warnings"

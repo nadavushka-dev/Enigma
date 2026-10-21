@@ -1,4 +1,4 @@
-.PHONY: check test build dist snapshot hooks e2e e2e-long
+.PHONY: check test build dist snapshot hooks e2e e2e-long diagrams
 
 # Dev builds are ordered by commit time (SPEC §11): a newer build upgrades the group.
 VERSION ?= v0.0.0-dev.$(shell TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD).$(shell git rev-parse --short=7 HEAD)
@@ -36,3 +36,6 @@ e2e: ## Docker end-to-end: 3 Linux containers with sshd (needs Docker, ~20s; ENI
 
 e2e-long: ## e2e plus a long network cut that outlives ssh keepalive (~80s)
 	ENIGMA_E2E_LONG=1 go test -tags docker -count=1 -timeout 20m -run TestDocker ./cmd/enigma/
+
+diagrams: ## render architecture/*.d2 to SVG (needs d2)
+	for f in architecture/*.d2; do d2 --theme 0 --pad 40 "$$f" "$${f%.d2}.svg" || exit 1; done

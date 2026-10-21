@@ -1,0 +1,40 @@
+# Machines, daemons and links (SPEC §4, §5)
+direction: right
+
+a: machine A {
+  cli: enigma CLI / TUI
+  api: enigma.sock {shape: circle}
+  daemon: enigma daemon {style.fill: "#e8f0fe"}
+  peer: peer.sock {shape: circle}
+  cli -> api: HTTP + JSON
+  api -> daemon
+  peer -> daemon
+}
+
+b: machine B {
+  cli: enigma CLI / TUI
+  api: enigma.sock {shape: circle}
+  daemon: enigma daemon {style.fill: "#e8f0fe"}
+  peer: peer.sock {shape: circle}
+  bridge: enigma bridge\n(stdio ⇄ socket)
+  cli -> api: HTTP + JSON
+  api -> daemon
+  bridge -> peer
+  peer -> daemon
+}
+
+c: machine C {
+  daemon: enigma daemon {style.fill: "#e8f0fe"}
+}
+
+a.daemon -> b.bridge: "ssh -T B enigma bridge\none link, frames both ways" {style.stroke-width: 3}
+b.daemon <-> c.daemon: "link (same way)" {style.stroke-dash: 3}
+a.daemon <-> c.daemon: "link (may be down: B relays)" {style.stroke-dash: 3}
+
+note: |md
+  - Every machine runs the same daemon; there is no server.
+  - Nothing listens on the network: a link is the system `ssh`
+    running `enigma bridge`, which copies bytes into the peer socket.
+  - Both sides dial; when two links exist for a pair, the one dialed
+    by the lower machine ID survives.
+| {near: bottom-center}

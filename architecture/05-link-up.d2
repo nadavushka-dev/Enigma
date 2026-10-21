@@ -1,0 +1,20 @@
+# A link coming up: handshake, then catch-up (SPEC §5, §6.5)
+shape: sequence_diagram
+
+a: A daemon
+s: "ssh + enigma bridge"
+b: B daemon
+
+a -> s: "dial: alias override → shared ssh alias → ssh://user@host:port"
+s -> b: bytes into peer.sock
+a -> b: "HELLO {group, machine, proto, enigma version, platform}"
+b -> a: HELLO
+b -> b: "wrong group or removed machine → refuse\ndifferent version → upgrade instead (diagram 07)\nduplicate link → keep the one the lower ID dialed"
+a -> b: MACHINES (records)
+a -> b: ENTRIES (records)
+b -> b: "last writer wins (Lamport clock, then machine ID)"
+a -> b: "SUMMARY {path: hash, vector} …"
+a -> b: SUMMARY_DONE
+b -> b: "every difference is treated as an ANNOUNCE (diagram 03)"
+b -> a: "(B sends the same to A)"
+a <-> b: "PING every 15 s; a link silent for 45 s is dropped"
