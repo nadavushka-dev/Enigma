@@ -269,11 +269,30 @@ func TestWrapWords(t *testing.T) {
 		{"a b c d", 3, 2, []string{"a b", "c d"}},
 		{"a b c d e f", 3, 2, []string{"a b", "c d"}},
 		{"abcdefgh", 4, 3, []string{"abcd", "efgh"}},
+		{"日本", 1, 3, []string{"日", "本"}}, // a rune wider than the width still makes progress
 	}
 	for _, c := range cases {
 		got := wrapWords(c.in, c.w, c.n)
 		if strings.Join(got, "|") != strings.Join(c.want, "|") {
 			t.Errorf("wrapWords(%q, %d, %d) = %q, want %q", c.in, c.w, c.n, got, c.want)
 		}
+	}
+}
+
+func TestMachinesListHeightSteadyAcrossRows(t *testing.T) {
+	m := started(t, groupFake(t))
+	p := m.panes[0].(*machinesPane)
+	p.View(m.s, 33, 12, true)
+	want := p.height
+	for i := 1; i < len(p.rows); i++ {
+		drive(t, m, key("j"))
+		v := p.View(m.s, 33, 12, true)
+		if p.height != want {
+			t.Fatalf("row %d: list height %d, want %d:\n%s", i, p.height, want, v)
+		}
+	}
+	// the reserved lines are what the widest detail needs: 2 at width 33
+	if want != 12-1-2 {
+		t.Fatalf("list height %d, want 9", want)
 	}
 }

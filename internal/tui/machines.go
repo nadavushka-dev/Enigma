@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -205,15 +206,20 @@ func (p *machinesPane) View(s *Shared, width, height int, focused bool) string {
 	if height <= 0 {
 		return ""
 	}
-	// The detail wraps onto up to 3 lines under a blank one; a short pane
-	// gives it fewer lines so that at least one list row stays.
-	var detail []string
+	// The detail wraps onto up to 3 lines under a blank one. The same number
+	// of lines is reserved whichever row is selected (the most any row needs),
+	// so moving the cursor never changes the list height; a short pane gives
+	// it fewer lines so that at least one list row stays.
+	detailH := 0
 	if height >= 3 {
-		detail = wrapWords(p.detail(), width, min(3, height-2))
+		cap := min(3, height-2)
+		for i := range p.rows {
+			detailH = max(detailH, len(wrapWords(p.detailOf(i), width, cap)))
+		}
 	}
 	listH := height
-	if len(detail) > 0 {
-		listH = height - 1 - len(detail)
+	if detailH > 0 {
+		listH = height - 1 - detailH
 	}
 	p.height = listH
 	// keep the cursor visible
@@ -239,9 +245,14 @@ func (p *machinesPane) View(s *Shared, width, height int, focused bool) string {
 		}
 		lines = append(lines, fit(l, width))
 	}
-	if len(detail) > 0 {
+	if detailH > 0 {
 		lines = append(lines, fit("", width))
-		for _, d := range detail {
+		detail := wrapWords(p.detail(), width, detailH)
+		for i := 0; i < detailH; i++ {
+			d := ""
+			if i < len(detail) {
+				d = detail[i]
+			}
 			lines = append(lines, fit(StyleDim.Render(fit(d, width)), width))
 		}
 	}
@@ -262,8 +273,13 @@ func wrapWords(s string, width, n int) []string {
 				lines = append(lines, cur)
 				cur = ""
 			}
-			lines = append(lines, strings.TrimRight(fit(w, width), " "))
-			w = w[len(strings.TrimRight(fit(w, width), " ")):]
+			head := strings.TrimRight(fit(w, width), " ")
+			if head == "" { // a rune wider than width: take it anyway
+				_, n := utf8.DecodeRuneInString(w)
+				head = w[:n]
+			}
+			lines = append(lines, head)
+			w = w[len(head):]
 		}
 		switch {
 		case cur == "":
@@ -285,11 +301,14 @@ func wrapWords(s string, width, n int) []string {
 }
 
 // detail describes the selected row.
-func (p *machinesPane) detail() string {
-	if p.cur >= len(p.rows) {
+func (p *machinesPane) detail() string { return p.detailOf(p.cur) }
+
+// detailOf describes row i.
+func (p *machinesPane) detailOf(i int) string {
+	if i >= len(p.rows) {
 		return ""
 	}
-	r := p.rows[p.cur]
+	r := p.rows[i]
 	switch {
 	case !r.member:
 		return "a: add to the group"
