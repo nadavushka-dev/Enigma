@@ -652,3 +652,33 @@ func TestApplyDoesNotRecreateAVanishedRoot(t *testing.T) {
 		t.Fatal("the vanished root was re-created")
 	}
 }
+
+// Regression: a home folder reached through a symlink (macOS /tmp is
+// /private/tmp; network homes) refused every path the CLI sent, because
+// the engine resolved its own home but not the paths it was given.
+func TestHomeBehindASymlinkAcceptsItsPaths(t *testing.T) {
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	real := filepath.Join(base, "real-home")
+	os.MkdirAll(filepath.Join(real, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(real, ".claude", "CLAUDE.md"), []byte("x"), 0o644)
+	link := filepath.Join(base, "home")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	e, err := New(Options{Home: link, DataDir: filepath.Join(base, "data"), MachineID: "id-a", GroupID: "g", Log: quietLog, NoWatch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	for _, p := range []string{filepath.Join(link, ".claude"), filepath.Join(real, ".claude", "CLAUDE.md")} {
+		if err := e.Add(p, nil); err != nil {
+			t.Fatalf("add %s: %v", p, err)
+		}
+		if err := e.Remove(p); err != nil {
+			t.Fatalf("remove %s: %v", p, err)
+		}
+	}
+	if err := e.Add(filepath.Join(base, "elsewhere"), nil); err == nil || !strings.Contains(err.Error(), "inside your home") {
+		t.Fatalf("outside home: %v", err)
+	}
+}

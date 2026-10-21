@@ -69,7 +69,10 @@ type Options struct {
 type Engine struct {
 	o   Options
 	log *slog.Logger
-	w   *watch.Watcher
+	// givenHome is Home as given, before symlinks were resolved: paths
+	// from the CLI and TUI are under it (macOS /tmp, network homes).
+	givenHome string
+	w         *watch.Watcher
 
 	inbox chan func()
 	quit  chan struct{}
@@ -97,6 +100,7 @@ func New(o Options) (*Engine, error) {
 	if o.Home == "" || o.DataDir == "" || o.MachineID == "" || o.GroupID == "" {
 		return nil, errors.New("engine: Home, DataDir, MachineID and GroupID are required")
 	}
+	givenHome := filepath.Clean(o.Home)
 	home, err := filepath.EvalSymlinks(o.Home)
 	if err != nil {
 		return nil, fmt.Errorf("home: %w", err)
@@ -130,7 +134,7 @@ func New(o Options) (*Engine, error) {
 		o.Platform = buildinfo.Platform()
 	}
 	e := &Engine{
-		o: o, log: o.Log.With("machine", o.Name),
+		o: o, log: o.Log.With("machine", o.Name), givenHome: givenHome,
 		inbox: make(chan func(), 256), quit: make(chan struct{}), done: make(chan struct{}),
 		statePath: filepath.Join(o.DataDir, "state.json"),
 		hist:      history.Open(filepath.Join(o.DataDir, "history")),
@@ -369,13 +373,16 @@ func (e *Engine) conflictCopies() []string {
 
 // ---- paths ------------------------------------------------------------------
 
-// rel maps an absolute path to a slash-separated path relative to ~.
+// rel maps an absolute path to a slash-separated path relative to ~,
+// under the resolved home or the home as given.
 func (e *Engine) rel(abs string) (string, bool) {
-	r, err := filepath.Rel(e.o.Home, filepath.Clean(abs))
-	if err != nil || r == "." || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return "", false
+	for _, home := range []string{e.o.Home, e.givenHome} {
+		r, err := filepath.Rel(home, filepath.Clean(abs))
+		if err == nil && r != "." && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(r), true
+		}
 	}
-	return filepath.ToSlash(r), true
+	return "", false
 }
 
 func (e *Engine) abs(rel string) string { return filepath.Join(e.o.Home, filepath.FromSlash(rel)) }
