@@ -212,9 +212,9 @@ func (p *machinesPane) View(s *Shared, width, height int, focused bool) string {
 	// it fewer lines so that at least one list row stays.
 	detailH := 0
 	if height >= 3 {
-		cap := min(3, height-2)
+		most := min(3, height-2)
 		for i := range p.rows {
-			detailH = max(detailH, len(wrapWords(p.detailOf(i), width, cap)))
+			detailH = max(detailH, len(wrapWords(p.detailOf(i), width, most)))
 		}
 	}
 	listH := height
@@ -275,8 +275,8 @@ func wrapWords(s string, width, n int) []string {
 			}
 			head := strings.TrimRight(fit(w, width), " ")
 			if head == "" { // a rune wider than width: take it anyway
-				_, n := utf8.DecodeRuneInString(w)
-				head = w[:n]
+				_, size := utf8.DecodeRuneInString(w)
+				head = w[:size]
 			}
 			lines = append(lines, head)
 			w = w[len(head):]
