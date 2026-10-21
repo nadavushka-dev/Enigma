@@ -10,6 +10,7 @@ Real-time sync of chosen files and folders between machines over ssh, written in
 - `go test -race ./...`, `gofmt -l .` and `go vet ./...` must be clean before anything is called done.
 - Dependencies: stdlib, fsnotify, BurntSushi/toml, bubbletea/bubbles/lipgloss. Ask before adding anything else.
 - Enigma is standalone: no coupling to other tools. It talks to other machines only through the system `ssh`.
+  The one optional exception: `enigma add` with no path uses `fzf` if it is installed (SPEC §12.4).
 
 ## Dev workflow (not part of the product)
 - Tasks: tuxedo, `TODO_FILE=$PWD/todo.txt tuxedo ...`

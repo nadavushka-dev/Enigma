@@ -40,3 +40,12 @@ x 2026-10-20 2026-10-20 M5 tui: files pane (lazy tree of ~, synced marks, dim ig
 x 2026-10-20 2026-10-20 M5 tui: activity pane + side-by-side conflict view, help overlay, bare `enigma` opens the TUI (delegated: herdr agent tui-activity, worktree ../enigma-wt/activity, branch tui-activity) +m5
 x 2026-10-21 2026-10-20 M5 tuicr: user reviews all of M5 in tuicr (agreed: lead reviews delegate branches, one tuicr pass at the end) +m5
 x 2026-10-21 2026-10-21 M5 fixer: Machines detail line wraps (tuicr QUESTION, option a) +m5
+(A) 2026-10-21 BUG heavy add/rescan hashes on the engine loop: up to 2000 files near 10 MB stall pings and links drop as silent (design talk first: touches the single-loop rule) +bug +m6
+2026-10-21 M6 notifications (SPEC 12.3): conflict copy, vanished entry root, failed merge write; osascript / notify-send, 1 per path per 10 min, off in config.toml +m6
+2026-10-21 M6 add LICENSE (ask which: MIT suggested) +m6
+2026-10-21 M6 tui: Files pane says 'holds synced' for a folder containing a synced entry; reword (e.g. 'contains synced') +m6
+2026-10-21 M6 fuzzy search: internal/fuzzy matcher + home index (SPEC 12.2) +m6
+2026-10-21 M6 tui: Files pane / filter, tree scope and ~ scope (tab), enter jumps in the tree (SPEC 12.2) +m6
+2026-10-21 M6 cli: enigma add with no path picks via fzf when installed (SPEC 12.1) +m6
+2026-10-21 M6 founder machine has no ssh target: other members cannot dial it without enigma machine alias (design talk) +m6
+2026-10-21 M6 signed + notarized macOS binaries (needs an Apple Developer account: user decision) +m6

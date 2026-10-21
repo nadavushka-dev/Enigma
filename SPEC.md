@@ -400,7 +400,7 @@ Every command takes `--json` for agents and scripts.
 |---|---|
 | `enigma init` | create the group on this machine |
 | `enigma machine add <alias>` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §11) |
-| `enigma add <path> [--ignore GLOB]…` · `remove <path>` · `list` | manage entries |
+| `enigma add <path> [--ignore GLOB]…` · `remove <path>` · `list` | manage entries; `add` with no path picks files and folders with `fzf` (§12.4) |
 | `enigma status` | machines (link up/down, latency, last seen), entries, pending transfers, errors |
 | `enigma conflicts [--local]` | list conflict copies across the group (asks every member over ssh), with the machines that hold each |
 | `enigma trash list` · `restore <id>` · `empty` | trash on this machine |
@@ -436,14 +436,41 @@ Every command takes `--json` for agents and scripts.
 - **Files:** a lazy tree rooted at `~`, dotfiles included. Synced entries
   are marked; ignored, oversized and non-regular items are dimmed. `a` adds
   the selected file or folder, `x` stops syncing an entry (after a
-  confirmation).
+  confirmation). `/` filters it with fuzzy search (§12.4).
 - **Activity:** the daemon's recent events (a ring of the last 500: changes
   received and made, merges, conflict copies, deletes, links up and down,
   upgrades, errors), live. `enter` on a conflict shows the original and the
   copy side by side, differing lines marked.
 - Keys: `tab`/`shift+tab` move focus; `j`/`k`, `g`/`G`, `ctrl+d`/`ctrl+u`;
-  `l`/`enter` opens a folder, `h` closes it; `?` help; `q` quits.
+  `l`/`enter` opens a folder, `h` closes it; `/` search; `?` help; `q` quits.
 - Library: bubbletea, bubbles and lipgloss.
+
+### 12.4 Fuzzy search
+Finding a file to add without walking the tree by hand.
+
+- **Matcher** (`internal/fuzzy`, stdlib only): the query's characters must
+  appear in the path in order. Case is ignored unless the query has an upper
+  case letter. Spaces split the query into terms that must all match. The
+  score rewards consecutive characters, characters at the start of a
+  segment (after `/`, `.`, `_`, `-`) and matches in the base name; ties go to
+  the shorter path. Matched characters are highlighted.
+- **Home index:** a background walk of `~` that skips the always-ignored
+  names (§8), `~/Library`, `.cache`, `.Trash` and Enigma's own data folder,
+  goes at most 8 levels deep and stops at 50,000 paths (and says so). It
+  only lists names: no file is read. Built on first use, off the engine
+  (the TUI and the CLI build it themselves; the daemon is not involved).
+- **TUI:** `/` in the Files pane opens a filter line; the rows become a flat
+  list of matching paths, best first. Two scopes, switched with `tab`:
+  **tree** (the folders opened so far, instant) and **~** (the home index;
+  `indexing… N` while it builds). `↑`/`↓` or `ctrl+p`/`ctrl+n` move;
+  `enter` closes the filter and puts the cursor on that path in the tree,
+  opening its parents, so `a` and `x` work as usual; `esc` cancels and
+  restores the cursor.
+- **CLI:** `enigma add` with no path, in a terminal, with `fzf` on `PATH`,
+  pipes the home index into `fzf --multi` and adds each pick. Without
+  `fzf` (or without a terminal) it fails with `give a path, or install fzf
+  to pick one`. `fzf` is optional and used only here; nothing else depends
+  on it.
 
 ### 12.3 Notifications
 For a conflict copy, a vanished entry root, or a failed merge write:
@@ -534,7 +561,8 @@ in `config.toml`.
    automatic same-version upgrades over the link, `doctor`, releases with
    `install.sh` and `enigma update`.
 5. **TUI.**
-6. **Polish:** notifications, signed/notarized binaries, end-to-end tests.
+6. **Polish:** notifications, fuzzy search (§12.4), signed/notarized
+   binaries, end-to-end tests.
 
 Each milestone ends with all tests passing and a review in tuicr.
 
