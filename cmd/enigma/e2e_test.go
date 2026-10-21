@@ -277,7 +277,7 @@ func TestE2E_ThreeMachinesSyncThroughTheCLI(t *testing.T) {
 		t.Fatalf("list: %s", out)
 	}
 	out = b.must("status")
-	for _, want := range []string{"machine b", "a", "connected", "~/.claude/CLAUDE.md"} {
+	for _, want := range []string{"machine b", "a", "connected", "~/.claude/CLAUDE.md", "\n1 file\n"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status missing %q:\n%s", want, out)
 		}

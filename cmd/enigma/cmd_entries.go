@@ -159,7 +159,11 @@ func cmdStatus(c *ctx, args []string) error {
 		fmt.Fprintf(tw, "%s\t%s\n", entryLabel(e.Path, e.Dir), state)
 	}
 	tw.Flush()
-	fmt.Fprintf(c.stdout, "\n%d files", st.Files)
+	if st.Files == 1 {
+		fmt.Fprint(c.stdout, "\n1 file")
+	} else {
+		fmt.Fprintf(c.stdout, "\n%d files", st.Files)
+	}
 	if len(st.Conflicts) > 0 {
 		fmt.Fprintf(c.stdout, ", %d conflict copies:", len(st.Conflicts))
 		for _, cf := range st.Conflicts {
