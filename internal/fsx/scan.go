@@ -89,11 +89,15 @@ func Scan(root string, m *Matcher, maxSize int64) (ScanResult, error) {
 			res.Skipped = append(res.Skipped, rel)
 			return nil
 		}
+		if oversized(d, maxSize) { // before hashing: never read what is skipped
+			res.Skipped = append(res.Skipped, rel)
+			return nil
+		}
 		info, err := Stat(p)
 		if err != nil || info.Kind != Regular {
 			return nil
 		}
-		if maxSize > 0 && info.Size > maxSize {
+		if maxSize > 0 && info.Size > maxSize { // grew since the walk read its size
 			res.Skipped = append(res.Skipped, rel)
 			return nil
 		}
@@ -104,4 +108,47 @@ func Scan(root string, m *Matcher, maxSize int64) (ScanResult, error) {
 		return res, nil
 	}
 	return res, err
+}
+
+// CountFiles counts the files Scan would sync under root, without reading
+// any, and stops once the count passes limit (returning limit+1).
+func CountFiles(root string, m *Matcher, maxSize int64, limit int) (int, error) {
+	n := 0
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == root {
+				return err
+			}
+			return nil
+		}
+		if p == root {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		if m.Ignored(filepath.ToSlash(rel)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() || oversized(d, maxSize) {
+			return nil
+		}
+		if n++; n > limit {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	return n, err
+}
+
+func oversized(d fs.DirEntry, maxSize int64) bool {
+	if maxSize <= 0 {
+		return false
+	}
+	fi, err := d.Info()
+	return err == nil && fi.Size() > maxSize
 }

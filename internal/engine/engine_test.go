@@ -402,6 +402,23 @@ func TestD18_FolderWithTooManyFilesIsRefused(t *testing.T) {
 	}
 }
 
+// Regression: Add hashed every file of a folder before counting them, on
+// the engine loop, so a huge folder froze the daemon (links dropped as
+// silent). Unreadable files show the count never opens them.
+func TestFolderOverTheLimitIsRefusedWithoutReadingIt(t *testing.T) {
+	a := newMachine(t, "a", func(o *Options) { o.MaxFiles = 2 })
+	for _, n := range []string{"1", "2", "3"} {
+		a.write("d/"+n, n)
+		if err := os.Chmod(a.path("d/"+n), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := a.e.Add(a.path("d"), nil)
+	if err == nil || !strings.Contains(err.Error(), "more than 2 files") {
+		t.Fatalf("Add = %v, want the file-limit error", err)
+	}
+}
+
 func TestIgnoredFilesDoNotSync(t *testing.T) {
 	a, b := newMachine(t, "a"), newMachine(t, "b")
 	a.write("p/keep.md", "k")

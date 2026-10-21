@@ -55,12 +55,12 @@ func (e *Engine) addEntry(abs string, ignore []string) error {
 	}
 	dir := info.Kind == fsx.Dir
 	if dir {
-		res, err := fsx.Scan(abs, fsx.NewMatcher(ignore), e.o.MaxFileSize)
+		n, err := fsx.CountFiles(abs, fsx.NewMatcher(ignore), e.o.MaxFileSize, e.o.MaxFiles)
 		if err != nil {
 			return err
 		}
-		if len(res.Files) > e.o.MaxFiles {
-			return fmt.Errorf("%s has %d files; the limit is %d (Enigma is not for whole projects)", abs, len(res.Files), e.o.MaxFiles)
+		if n > e.o.MaxFiles {
+			return fmt.Errorf("%s has more than %d files, the limit for a folder (Enigma is not for whole projects)", abs, e.o.MaxFiles)
 		}
 	}
 	e.st.Lamport++

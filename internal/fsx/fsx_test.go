@@ -218,6 +218,47 @@ func TestScanSkipsIgnoredSymlinksAndOversized(t *testing.T) {
 	}
 }
 
+// Regression: an oversized file was hashed in full before the size check
+// skipped it (a 58 GB build folder stalled the engine for half an hour).
+// An unreadable oversized file proves it is never opened.
+func TestScanSkipsOversizedWithoutReadingIt(t *testing.T) {
+	root := t.TempDir()
+	big := filepath.Join(root, "big.bin")
+	writeFile(t, big, "0123456789AB")
+	if err := os.Chmod(big, 0); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Scan(root, NewMatcher(nil), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0] != "big.bin" {
+		t.Fatalf("skipped = %v, want [big.bin]", res.Skipped)
+	}
+}
+
+func TestCountFilesStopsPastTheLimitWithoutReading(t *testing.T) {
+	root := t.TempDir()
+	for i := range 10 {
+		p := filepath.Join(root, "d", string(rune('a'+i)))
+		writeFile(t, p, "x")
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(root, "x.log"), "ignored")
+	writeFile(t, filepath.Join(root, "big.bin"), "0123456789AB")
+	os.Symlink(filepath.Join(root, "x.log"), filepath.Join(root, "link"))
+	n, err := CountFiles(root, NewMatcher([]string{"*.log"}), 10, 3)
+	if err != nil || n != 4 {
+		t.Fatalf("CountFiles = %d, %v; want 4 (stop at limit+1)", n, err)
+	}
+	n, err = CountFiles(root, NewMatcher([]string{"*.log"}), 10, 100)
+	if err != nil || n != 10 {
+		t.Fatalf("CountFiles = %d, %v; want 10 (ignored, oversized and symlinks not counted)", n, err)
+	}
+}
+
 func TestScanMissingRootIsEmpty(t *testing.T) {
 	res, err := Scan(filepath.Join(t.TempDir(), "nope"), NewMatcher(nil), 0)
 	if err != nil || len(res.Files) != 0 {
