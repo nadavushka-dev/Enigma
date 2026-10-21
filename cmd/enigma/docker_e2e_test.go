@@ -7,7 +7,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nadavushka-dev/enigma/internal/config"
+	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
 const (
@@ -184,11 +190,10 @@ func TestDocker_ThreeContainers(t *testing.T) {
 		return false
 	})
 
-	// This Mac joins only with ENIGMA_E2E_MAC=1 (the macOS pass); it needs
-	// a darwin binary in c1's reach, so it is added from here.
+	// This Mac joins only with ENIGMA_E2E_MAC=1 (the macOS pass).
 	var mac *host
 	if os.Getenv("ENIGMA_E2E_MAC") != "" {
-		t.Skip("ENIGMA_E2E_MAC: the Mac member comes with the macOS pass")
+		mac = joinMac(t, root, keys, oldV, newV, c1, c2)
 	}
 	// Compared trimmed: docker exec output loses the final newline.
 	same := func(got, want string) bool { return strings.TrimSpace(got) == strings.TrimSpace(want) }
@@ -250,6 +255,11 @@ func TestDocker_ThreeContainers(t *testing.T) {
 			t.Fatalf("%s: a clean merge left conflicts:\n%s", b.name, out)
 		}
 	}
+	if mac != nil {
+		if out := mac.must("conflicts", "--local"); !strings.Contains(out, "no conflict copies") {
+			t.Fatalf("mac: a clean merge left conflicts:\n%s", out)
+		}
+	}
 
 	// 6. One version everywhere: c1 moves to the new build; c2 is upgraded
 	//    over its link to c1, then c3 over its link to c2 (c1 cannot reach
@@ -259,10 +269,18 @@ func TestDocker_ThreeContainers(t *testing.T) {
 			t.Fatalf("%s runs %q before the upgrade", b.name, v)
 		}
 	}
+	if mac != nil {
+		if v := mac.status().Version; v != oldV {
+			t.Fatalf("mac runs %q before the upgrade", v)
+		}
+	}
 	c1.stopDaemon()
 	c1.sh("/opt/new/enigma service install")
 	for _, b := range boxes {
 		eventuallyLong(t, b.name+" runs the new build", 90*time.Second, func() bool { return b.status().Version == newV })
+	}
+	if mac != nil { // upgraded over its link to c1 or c2, with a darwin binary
+		eventuallyLong(t, "mac runs the new build", 90*time.Second, func() bool { return mac.status().Version == newV })
 	}
 	c3.sh("printf '# after the upgrade' > ~/.claude/CLAUDE.md")
 	everyone("syncs on the new build", 60*time.Second, "# after the upgrade")
@@ -284,4 +302,76 @@ func TestDocker_ThreeContainers(t *testing.T) {
 	c2.sh("printf '# after the link died' > ~/.claude/CLAUDE.md")
 	docker(t, "network", "connect", "--alias", "c1", network, c1.name)
 	everyone("converges after redial", 180*time.Second, "# after the link died")
+}
+
+// joinMac makes this Mac a fourth member, with a throwaway HOME and
+// ENIGMA_HOME and a background daemon (never launchd: the real service is
+// not touched). The containers cannot ssh into the Mac, so it joins the
+// way the first machine of a group works: it has no target and dials
+// outward, to c1 and c2 through their published ports. It never reaches c3,
+// which it gets through c2. c1 and c2 keep a darwin build of newV in their
+// binary cache, so the upgrade reaches the Mac over a link too.
+func joinMac(t *testing.T, root, keys, oldV, newV string, c1, c2 *box) *host {
+	t.Helper()
+	build := func(version string) string {
+		out := filepath.Join(root, "darwin-"+version, "enigma")
+		cmd := exec.Command("go", "build", "-ldflags", "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version="+version, "-o", out, ".")
+		cmd.Env = append(os.Environ(), "GOOS=darwin", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("darwin build: %v\n%s", err, b)
+		}
+		return out
+	}
+	macOld, macNew := build(oldV), build(newV)
+	for _, b := range []*box{c1, c2} {
+		dir := "/home/dev/.local/share/enigma/bin/" + newV
+		docker(t, "exec", b.name, "mkdir", "-p", dir)
+		docker(t, "cp", macNew, b.name+":"+dir+"/enigma-darwin-"+runtime.GOARCH)
+		docker(t, "exec", b.name, "chown", "-R", "dev:dev", "/home/dev/.local/share/enigma/bin")
+	}
+
+	// The Mac's ssh: the system one, with a config of its own (the real
+	// ~/.ssh is never read or written).
+	w := &world{t: t, root: root, ssh: filepath.Join(root, "mac-ssh")}
+	mac := &host{w: w, name: "mac", home: filepath.Join(root, "mac", "home"), eh: filepath.Join(root, "mac", "enigma"), bin: macOld}
+	os.MkdirAll(filepath.Join(mac.home, ".ssh"), 0o700)
+	cfgPath := filepath.Join(mac.home, ".ssh", "config")
+	var cfg strings.Builder
+	for _, b := range []*box{c1, c2} {
+		fmt.Fprintf(&cfg, "Host %s\n  HostName 127.0.0.1\n  Port %s\n  User dev\n  IdentityFile %s\n  IdentitiesOnly yes\n  IdentityAgent none\n  UserKnownHostsFile /dev/null\n  StrictHostKeyChecking no\n  LogLevel ERROR\n\n",
+			strings.TrimPrefix(b.name, "enigma-e2e-"), b.port, filepath.Join(keys, "id_ed25519"))
+	}
+	os.WriteFile(cfgPath, []byte(cfg.String()), 0o600)
+	os.WriteFile(w.ssh, []byte("#!/bin/sh\nexec /usr/bin/ssh -F "+cfgPath+" \"$@\"\n"), 0o755)
+
+	var id config.Identity
+	if err := json.Unmarshal([]byte(c1.sh("enigma identity")), &id); err != nil {
+		t.Fatalf("c1 identity: %v", err)
+	}
+	var members []proto.MachineRecord
+	if err := json.Unmarshal([]byte(c1.sh("enigma machine list --json")), &members); err != nil {
+		t.Fatalf("c1 members: %v", err)
+	}
+	me := proto.MachineRecord{ID: config.NewID(), Name: "mac", Bin: macOld, Clock: 1}
+	me.By = me.ID
+	req, _ := json.Marshal(group.JoinRequest{Identity: config.Identity{MachineID: me.ID, GroupID: id.GroupID, Name: "mac"}, Members: append(members, me)})
+	cmd := exec.Command(mac.bin, "join")
+	cmd.Env, cmd.Stdin = mac.env(), bytes.NewReader(req)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("mac join: %v\n%s", err, out)
+	}
+	// c1 founded the group, so its record has no target; like any member
+	// that wants to reach it, the Mac names an ssh alias for it.
+	mac.must("machine", "alias", "c1", "c1")
+	mac.must("service", "install")
+	t.Cleanup(func() {
+		if t.Failed() {
+			b, _ := os.ReadFile(filepath.Join(mac.eh, "enigma.log"))
+			t.Logf("--- mac log ---\n%s", b)
+		}
+		mac.run("service", "uninstall")
+	})
+	eventuallyLong(t, "mac links to c1 and c2", 60*time.Second, func() bool { return mac.connectedTo("c1") && mac.connectedTo("c2") })
+	eventuallyLong(t, "c1 knows the mac", 30*time.Second, func() bool { return strings.Contains(c1.sh("enigma machine list"), "mac") })
+	return mac
 }
