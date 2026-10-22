@@ -41,6 +41,8 @@ CFG
 printf '#!/bin/sh\nexec /usr/bin/ssh -F %s "$@"\n' "$DEMO/home/.ssh/config" > "$DEMO/bin/ssh"
 chmod +x "$DEMO/bin/ssh"
 
+mkdir -p "$DEMO/enigma" && echo 'notifications = false' > "$DEMO/enigma/config.toml"
+
 cat > "$DEMO/env" <<ENV
 export HOME=$DEMO/home ENIGMA_HOME=$DEMO/enigma ENIGMA_SERVICE=background
 export PATH=$DEMO/bin:\$PATH PS1='mac ~ \$ '

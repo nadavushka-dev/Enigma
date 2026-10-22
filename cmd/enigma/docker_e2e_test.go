@@ -334,6 +334,7 @@ func joinMac(t *testing.T, root, keys, oldV, newV string, c1, c2 *box) *host {
 	// ~/.ssh is never read or written).
 	w := &world{t: t, root: root, ssh: filepath.Join(root, "mac-ssh")}
 	mac := &host{w: w, name: "mac", home: filepath.Join(root, "mac", "home"), eh: filepath.Join(root, "mac", "enigma"), bin: macOld}
+	quiet(t, mac.eh)
 	os.MkdirAll(filepath.Join(mac.home, ".ssh"), 0o700)
 	cfgPath := filepath.Join(mac.home, ".ssh", "config")
 	var cfg strings.Builder

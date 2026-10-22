@@ -74,7 +74,19 @@ exec sh -c "$*"
 func (w *world) host(name string) *host {
 	h := &host{w: w, name: name, home: filepath.Join(w.root, "machines", name, "home"), eh: filepath.Join(w.root, "machines", name, "enigma"), bin: bin}
 	os.MkdirAll(h.home, 0o755)
+	quiet(w.t, h.eh)
 	return h
+}
+
+// quiet turns desktop notifications off for an Enigma home: these tests run
+// the real daemon, and its conflicts must not pop up on the developer's
+// desktop (SPEC §12.3).
+func quiet(t *testing.T, enigmaHome string) {
+	t.Helper()
+	os.MkdirAll(enigmaHome, 0o755)
+	if err := os.WriteFile(filepath.Join(enigmaHome, "config.toml"), []byte("notifications = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // buildVersion builds enigma stamped with version, under dir.
