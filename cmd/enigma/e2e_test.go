@@ -675,3 +675,12 @@ func TestE2E_TUINeedsATerminal(t *testing.T) {
 		t.Fatalf("bare enigma in a pipe prints help: %d %s", code, out)
 	}
 }
+
+func TestE2E_AddWithoutAPathNeedsFzfAndATerminal(t *testing.T) {
+	w := newWorld(t)
+	a := w.host("a")
+	a.must("init", "--name", "a")
+	if out, code := a.run("add"); code == 0 || !strings.Contains(out, "give a path, or install fzf to pick one") {
+		t.Fatalf("add without a path in a pipe: %d %s", code, out)
+	}
+}

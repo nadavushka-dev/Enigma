@@ -44,12 +44,13 @@ type Options struct {
 // (no file is read, symlinks are not followed). Snapshot is safe at any
 // time, so a UI can show progress while it builds.
 type Index struct {
-	mu      sync.Mutex
-	entries []Entry
-	done    bool
-	trunc   bool
-	stop    chan struct{}
-	once    sync.Once
+	mu       sync.Mutex
+	entries  []Entry
+	done     bool
+	trunc    bool
+	stop     chan struct{}
+	finished chan struct{}
+	once     sync.Once
 }
 
 // Build starts walking home in the background.
@@ -60,7 +61,7 @@ func Build(home string, o Options) *Index {
 	if o.MaxPaths <= 0 {
 		o.MaxPaths = DefaultMaxPaths
 	}
-	ix := &Index{stop: make(chan struct{})}
+	ix := &Index{stop: make(chan struct{}), finished: make(chan struct{})}
 	go ix.walk(home, o)
 	return ix
 }
@@ -84,6 +85,12 @@ func Paths(ents []Entry) []string {
 	return out
 }
 
+// Wait blocks until the walk is over and returns the final Snapshot.
+func (ix *Index) Wait() ([]Entry, Progress) {
+	<-ix.finished
+	return ix.Snapshot()
+}
+
 // Stop ends the walk early; the index stays usable with what it has.
 func (ix *Index) Stop() { ix.once.Do(func() { close(ix.stop) }) }
 
@@ -92,6 +99,7 @@ func (ix *Index) walk(home string, o Options) {
 		ix.mu.Lock()
 		ix.done = true
 		ix.mu.Unlock()
+		close(ix.finished)
 	}()
 	ignored := fsx.NewMatcher(nil)
 	skip := map[string]bool{}

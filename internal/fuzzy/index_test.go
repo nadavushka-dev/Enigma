@@ -136,3 +136,12 @@ func TestIndexMissingHomeIsDoneAndEmpty(t *testing.T) {
 		t.Fatalf("%v %+v", ents, pr)
 	}
 }
+
+func TestIndexWaitReturnsTheFinishedIndex(t *testing.T) {
+	home := t.TempDir()
+	touch(t, home, "a/b")
+	ents, pr := Build(home, Options{}).Wait()
+	if !pr.Done || len(ents) != 2 {
+		t.Fatalf("%v %+v", ents, pr)
+	}
+}
