@@ -47,6 +47,17 @@ type pane interface {
 	Help() []KeyHelp
 }
 
+// keyGrabber is a pane that, in some state (a filter line), takes every
+// key but ctrl+c, including q, ? and tab.
+type keyGrabber interface {
+	grabsKeys() bool
+}
+
+// moreHelp is a pane with extra key bindings for the help overlay only.
+type moreHelp interface {
+	MoreHelp() (title string, keys []KeyHelp)
+}
+
 // ---- messages ----------------------------------------------------------------
 
 // StatusMsg is a fresh daemon status (sent to every pane).
@@ -232,6 +243,9 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.lastErr = ""
+	if g, ok := m.panes[m.focus].(keyGrabber); ok && g.grabsKeys() {
+		return m, m.panes[m.focus].Update(k, m.s)
+	}
 	switch k.String() {
 	case "q":
 		return m, tea.Quit
@@ -293,7 +307,9 @@ func (m *Model) footer() string {
 	for _, h := range m.panes[m.focus].Help() {
 		parts = append(parts, StyleAccent.Render(h.Key)+" "+h.Does)
 	}
-	parts = append(parts, StyleAccent.Render("tab")+" focus", StyleAccent.Render("?")+" help", StyleAccent.Render("q")+" quit")
+	if g, ok := m.panes[m.focus].(keyGrabber); !ok || !g.grabsKeys() {
+		parts = append(parts, StyleAccent.Render("tab")+" focus", StyleAccent.Render("?")+" help", StyleAccent.Render("q")+" quit")
+	}
 	return fit(" "+strings.Join(parts, "  "), m.width)
 }
 
@@ -309,6 +325,13 @@ func (m *Model) helpView() string {
 		b.WriteString("\n" + StyleAccent.Render(p.Title()) + "\n")
 		for _, h := range p.Help() {
 			row(h.Key, h.Does)
+		}
+		if mh, ok := p.(moreHelp); ok {
+			title, keys := mh.MoreHelp()
+			b.WriteString("\n" + StyleAccent.Render(title) + "\n")
+			for _, h := range keys {
+				row(h.Key, h.Does)
+			}
 		}
 	}
 	b.WriteString("\n")

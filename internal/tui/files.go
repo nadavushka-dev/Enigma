@@ -22,7 +22,8 @@ type filesPane struct {
 	rows   []*fileNode // visible nodes, in order (the root excluded)
 	cursor int
 	scroll int
-	height int // last rendered height, for paging
+	height int         // last rendered height, for paging
+	filter *fileFilter // the / filter line, when open
 }
 
 // fileNode is one item of the tree.
@@ -47,8 +48,22 @@ func newFiles() *filesPane { return &filesPane{} }
 func (p *filesPane) Title() string { return "Files ~/" }
 
 func (p *filesPane) Help() []KeyHelp {
-	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"x", "remove"}}
+	if p.filter != nil {
+		return []KeyHelp{{"type", "filter"}, {"tab", "scope"}, {"↑/↓", "move"}, {"enter", "jump"}, {"esc", "cancel"}}
+	}
+	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"x", "remove"}, {"/", "filter"}}
 }
+
+func (p *filesPane) MoreHelp() (string, []KeyHelp) {
+	return "Files filter (/)", []KeyHelp{
+		{"tab", "scope: tree (folders opened so far) / ~ (the home index)"},
+		{"↑/↓ ^p/^n", "move"},
+		{"enter", "jump to it in the tree"},
+		{"esc", "cancel"},
+	}
+}
+
+func (p *filesPane) grabsKeys() bool { return p.filter != nil }
 
 // ensure builds the root on the first use.
 func (p *filesPane) ensure(s *Shared) {
@@ -176,9 +191,15 @@ func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		p.rebuild()
 		return nil
 	}
+	if _, ok := msg.(indexTickMsg); ok {
+		return p.filterTick(s)
+	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return nil
+	}
+	if p.filter != nil {
+		return p.filterKey(k, s)
 	}
 	n := p.current()
 	half := max(1, p.height/2)
@@ -221,6 +242,8 @@ func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		return p.add(s, n)
 	case "x":
 		return p.remove(s, n)
+	case "/":
+		return p.openFilter(s)
 	}
 	return nil
 }
@@ -334,6 +357,9 @@ func (p *filesPane) View(s *Shared, width, height int, focused bool) string {
 	p.height = height
 	if height <= 0 {
 		return ""
+	}
+	if p.filter != nil {
+		return p.filterView(s, width, height, focused)
 	}
 	// keep the cursor visible
 	if p.cursor < p.scroll {
