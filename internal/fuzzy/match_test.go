@@ -1,0 +1,103 @@
+package fuzzy
+
+import (
+	"reflect"
+	"testing"
+)
+
+func mustMatch(t *testing.T, q, s string) Result {
+	t.Helper()
+	r, ok := Match(q, s)
+	if !ok {
+		t.Fatalf("Match(%q, %q) = no match", q, s)
+	}
+	return r
+}
+
+func TestMatchCharactersInOrder(t *testing.T) {
+	mustMatch(t, "ntd", "notes/todo.md")
+	mustMatch(t, "", "anything")
+	for _, bad := range []string{"xyz", "dtn", "notes/todo.mdx"} {
+		if _, ok := Match(bad, "notes/todo.md"); ok {
+			t.Fatalf("%q must not match notes/todo.md", bad)
+		}
+	}
+}
+
+func TestMatchSmartCase(t *testing.T) {
+	mustMatch(t, "readme", "README.md")
+	mustMatch(t, "README", "README.md")
+	if _, ok := Match("Readme", "readme.md"); ok {
+		t.Fatal("an upper case letter in the query makes it case sensitive")
+	}
+}
+
+func TestMatchSpacesSplitTerms(t *testing.T) {
+	r := mustMatch(t, "notes md", "notes/todo.md")
+	if !reflect.DeepEqual(r.Positions, []int{0, 1, 2, 3, 4, 11, 12}) {
+		t.Fatalf("positions %v", r.Positions)
+	}
+	r = mustMatch(t, "md notes", "notes/todo.md") // order of terms does not matter
+	if !reflect.DeepEqual(r.Positions, []int{0, 1, 2, 3, 4, 11, 12}) {
+		t.Fatalf("positions %v", r.Positions)
+	}
+	if _, ok := Match("notes zz", "notes/todo.md"); ok {
+		t.Fatal("every term must match")
+	}
+	mustMatch(t, "  notes   ", "notes/todo.md")
+}
+
+func TestMatchPositionsPreferSegmentStarts(t *testing.T) {
+	r := mustMatch(t, "td", "notes/todo.md")
+	if !reflect.DeepEqual(r.Positions, []int{6, 8}) {
+		t.Fatalf("positions %v, want [6 8]", r.Positions)
+	}
+	r = mustMatch(t, "todo", "notes/todo.md")
+	if !reflect.DeepEqual(r.Positions, []int{6, 7, 8, 9}) {
+		t.Fatalf("positions %v", r.Positions)
+	}
+	if r, _ := Match("", "x"); len(r.Positions) != 0 {
+		t.Fatalf("empty query highlights nothing: %v", r.Positions)
+	}
+}
+
+func score(t *testing.T, q, s string) int { return mustMatch(t, q, s).Score }
+
+func TestScoreRewards(t *testing.T) {
+	// consecutive characters
+	if score(t, "todo", "notes/todo.md") <= score(t, "todo", "t/o/d/o") {
+		t.Fatal("consecutive characters must score higher")
+	}
+	// characters at the start of a segment (after / . _ -)
+	if score(t, "nt", "notes/todo.md") <= score(t, "nt", "another.txt") {
+		t.Fatal("segment starts must score higher")
+	}
+	if score(t, "cm", "claude_memory") <= score(t, "cm", "ocamel") {
+		t.Fatal("_ starts a segment")
+	}
+	if score(t, "cm", "claude-memory") <= score(t, "cm", "ocamel") {
+		t.Fatal("- starts a segment")
+	}
+	// matches in the base name
+	if score(t, "md", "zzz/x.md") <= score(t, "md", "x/md/zzz") {
+		t.Fatal("the base name must score higher")
+	}
+}
+
+func TestRankBestFirstTiesToTheShorterPath(t *testing.T) {
+	hits := Rank("a", []string{"abc", "ab", "zzz", "a"})
+	var got []string
+	for _, h := range hits {
+		got = append(got, h.Path)
+	}
+	if !reflect.DeepEqual(got, []string{"a", "ab", "abc"}) {
+		t.Fatalf("rank %v", got)
+	}
+	hits = Rank("todo", []string{"t/o/d/o.txt", "notes/todo.md"})
+	if hits[0].Path != "notes/todo.md" || !reflect.DeepEqual(hits[0].Positions, []int{6, 7, 8, 9}) {
+		t.Fatalf("rank %+v", hits)
+	}
+	if n := len(Rank("", []string{"b", "a"})); n != 2 {
+		t.Fatalf("an empty query keeps every path: %d", n)
+	}
+}
