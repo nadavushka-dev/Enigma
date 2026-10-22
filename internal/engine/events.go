@@ -51,3 +51,10 @@ func (e *Engine) Events(after uint64) []Event {
 	})
 	return out
 }
+
+// notify raises a desktop notification about path (SPEC §12.3); loop only.
+func (e *Engine) notify(path, body string) {
+	if e.o.Notify != nil {
+		e.o.Notify(path, "Enigma", body)
+	}
+}

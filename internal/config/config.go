@@ -157,6 +157,9 @@ func ClearBootstrap(p Paths) { os.Remove(p.bootstrapPath()) }
 // ---- local settings (config.toml, never synced) ----------------------------
 
 type Local struct {
+	// Notifications turns desktop notifications on or off (SPEC §12.3);
+	// on unless config.toml says `notifications = false`.
+	Notifications bool `toml:"notifications"`
 	// Aliases override how this machine reaches a member, by member name.
 	Aliases map[string]string `toml:"aliases"`
 }
@@ -164,7 +167,7 @@ type Local struct {
 func (p Paths) localPath() string { return filepath.Join(p.Config, "config.toml") }
 
 func LoadLocal(p Paths) (Local, error) {
-	l := Local{Aliases: map[string]string{}}
+	l := Local{Notifications: true, Aliases: map[string]string{}}
 	if _, err := toml.DecodeFile(p.localPath(), &l); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return l, fmt.Errorf("%s: %w", p.localPath(), err)
 	}

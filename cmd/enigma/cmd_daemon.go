@@ -13,6 +13,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/link"
 	"github.com/nadavushka-dev/enigma/internal/logfile"
+	"github.com/nadavushka-dev/enigma/internal/notify"
 )
 
 // logRotateSize: the daemon log rotates at 10 MB (SPEC §10).
@@ -61,7 +62,8 @@ func cmdDaemon(c *ctx, args []string) error {
 		return err
 	}
 	sigctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err = daemon.Run(sigctx, daemon.Options{Paths: p, Home: home, Log: log, Bin: bin})
+	err = daemon.Run(sigctx, daemon.Options{Paths: p, Home: home, Log: log, Bin: bin,
+		Notify: notify.New(notify.Desktop(), notify.Window).Notify})
 	stop()
 	if logw != nil {
 		logw.Close()

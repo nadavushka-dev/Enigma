@@ -130,3 +130,22 @@ func TestLocalAliasOverrides(t *testing.T) {
 		t.Fatalf("config.toml:\n%s", b)
 	}
 }
+
+func TestLocalNotificationsDefaultOnCanBeTurnedOff(t *testing.T) {
+	p := Paths{Config: filepath.Join(t.TempDir(), "cfg")}
+	l, err := LoadLocal(p)
+	if err != nil || !l.Notifications {
+		t.Fatalf("no config.toml: notifications should default on: %+v %v", l, err)
+	}
+	os.MkdirAll(p.Config, 0o700)
+	os.WriteFile(filepath.Join(p.Config, "config.toml"), []byte("notifications = false\n"), 0o600)
+	if l, err = LoadLocal(p); err != nil || l.Notifications {
+		t.Fatalf("notifications = false ignored: %+v %v", l, err)
+	}
+	if err := SetAlias(p, "devbox", "vpn"); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ = LoadLocal(p); l.Notifications {
+		t.Fatal("SetAlias dropped notifications = false")
+	}
+}
