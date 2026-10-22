@@ -577,8 +577,9 @@ daemon, so tests never raise real notifications.
    automatic same-version upgrades over the link, `doctor`, releases with
    `install.sh` and `enigma update`.
 5. **TUI.**
-6. **Polish:** notifications, fuzzy search (§12.4), signed/notarized
-   binaries, end-to-end tests.
+6. **Polish:** notifications, fuzzy search (§12.4), end-to-end tests.
+   No code signing beyond Go's automatic ad-hoc signature: binaries arrive
+   through curl and self-update, which macOS does not quarantine.
 
 Each milestone ends with all tests passing and a review in tuicr.
 
