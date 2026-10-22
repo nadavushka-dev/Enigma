@@ -56,24 +56,31 @@ func (n *Notifier) Notify(path, title, body string) {
 	go n.send(title, body)
 }
 
+// run executes the desktop command; a seam for tests.
+var run = func(name string, args ...string) error { return exec.Command(name, args...).Run() }
+
 // Desktop returns this platform's sender: osascript on macOS, notify-send
 // on Linux when it is installed, else nil.
 func Desktop() Sender {
 	switch runtime.GOOS {
 	case "darwin":
-		return func(title, body string) error {
-			return exec.Command("osascript", "-e", appleScript(title, body)).Run()
-		}
+		return darwinSender()
 	case "linux":
-		bin, err := exec.LookPath("notify-send")
-		if err != nil {
-			return nil
-		}
-		return func(title, body string) error {
-			return exec.Command(bin, "--app-name=Enigma", title, body).Run()
+		if bin, err := exec.LookPath("notify-send"); err == nil {
+			return linuxSender(bin)
 		}
 	}
 	return nil
+}
+
+func darwinSender() Sender {
+	return func(title, body string) error { return run("osascript", "-e", appleScript(title, body)) }
+}
+
+// linuxSender runs notify-send. "--" ends its option parsing, so a title or
+// body starting with "-" (a synced path like ~/-notes) is text, not a flag.
+func linuxSender(bin string) Sender {
+	return func(title, body string) error { return run(bin, "--app-name=Enigma", "--", title, body) }
 }
 
 // appleScript builds the display notification script. The text goes in as

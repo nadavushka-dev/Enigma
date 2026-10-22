@@ -5,8 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nadavushka-dev/enigma/internal/notify"
 )
 
 type notes struct {
@@ -44,8 +47,32 @@ func TestNotifiesOnConflictCopy(t *testing.T) {
 	c, d := newMachine(t, "c", cn.opt), newMachine(t, "d", dn.opt)
 	concurrentEdits(t, c, d, "x/g.md", "base\n", "on c\n", "on d\n")
 	link(t, c, d)
-	eventually(t, "conflict notification on c", cn.has("x/g.conflict-", "x/g.md"))
-	eventually(t, "conflict notification on d", dn.has("x/g.conflict-", "x/g.md"))
+	eventually(t, "conflict notification on c", cn.has("x/g.md", "~/x/g.md"))
+	eventually(t, "conflict notification on d", dn.has("x/g.md", "~/x/g.md"))
+	eventually(t, "body names the copy in tilde form", cn.has("x/g.md", "~/x/g.conflict-"))
+}
+
+func TestConflictNotificationsAreKeyedByTheOriginal(t *testing.T) {
+	// Two conflict copies of one file inside the window are one thing for
+	// the user: one notification (SPEC §12.3).
+	var sent atomic.Int32
+	n := notify.New(func(string, string) error { sent.Add(1); return nil }, 10*time.Minute)
+	c, d := newMachine(t, "c", func(o *Options) { o.Notify = n.Notify }), newMachine(t, "d")
+	concurrentEdits(t, c, d, "x/g.md", "base\n", "on c\n", "on d\n")
+	cut := link(t, c, d)
+	eventually(t, "first conflict", func() bool { return len(conflictCopies(c, "x", "g")) == 1 })
+	eventually(t, "first notification", func() bool { return sent.Load() == 1 })
+	cut()
+	c.writeAged("x/g.md", "on c again\n", time.Hour)
+	c.e.Rescan()
+	d.write("x/g.md", "on d again\n")
+	d.e.Rescan()
+	link(t, c, d)
+	eventually(t, "second conflict", func() bool { return len(conflictCopies(c, "x", "g")) == 2 })
+	time.Sleep(200 * time.Millisecond)
+	if got := sent.Load(); got != 1 {
+		t.Fatalf("%d notifications for two conflicts on one file", got)
+	}
 }
 
 func TestNotifiesOnVanishedRoot(t *testing.T) {
@@ -60,7 +87,7 @@ func TestNotifiesOnVanishedRoot(t *testing.T) {
 	}
 	time.Sleep(400 * time.Millisecond)
 	b.e.Rescan()
-	eventually(t, "vanished-root notification", bn.has("vault", "vanished"))
+	eventually(t, "vanished-root notification", bn.has("vault", "~/vault vanished"))
 }
 
 func TestNotifiesOnFailedWrite(t *testing.T) {
@@ -79,5 +106,5 @@ func TestNotifiesOnFailedWrite(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(b.path("n"), 0o755) })
 	a.write("n/f.md", "v2")
 	eventually(t, "error event on b", b.hasEvent(EvError, "n/f.md", "a"))
-	eventually(t, "failed-write notification on b", bn.has("n/f.md", "n/f.md"))
+	eventually(t, "failed-write notification on b", bn.has("n/f.md", "could not write ~/n/f.md"))
 }

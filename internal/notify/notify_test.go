@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"reflect"
 	"runtime"
 	"sync"
 	"testing"
@@ -112,4 +113,35 @@ func TestDesktopNeedsACommand(t *testing.T) {
 	if Desktop() != nil {
 		t.Fatal("no notify-send on PATH, yet a sender")
 	}
+}
+
+func TestLinuxSenderStopsOptionParsing(t *testing.T) {
+	var argv []string
+	defer swapRun(t, func(name string, args ...string) error { argv = append([]string{name}, args...); return nil })()
+	if err := linuxSender("/usr/bin/notify-send")("-title", "--body"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/usr/bin/notify-send", "--app-name=Enigma", "--", "-title", "--body"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %q", argv)
+	}
+}
+
+func TestDarwinSenderPassesTheScriptAsAnArgument(t *testing.T) {
+	var argv []string
+	defer swapRun(t, func(name string, args ...string) error { argv = append([]string{name}, args...); return nil })()
+	if err := darwinSender()("Enigma", `a "b"`); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"osascript", "-e", `display notification "a \"b\"" with title "Enigma"`}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %q", argv)
+	}
+}
+
+func swapRun(t *testing.T, f func(string, ...string) error) func() {
+	t.Helper()
+	old := run
+	run = f
+	return func() { run = old }
 }

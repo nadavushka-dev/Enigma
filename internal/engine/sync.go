@@ -294,7 +294,7 @@ func (e *Engine) markMissing(entry string) {
 	if !e.missing[entry] {
 		e.log.Warn("entry root vanished; not propagating deletes", "entry", entry)
 		e.event(EvError, entry, "", "the folder vanished here; deletes are not sent until it is back")
-		e.notify(entry, entry+" vanished; deletes are not sent until it is back")
+		e.notify(entry, "~/"+entry+" vanished; deletes are not sent until it is back")
 	}
 	e.missing[entry] = true
 }
@@ -391,7 +391,7 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
 		e.log.Error("apply", "path", rel, "err", err)
 		e.event(EvError, rel, p.name, err.Error())
-		e.notify(rel, "could not write "+rel+": "+err.Error())
+		e.notify(rel, "could not write ~/"+rel+": "+err.Error())
 	}
 }
 
@@ -445,7 +445,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 			if err != nil {
 				e.log.Error("apply", "path", rel, "err", err)
 				e.event(EvError, rel, p.name, err.Error())
-				e.notify(rel, "could not write "+rel+": "+err.Error())
+				e.notify(rel, "could not write ~/"+rel+": "+err.Error())
 			}
 			return
 		}
@@ -632,7 +632,7 @@ func (e *Engine) writeCopy(c Copy, data []byte) {
 		orig = cc.Original
 	}
 	e.event(EvConflict, c.Path, "", orig)
-	e.notify(c.Path, "conflict on "+orig+"; the other version is kept as "+c.Path)
+	e.notify(orig, "conflict on ~/"+orig+"; the other version is kept as ~/"+c.Path)
 	if entry, _, ok := e.entryFor(c.Path); ok && !e.ignored(entry, c.Path) {
 		if cur := e.current(c.Path); cur == nil || version.Compare(c.Version.Vector, cur.Vector) == version.After {
 			e.setCurrent(c.Path, c.Version, true)
