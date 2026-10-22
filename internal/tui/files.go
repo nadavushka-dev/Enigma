@@ -298,30 +298,33 @@ func entryFor(s *Shared, rel string) *engine.EntryStatus {
 }
 
 // mark is the row's right-aligned status text ("" for none).
-func (p *filesPane) mark(s *Shared, n *fileNode) string {
-	e := entryFor(s, n.rel)
+func (p *filesPane) mark(s *Shared, n *fileNode) string { return p.markRel(s, n.rel, n.dir) }
+
+// markRel is mark for a path relative to ~ (a folder when dir).
+func (p *filesPane) markRel(s *Shared, rel string, dir bool) string {
+	e := entryFor(s, rel)
 	if e == nil {
-		if n.dir {
+		if dir {
 			for _, en := range s.Status.Entries {
-				if strings.HasPrefix(en.Path, n.rel+"/") {
+				if strings.HasPrefix(en.Path, rel+"/") {
 					return "holds synced"
 				}
 			}
 		}
 		return ""
 	}
-	if e.Path == n.rel {
+	if e.Path == rel {
 		if e.Missing {
 			return "missing here"
 		}
 		return "synced"
 	}
 	for _, sk := range e.Skipped {
-		if sk == n.rel {
+		if sk == rel {
 			return "skipped"
 		}
 	}
-	if ignoreMatcher.Ignored(strings.TrimPrefix(n.rel, e.Path+"/")) {
+	if ignoreMatcher.Ignored(strings.TrimPrefix(rel, e.Path+"/")) {
 		return "" // inside the folder, but not synced
 	}
 	return "·"

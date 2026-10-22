@@ -21,14 +21,20 @@ const (
 )
 
 type fileFilter struct {
-	query  string
-	scope  filterScope
-	hits   []fuzzy.Hit
-	sel    int
-	scroll int
-	saved  int // the tree cursor to restore on esc
-	index  *fuzzy.Index
-	prog   fuzzy.Progress
+	query   string
+	scope   filterScope
+	hits    []fuzzy.Hit
+	sel     int
+	scroll  int
+	saved   int // the tree cursor to restore on esc
+	index   homeIndex
+	prog    fuzzy.Progress
+	ticking bool // one tick chain at a time while the index builds
+}
+
+// homeIndex is what the filter needs from fuzzy.Index; tests fake it.
+type homeIndex interface {
+	Snapshot() ([]fuzzy.Entry, fuzzy.Progress)
 }
 
 // indexTickMsg asks the filter to look at the index again while it builds.
@@ -77,14 +83,19 @@ func (p *filesPane) refilter(s *Shared) tea.Cmd {
 	f := p.filter
 	f.hits = fuzzy.Rank(f.query, p.candidates(s))
 	f.sel = min(f.sel, max(0, len(f.hits)-1))
-	if f.scope == scopeHome && !f.prog.Done {
+	if f.scope == scopeHome && !f.prog.Done && !f.ticking {
+		f.ticking = true
 		return tea.Tick(indexEvery, func(time.Time) tea.Msg { return indexTickMsg{} })
 	}
 	return nil
 }
 
 func (p *filesPane) filterTick(s *Shared) tea.Cmd {
-	if p.filter == nil || p.filter.scope != scopeHome || p.filter.prog.Done {
+	if p.filter == nil {
+		return nil
+	}
+	p.filter.ticking = false
+	if p.filter.scope != scopeHome || p.filter.prog.Done {
 		return nil
 	}
 	return p.refilter(s)
@@ -122,6 +133,7 @@ func (p *filesPane) filterKey(k tea.KeyMsg, s *Shared) tea.Cmd {
 	}
 	if k.Type == tea.KeySpace {
 		f.query += " "
+		f.sel = 0
 		return p.refilter(s)
 	}
 	if k.Type == tea.KeyRunes && !k.Alt {
@@ -226,6 +238,7 @@ func (p *filesPane) filterView(s *Shared, width, height int, focused bool) strin
 		}
 		h := f.hits[i]
 		selected := focused && i == f.sel
+		mark := p.markRel(s, strings.TrimSuffix(h.Path, "/"), strings.HasSuffix(h.Path, "/"))
 		var b strings.Builder
 		b.WriteString(" ")
 		for _, seg := range highlightSegments(h.Path, h.Positions) {
@@ -241,11 +254,17 @@ func (p *filesPane) filterView(s *Shared, width, height int, focused bool) strin
 			}
 		}
 		line := b.String()
-		if selected {
+		switch {
+		case selected:
+			line = StyleSelected.Render(" ") + strings.TrimPrefix(line, " ")
+			if mark != "" {
+				line = padBetween(line, StyleSelected.Render(mark), width)
+			}
 			if pad := width - lipgloss.Width(line); pad > 0 {
 				line += StyleSelected.Render(strings.Repeat(" ", pad))
 			}
-			line = StyleSelected.Render(" ") + strings.TrimPrefix(line, " ")
+		case mark != "":
+			line = padBetween(line, markStyle(mark).Render(mark), width)
 		}
 		lines = append(lines, fit(line, width))
 	}

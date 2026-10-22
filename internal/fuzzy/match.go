@@ -39,7 +39,9 @@ func Match(query, path string) (Result, bool) {
 	sensitive := strings.IndexFunc(query, unicode.IsUpper) >= 0
 	hay := []rune(path)
 	if !sensitive {
-		hay = []rune(strings.ToLower(path))
+		for i, r := range hay { // rune by rune: hay stays aligned with path
+			hay[i] = unicode.ToLower(r)
+		}
 	}
 	var total Result
 	seen := map[int]bool{}

@@ -1,6 +1,7 @@
 package fuzzy
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -99,5 +100,28 @@ func TestRankBestFirstTiesToTheShorterPath(t *testing.T) {
 	}
 	if n := len(Rank("", []string{"b", "a"})); n != 2 {
 		t.Fatalf("an empty query keeps every path: %d", n)
+	}
+}
+
+// Lowercasing must not move positions: İ (U+0130) lowercases to two runes.
+func TestMatchKeepsPositionsWithMultiRuneLowercase(t *testing.T) {
+	r := mustMatch(t, "x", "İstanbul/x")
+	if !reflect.DeepEqual(r.Positions, []int{9}) {
+		t.Fatalf("positions %v, want [9]", r.Positions)
+	}
+	if r.Score != score(t, "x", "istanbul/x") {
+		t.Fatalf("base-name bonus drifted: %d vs %d", r.Score, score(t, "x", "istanbul/x"))
+	}
+	mustMatch(t, "i", "İstanbul")
+}
+
+func BenchmarkRank50k(b *testing.B) {
+	paths := make([]string, 0, 50000)
+	for i := 0; len(paths) < 50000; i++ {
+		paths = append(paths, fmt.Sprintf("work/project-%d/src/internal/module_%d/handler_%d.go", i%40, i%97, i))
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Rank("hndl", paths)
 	}
 }

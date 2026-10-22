@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/fuzzy"
 )
 
@@ -256,5 +257,85 @@ func TestFilterViewSizes(t *testing.T) {
 	v := p.View(m.s, 40, 3, true)
 	if !strings.Contains(v, p.filter.hits[p.filter.sel].Path) {
 		t.Fatalf("selected hit not visible:\n%s", v)
+	}
+}
+
+// stuckIndex is a home index that never finishes.
+type stuckIndex struct{ done bool }
+
+func (s *stuckIndex) Snapshot() ([]fuzzy.Entry, fuzzy.Progress) {
+	return []fuzzy.Entry{{Path: "a.txt"}}, fuzzy.Progress{Count: 1, Done: s.done}
+}
+
+func TestFilterKeepsOneTickChainWhileIndexing(t *testing.T) {
+	_, m := filterHome(t)
+	drive(t, m, key("/"))
+	p := files(m)
+	ix := &stuckIndex{}
+	p.filter.index = ix
+	ticks := 0
+	for _, k := range []string{"tab", "a", "b", "backspace"} {
+		if cmd := p.Update(key(k), m.s); cmd != nil {
+			ticks++
+		}
+	}
+	if ticks != 1 {
+		t.Fatalf("%d pending ticks, want 1", ticks)
+	}
+	viewHas(t, m, "indexing… 1")
+	if cmd := p.Update(indexTickMsg{}, m.s); cmd == nil {
+		t.Fatal("the tick re-arms itself while indexing")
+	}
+	if cmd := p.Update(key("c"), m.s); cmd != nil {
+		t.Fatal("a key must not start a second chain")
+	}
+	ix.done = true
+	if cmd := p.Update(indexTickMsg{}, m.s); cmd != nil {
+		t.Fatal("the chain ends when the index is done")
+	}
+	if cmd := p.Update(key("d"), m.s); cmd != nil {
+		t.Fatal("no tick after done")
+	}
+}
+
+func TestFilterSpaceResetsTheSelection(t *testing.T) {
+	_, m := filterHome(t)
+	drive(t, m, key("/"), key("down"), key("down"))
+	if files(m).filter.sel != 2 {
+		t.Fatalf("sel %d", files(m).filter.sel)
+	}
+	drive(t, m, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+	if f := files(m).filter; f.sel != 0 || f.query != " " {
+		t.Fatalf("sel %d query %q", f.sel, f.query)
+	}
+}
+
+func TestFilterRowsShowTheSyncedMarks(t *testing.T) {
+	f, m := filterHome(t)
+	f.status.Entries = []engine.EntryStatus{{Path: "notes", Dir: true, Skipped: []string{"notes/sub/deep.md"}}, {Path: "proj/src/main.go"}}
+	drive(t, m, m.fetchStatus()())
+	drive(t, m, key("/"), key("tab"))
+	v := stripANSI(m.View())
+	for _, want := range []string{"notes/", "synced", "todo.md", "·", "deep.md", "skipped", "proj/", "holds synced"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("view lacks %q:\n%s", want, v)
+		}
+	}
+	for _, l := range strings.Split(v, "\n") {
+		plain := strings.TrimRight(l, "│ ")
+		switch {
+		case strings.Contains(l, " notes/ "):
+			if !strings.HasSuffix(plain, "synced") {
+				t.Fatalf("mark not right-aligned: %q", plain)
+			}
+		case strings.Contains(l, "deep.md"):
+			if !strings.HasSuffix(plain, "skipped") {
+				t.Fatalf("deep.md: %q", plain)
+			}
+		case strings.Contains(l, "main.go"):
+			if !strings.HasSuffix(plain, "synced") {
+				t.Fatalf("main.go: %q", plain)
+			}
+		}
 	}
 }
