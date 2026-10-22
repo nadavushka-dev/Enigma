@@ -424,6 +424,7 @@ type StatusReport struct {
 	Peers     []PeerReport         `json:"peers"`
 	Files     int                  `json:"files"`
 	Conflicts []string             `json:"conflicts,omitempty"`
+	Limits    engine.Limits        `json:"limits"`
 }
 
 func (d *daemon) status() StatusReport {
@@ -433,7 +434,7 @@ func (d *daemon) status() StatusReport {
 		live[p.ID] = p
 	}
 	r := StatusReport{Machine: d.id.Name, MachineID: d.id.MachineID, Group: d.id.GroupID, Version: d.o.Version,
-		Entries: st.Entries, Files: st.Files, Conflicts: st.Conflicts}
+		Entries: st.Entries, Files: st.Files, Conflicts: st.Conflicts, Limits: st.Limits}
 	d.mu.Lock()
 	for id, ps := range d.peers {
 		pr := PeerReport{Name: ps.rec.Name, ID: id, LastError: ps.lastErr}
@@ -531,6 +532,21 @@ func (d *daemon) api() http.Handler {
 			case <-time.After(200 * time.Millisecond):
 			}
 		}
+	})
+	mux.HandleFunc("GET /limits", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, d.eng.Limits(), nil)
+	})
+	mux.HandleFunc("POST /limits", func(w http.ResponseWriter, r *http.Request) {
+		var l engine.Limits
+		if err := json.NewDecoder(r.Body).Decode(&l); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		if err := d.eng.SetLimits(l); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		reply(w, d.eng.Limits(), nil)
 	})
 	mux.HandleFunc("GET /machines", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, d.eng.Machines(), nil)

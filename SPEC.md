@@ -44,7 +44,7 @@ machines, in real time, over ssh.
 | D15 | Symlinks | Skipped and listed in status. |
 | D16 | Paths | Only paths under `~`. |
 | D17 | Repo | `github.com/nadavushka-dev/enigma`; releases come from there. |
-| D18 | Limits | 10 MB per file, 2,000 files per folder entry. |
+| D18 | Limits | 10 MB per file, 2,000 files per folder entry, by default; a group setting (`enigma limits`). |
 
 ## 3. Vocabulary
 
@@ -265,9 +265,20 @@ either way: the other edit is in the conflict copy.
   `*.swp`, `*.swx`, `*~`, `.#*`, `#*#`, Enigma temp files.
 - **Per-entry ignores:** extra globs. A pattern without `/` matches any path
   component; a pattern with `/` matches from the entry's root.
-- **Limits** (group settings): 10 MB per file and 2,000 files per folder
-  entry. A file over the limit is not synced and shows in status. A folder
-  over the limit refuses to be added.
+- **Limits** (group settings, §6.4): by default 10 MB per file and 2,000
+  files per folder entry. `enigma limits` shows them and changes them for
+  the whole group; the latest change wins, and every machine rescans its
+  entries. Ceilings: 64 MB per file, since a file travels as one message
+  (§13), and 20,000 files per folder.
+  - A file over the size limit is not synced and shows in status as
+    skipped. A machine also refuses a received file over its limit, with an
+    error in its activity.
+  - A folder over the file limit refuses to be added, without reading it.
+  - A folder that grows past the limit later keeps syncing the files it
+    has. New files past the limit are not synced, and status, the TUI, the
+    activity feed and a notification say so once (`~/.claude: over the
+    2,000-file limit, 431 new files not synced`). They sync as soon as there
+    is room again: files removed, or the limit raised.
 - **Overlap:** an entry inside another entry is refused. Adding a folder
   that contains existing entries offers to replace them.
 
@@ -415,6 +426,7 @@ Every command takes `--json` for agents and scripts.
 | `enigma init` | create the group on this machine |
 | `enigma machine add <alias>` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §11) |
 | `enigma add <path> [--ignore GLOB]…` · `remove <path>` · `list` | manage entries; `add` with no path picks files and folders with `fzf` (§12.4) |
+| `enigma limits [--file-size SIZE] [--files N]` | show the group's limits, or change them for every machine (§8); SIZE like `25MB` |
 | `enigma status` | machines (link up/down, latency, last seen), entries, pending transfers, errors |
 | `enigma conflicts [--local]` | list conflict copies across the group (asks every member over ssh), with the machines that hold each |
 | `enigma trash list` · `restore <id>` · `empty` | trash on this machine |
@@ -449,7 +461,8 @@ Every command takes `--json` for agents and scripts.
   `x` on a member removes it, after a confirmation (`u` also uninstalls).
 - **Files:** a lazy tree rooted at `~`, dotfiles included. Synced entries
   are marked, and so is a folder that contains one (`contains synced`);
-  ignored, oversized and non-regular items are dimmed. `a` adds
+  ignored, oversized and non-regular items are dimmed, and files kept out
+  by the folder limit are marked `over limit` (§8). `a` adds
   the selected file or folder, `x` stops syncing an entry (after a
   confirmation). `/` filters it with fuzzy search (§12.4).
 - **Activity:** the daemon's recent events (a ring of the last 500: changes
@@ -596,4 +609,4 @@ Each milestone ends with all tests passing and a review in tuicr.
 | Symlinks | Skipped (D15). |
 | Paths outside `~` | Not supported (D16). |
 | Binary distribution | `github.com/nadavushka-dev/enigma` (D17). |
-| Limits | 10 MB / 2,000 files (D18). |
+| Limits | 10 MB / 2,000 files by default, per group (D18, §8). |

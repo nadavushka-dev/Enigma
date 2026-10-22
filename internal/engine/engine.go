@@ -91,6 +91,7 @@ type Engine struct {
 	peers     map[string]*peer
 	matchers  map[string]*fsx.Matcher
 	skipped   map[string]map[string]bool // entry -> rel -> skipped
+	overLimit map[string]map[string]bool // entry -> rel: new files past the folder's file limit
 	missing   map[string]bool            // entry root vanished locally (§6.5 guard)
 	dirty     bool
 
@@ -147,7 +148,7 @@ func New(o Options) (*Engine, error) {
 		statePath: filepath.Join(o.DataDir, "state.json"),
 		hist:      history.Open(filepath.Join(o.DataDir, "history")),
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
-		skipped: map[string]map[string]bool{}, missing: map[string]bool{},
+		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 	}
@@ -304,6 +305,9 @@ type EntryStatus struct {
 	Dir     bool
 	Missing bool     // root vanished locally; deletes are not propagated
 	Skipped []string // files not synced: symlinks, oversized
+	// OverLimit: new files not synced because the folder is at its file
+	// limit (SPEC §8).
+	OverLimit []string
 }
 
 type PeerStatus struct{ ID, Name string }
@@ -314,6 +318,7 @@ type Status struct {
 	Files          int      // tracked, not deleted
 	Conflicts      []string // conflict copies on this machine's disk, from ~
 	Sent, Received int64
+	Limits         Limits // the group's (SPEC §8)
 }
 
 func (e *Engine) Status() Status {
@@ -328,6 +333,10 @@ func (e *Engine) Status() Status {
 				es.Skipped = append(es.Skipped, rel)
 			}
 			sort.Strings(es.Skipped)
+			for rel := range e.overLimit[path] {
+				es.OverLimit = append(es.OverLimit, rel)
+			}
+			sort.Strings(es.OverLimit)
 			s.Entries = append(s.Entries, es)
 		}
 		for _, p := range e.peers {
@@ -339,6 +348,7 @@ func (e *Engine) Status() Status {
 			}
 		}
 		s.Conflicts = e.conflictCopies()
+		s.Limits = e.lim()
 	})
 	sort.Slice(s.Entries, func(i, j int) bool { return s.Entries[i].Path < s.Entries[j].Path })
 	sort.Slice(s.Peers, func(i, j int) bool { return s.Peers[i].Name < s.Peers[j].Name })

@@ -198,6 +198,11 @@ func formatEvent(ev engine.Event) string {
 		style = StyleDim.Render
 	case engine.EvUpgrade:
 		text = "↑ " + ev.Peer + ": " + ev.Detail
+	case engine.EvLimits:
+		text = "limits: " + ev.Detail
+		if ev.Peer != "" {
+			text += " (from " + ev.Peer + ")"
+		}
 	case engine.EvError:
 		text = ev.Path + ": " + ev.Detail
 		style = StyleBad.Render

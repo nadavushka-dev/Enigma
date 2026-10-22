@@ -95,6 +95,7 @@ activity feed. Add machines and files from there with `a`, and press
 | `enigma add <path> [--ignore GLOB]…` | Sync a file or folder on every machine. |
 | `enigma remove <path>` | Stop syncing it. The files stay everywhere. |
 | `enigma list` · `status` | What's synced, and the state of each link. |
+| `enigma limits [--file-size SIZE] [--files N]` | Show the group's limits, or change them on every machine. |
 | `enigma conflicts [--local]` | Conflict copies on every machine. |
 | `enigma trash list` · `restore <id>` · `empty` | Files removed here by a synced delete. |
 | `enigma doctor` | Check this machine and the links between all machines. |
@@ -108,9 +109,12 @@ Every command takes `--json`, for scripts and agents.
 
 - **Files and folders under `~`**, with the exec bit. Only regular files:
   symlinks are listed in status and skipped.
-- **Small things.** The limits are 10 MB per file and 2,000 files per
-  folder. Enigma is for the files around your projects, not the projects
-  themselves.
+- **Small things.** By default the limits are 10 MB per file and 2,000
+  files per folder. Enigma is for the files around your projects, not the
+  projects themselves. Change them for the whole group with
+  `enigma limits --file-size 25MB --files 5000` (at most 64 MB and 20,000).
+  A folder that grows past its limit keeps syncing what it has, and status
+  shows the new files left out until there is room.
 - **Always ignored:** `.git/`, `node_modules/`, `.DS_Store`, editor swap
   files. Add your own with `--ignore`.
 - **When you add a folder** that already exists on another machine, the

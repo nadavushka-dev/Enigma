@@ -429,3 +429,38 @@ func TestFilesFolderHoldingAnEntryIsMarked(t *testing.T) {
 		t.Fatalf("other: mark %q", mk)
 	}
 }
+
+func TestFilesMarksFilesOverTheFolderLimit(t *testing.T) {
+	f := newFake(t)
+	f.write(t, "notes/a.md", "x")
+	f.write(t, "notes/new.md", "x")
+	f.status.Entries = []engine.EntryStatus{{Path: "notes", Dir: true, OverLimit: []string{"notes/new.md"}}}
+	m := filesModel(t, f)
+	drive(t, m, m.fetchStatus()(), key("l"))
+	p := files(m)
+	marks := map[string]string{}
+	for _, r := range p.rows {
+		marks[r.rel] = p.mark(m.s, r)
+	}
+	if marks["notes/new.md"] != "over limit" || marks["notes/a.md"] != "·" {
+		t.Fatalf("marks: %v", marks)
+	}
+	if markStyle("over limit").GetForeground() != StyleWarn.GetForeground() {
+		t.Fatal("over limit must be styled as a warning")
+	}
+}
+
+func TestFilesDimmingFollowsTheGroupSizeLimit(t *testing.T) {
+	f := newFake(t)
+	f.write(t, "small.txt", "1234")
+	f.write(t, "large.txt", "123456789")
+	f.status.Limits = engine.Limits{MaxFileSize: 5, MaxFiles: 10}
+	m := filesModel(t, f)
+	drive(t, m, m.fetchStatus()())
+	p := files(m)
+	for _, r := range p.rows {
+		if want := r.rel == "large.txt"; p.dimmed(m.s, r) != want {
+			t.Fatalf("dimmed(%s) = %v, want %v", r.rel, !want, want)
+		}
+	}
+}

@@ -54,6 +54,8 @@ func TestActivityFormatsEachKind(t *testing.T) {
 		{ev(11, engine.EvUpgrade, "", "devbox", "v1.0.0 → v1.1.0"), "15:04:05 ↑ devbox: v1.0.0 → v1.1.0"},
 		{ev(12, engine.EvError, "notes/a.md", "", "permission denied"), "15:04:05 notes/a.md: permission denied"},
 		{ev(13, "weird", "p", "", "d"), "15:04:05 weird p d"},
+		{ev(14, engine.EvLimits, "", "", "25 MB per file, 2,000 files per folder"), "15:04:05 limits: 25 MB per file, 2,000 files per folder"},
+		{ev(15, engine.EvLimits, "", "devbox", "25 MB per file, 2,000 files per folder"), "15:04:05 limits: 25 MB per file, 2,000 files per folder (from devbox)"},
 	}
 	for _, c := range cases {
 		if got := plain(formatEvent(c.ev)); got != c.want {

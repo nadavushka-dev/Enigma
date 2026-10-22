@@ -60,6 +60,19 @@ func (c *Client) Restart() error { return c.do(http.MethodPost, "/restart", nil,
 // Shutdown stops the daemon.
 func (c *Client) Shutdown() error { return c.do(http.MethodPost, "/shutdown", nil, nil) }
 
+// Limits returns the group's limits (SPEC §8).
+func (c *Client) Limits() (engine.Limits, error) {
+	var l engine.Limits
+	return l, c.do(http.MethodGet, "/limits", nil, &l)
+}
+
+// SetLimits changes the group's limits; a zero field keeps its value. It
+// returns the limits now in force.
+func (c *Client) SetLimits(l engine.Limits) (engine.Limits, error) {
+	var now engine.Limits
+	return now, c.do(http.MethodPost, "/limits", l, &now)
+}
+
 // Machines returns every machine record in the group state.
 func (c *Client) Machines() ([]proto.MachineRecord, error) {
 	var rs []proto.MachineRecord

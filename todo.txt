@@ -48,3 +48,4 @@ x 2026-10-22 2026-10-21 M6 fuzzy search: internal/fuzzy matcher + home index (SP
 x 2026-10-22 2026-10-21 M6 tui: Files pane / filter, tree scope and ~ scope (tab), enter jumps in the tree (SPEC 12.2) +m6
 x 2026-10-22 2026-10-21 M6 cli: enigma add with no path picks via fzf when installed (SPEC 12.1) +m6
 2026-10-21 M6 founder machine has no ssh target: other members cannot dial it without enigma machine alias (design talk) +m6
+x 2026-10-22 2026-10-22 M6 limits: group setting (enigma limits), ceilings 64MB/20k, folder growth past the file limit skips new files with a clear error, receiver refuses oversized files +m6

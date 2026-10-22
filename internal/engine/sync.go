@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -55,12 +56,13 @@ func (e *Engine) addEntry(abs string, ignore []string) error {
 	}
 	dir := info.Kind == fsx.Dir
 	if dir {
-		n, err := fsx.CountFiles(abs, fsx.NewMatcher(ignore), e.o.MaxFileSize, e.o.MaxFiles)
+		lim := e.lim()
+		n, err := fsx.CountFiles(abs, fsx.NewMatcher(ignore), lim.MaxFileSize, lim.MaxFiles)
 		if err != nil {
 			return err
 		}
-		if n > e.o.MaxFiles {
-			return fmt.Errorf("%s has more than %d files, the limit for a folder (Enigma is not for whole projects)", abs, e.o.MaxFiles)
+		if n > lim.MaxFiles {
+			return fmt.Errorf("%s has more than %s files, the limit for a folder (Enigma is not for whole projects; raise it with enigma limits --files N)", abs, FormatCount(lim.MaxFiles))
 		}
 	}
 	e.st.Lamport++
@@ -132,6 +134,7 @@ func (e *Engine) untrack(path string) {
 	}
 	delete(e.matchers, path)
 	delete(e.skipped, path)
+	delete(e.overLimit, path)
 	delete(e.missing, path)
 	for rel := range e.st.Files {
 		if rel == path || strings.HasPrefix(rel, path+"/") {
@@ -148,13 +151,29 @@ func (e *Engine) untrack(path string) {
 
 // seedEntry records the files this machine has for a newly active entry.
 // On the adding machine they are Seed versions; elsewhere Preexisting (D7).
+// Past the folder's file limit, the rest wait as over the limit (§8).
 func (e *Engine) seedEntry(path string, r proto.EntryRecord, origin version.Origin) {
-	for rel, info := range e.scanEntry(path, r, true) {
+	files := e.scanEntry(path, r, true)
+	rels := make([]string, 0, len(files))
+	for rel := range files {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+	room := e.room(path, r)
+	for _, rel := range rels {
 		if fs := e.st.Files[rel]; fs != nil && !fs.V.IsDeleted() {
 			continue
 		}
-		e.newLocalVersion(rel, info, origin)
+		if room != nil {
+			if *room <= 0 {
+				e.markOverLimit(path, rel)
+				continue
+			}
+			*room--
+		}
+		e.newLocalVersion(rel, files[rel], origin)
 	}
+	e.reportOverLimit(path, 0)
 }
 
 // scanEntry returns the syncable files of an entry, keyed by path from ~,
@@ -172,7 +191,7 @@ func (e *Engine) scanEntry(path string, r proto.EntryRecord, hash bool) map[stri
 			rel, _ := filepath.Rel(root, p)
 			return e.statFile(path + "/" + filepath.ToSlash(rel))
 		}
-		res, err := fsx.ScanWith(root, e.matchers[path], e.o.MaxFileSize, stat)
+		res, err := fsx.ScanWith(root, e.matchers[path], e.lim().MaxFileSize, stat)
 		if err != nil {
 			e.log.Error("scan", "entry", path, "err", err)
 		}
@@ -188,7 +207,7 @@ func (e *Engine) scanEntry(path string, r proto.EntryRecord, hash bool) map[stri
 			info, _ = e.statFile(path)
 		}
 		switch {
-		case info.Kind == fsx.Regular && info.Size > e.o.MaxFileSize, info.Kind == fsx.Other:
+		case info.Kind == fsx.Regular && info.Size > e.lim().MaxFileSize, info.Kind == fsx.Other:
 			skipped[path] = true
 		case info.Kind == fsx.Regular:
 			out[path] = info
@@ -235,38 +254,111 @@ func (e *Engine) onLocalPath(abs string) {
 }
 
 // refreshUnder refreshes rel and, if it is or was a folder, everything under it.
+// New files past the folder's file limit wait as over the limit (§8), and
+// the ones waiting take any room this refresh made.
 func (e *Engine) refreshUnder(entry, rel string) {
+	waiting := len(e.overLimit[entry])
+	room := e.room(entry, e.st.Entries[entry])
 	seen := map[string]bool{}
 	if info, _ := fsx.Stat(e.abs(rel)); info.Kind == fsx.Dir {
 		files, _ := fsx.ListFiles(e.abs(rel), fsx.NewMatcher(nil))
 		for _, f := range files {
 			p := path.Join(rel, f)
 			seen[p] = true
-			e.refreshFile(entry, p)
+			e.refreshFile(entry, p, room)
 		}
 	} else {
 		seen[rel] = true
-		e.refreshFile(entry, rel)
+		e.refreshFile(entry, rel, room)
 	}
 	for p := range e.st.Files {
 		if !seen[p] && strings.HasPrefix(p, rel+"/") {
-			e.refreshFile(entry, p)
+			e.refreshFile(entry, p, room)
 		}
+	}
+	if over := e.overLimit[entry]; len(over) > 0 { // room freed, or gone from disk
+		waitingNow := make([]string, 0, len(over))
+		for p := range over {
+			waitingNow = append(waitingNow, p)
+		}
+		sort.Strings(waitingNow)
+		for _, p := range waitingNow {
+			e.refreshFile(entry, p, room)
+		}
+	}
+	e.reportOverLimit(entry, waiting)
+}
+
+// room is how many more files a folder entry may track (nil: no limit,
+// a single-file entry). It may be negative: files received from peers
+// count too, and a limit can be lowered.
+func (e *Engine) room(entry string, r proto.EntryRecord) *int {
+	if !r.Dir {
+		return nil
+	}
+	n := e.lim().MaxFiles
+	for p, fs := range e.st.Files {
+		if !fs.V.IsDeleted() && strings.HasPrefix(p, entry+"/") {
+			n--
+		}
+	}
+	return &n
+}
+
+func (e *Engine) markOverLimit(entry, rel string) {
+	over := e.overLimit[entry]
+	if over == nil {
+		over = map[string]bool{}
+		e.overLimit[entry] = over
+	}
+	over[rel] = true
+}
+
+// reportOverLimit tells the user once that entry went over its file limit,
+// given how many files were waiting before.
+func (e *Engine) reportOverLimit(entry string, before int) {
+	n := len(e.overLimit[entry])
+	switch {
+	case n > 0 && before == 0:
+		files := "files"
+		if n == 1 {
+			files = "file"
+		}
+		msg := fmt.Sprintf("over the %s-file limit: %d new %s not synced", FormatCount(e.lim().MaxFiles), n, files)
+		e.log.Warn("folder over its file limit", "entry", entry, "waiting", n)
+		e.event(EvError, entry, "", msg)
+		e.notify(entry, "~/"+entry+" is "+msg)
+	case n == 0 && before > 0:
+		e.log.Info("folder back under its file limit", "entry", entry)
+	}
+	if n == 0 {
+		delete(e.overLimit, entry)
 	}
 }
 
 // refreshFile makes the current version of rel match the disk, creating a
-// local version (edit or delete) if it does not.
-func (e *Engine) refreshFile(entry, rel string) {
+// local version (edit or delete) if it does not. With room, a new file
+// takes one place, or waits as over the limit when there is none; a
+// delete frees one.
+func (e *Engine) refreshFile(entry, rel string, room *int) {
 	if e.ignored(entry, rel) {
 		return
 	}
+	fs := e.st.Files[rel]
+	isNew := fs == nil || fs.V.IsDeleted()
+	if room != nil && isNew && *room <= 0 {
+		// Do not read a file that cannot be synced yet.
+		if st, ok := fsx.StampOf(e.abs(rel)); ok && st.Size <= e.lim().MaxFileSize {
+			e.markOverLimit(entry, rel)
+			return
+		}
+	}
+	delete(e.overLimit[entry], rel)
 	info, err := e.statFile(rel)
 	if err != nil {
 		e.log.Error("stat", "path", rel, "err", err)
 		return
 	}
-	fs := e.st.Files[rel]
 	sk := e.skipped[entry]
 	if sk == nil {
 		sk = map[string]bool{}
@@ -274,7 +366,7 @@ func (e *Engine) refreshFile(entry, rel string) {
 	}
 	switch info.Kind {
 	case fsx.Regular:
-		if info.Size > e.o.MaxFileSize {
+		if info.Size > e.lim().MaxFileSize {
 			sk[rel] = true
 			return
 		}
@@ -284,6 +376,9 @@ func (e *Engine) refreshFile(entry, rel string) {
 				fs.Materialized, e.dirty = true, true
 			}
 			return
+		}
+		if room != nil && isNew {
+			*room--
 		}
 		e.newLocalVersion(rel, info, version.Edit)
 	case fsx.Missing:
@@ -301,6 +396,9 @@ func (e *Engine) refreshFile(entry, rel string) {
 		e.event(EvDeleted, rel, "", "")
 		e.setCurrent(rel, v, false)
 		e.broadcast(&proto.Msg{Type: proto.Announce, Path: rel, Version: &v}, nil)
+		if room != nil {
+			*room++
+		}
 	case fsx.Other:
 		sk[rel] = true
 	}
@@ -403,7 +501,7 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	if !ok {
 		return
 	}
-	e.refreshFile(entry, rel)
+	e.refreshFile(entry, rel, nil)
 	d := Decide(rel, e.current(rel), in, false)
 	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
 		e.log.Error("apply", "path", rel, "err", err)
@@ -418,7 +516,7 @@ func (e *Engine) onFetch(p *peer, rel string) {
 		return
 	}
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
-		e.refreshFile(entry, rel)
+		e.refreshFile(entry, rel, nil)
 		fs := e.st.Files[rel]
 		if fs == nil {
 			return
@@ -447,11 +545,18 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 		e.log.Error("content does not match its hash; dropped", "path", rel, "peer", p.name)
 		return
 	}
+	if max := e.lim().MaxFileSize; !in.IsDeleted() && int64(len(content)) > max {
+		msg := fmt.Sprintf("not received: %s, over the %s file limit", FormatSize(int64(len(content))), FormatSize(max))
+		e.log.Warn("received file over the size limit; dropped", "path", rel, "peer", p.name, "size", len(content))
+		e.event(EvError, rel, p.name, msg)
+		e.notify(rel, "~/"+rel+" "+msg)
+		return
+	}
 	if !in.IsDeleted() {
 		e.keep(content)
 	}
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
-		e.refreshFile(entry, rel)
+		e.refreshFile(entry, rel, nil)
 		cur := e.current(rel)
 		d := Decide(rel, cur, in, true)
 		if m, ok := e.tryMerge(rel, cur, in, anc, content); ok {
@@ -707,7 +812,7 @@ func (e *Engine) statFile(rel string) (fsx.Info, error) {
 		return fsx.Stat(abs) // missing, a folder or not regular: nothing to read
 	}
 	exec := st.Mode&0o111 != 0
-	if st.Size > e.o.MaxFileSize {
+	if st.Size > e.lim().MaxFileSize {
 		e.dropStamp(rel)
 		return fsx.Info{Kind: fsx.Regular, Size: st.Size, Mtime: st.Mtime, Exec: exec}, nil
 	}

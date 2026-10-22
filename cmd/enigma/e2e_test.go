@@ -509,6 +509,46 @@ func TestE2E_TrashListRestoreEmpty(t *testing.T) {
 	}
 }
 
+// SPEC §8: the limits are a group setting, and a folder that grows past
+// its file limit says so instead of syncing everything.
+func TestE2E_LimitsAreSetForTheWholeGroup(t *testing.T) {
+	w := newWorld(t)
+	a, b := w.host("a"), w.host("b")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	a.add(b)
+	if out := a.must("limits"); !strings.Contains(out, "10 MB per file") || !strings.Contains(out, "2,000 files per folder") {
+		t.Fatalf("limits:\n%s", out)
+	}
+	a.must("limits", "--files", "3", "--file-size", "1MB")
+	eventuallyT(t, "b has the new limits", func() bool {
+		out, _ := b.run("limits", "--json")
+		return strings.Contains(out, `"max_files":3`) && strings.Contains(out, `"max_file_size":1048576`)
+	})
+	if out, code := a.run("limits", "--file-size", "65MB"); code != 1 || !strings.Contains(out, "at most 64 MB") {
+		t.Fatalf("limits over the ceiling: %d %s", code, out)
+	}
+	if out, code := a.run("limits", "--files", "lots"); code != 2 {
+		t.Fatalf("limits with a bad count: %d %s", code, out)
+	}
+
+	a.write("notes/1.md", "one")
+	a.must("add", "notes")
+	for _, n := range []string{"2", "3", "4"} {
+		a.write("notes/"+n+".md", n)
+	}
+	eventuallyT(t, "status says the folder is over its limit", func() bool {
+		out, _ := a.run("status")
+		return strings.Contains(out, "over the 3-file limit, 1 new file not synced")
+	})
+	for _, n := range []string{"1", "2", "3", "4"} {
+		a.write("big/"+n, n)
+	}
+	if out, code := a.run("add", "big"); code == 0 || !strings.Contains(out, "enigma limits --files") {
+		t.Fatalf("add over the limit: %d %s", code, out)
+	}
+}
+
 func TestE2E_ConflictsListsCopiesWithTheirOriginal(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.host("a"), w.host("b")

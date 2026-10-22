@@ -27,6 +27,7 @@ type state struct {
 	Lamport  uint64                         `json:"lamport"` // group-state clock
 	Entries  map[string]proto.EntryRecord   `json:"entries"`
 	Machines map[string]proto.MachineRecord `json:"machines"`
+	Settings *proto.SettingsRecord          `json:"settings,omitempty"` // nil: the defaults
 	Files    map[string]*fileState          `json:"files"`
 	// Stamps: the last hash taken of a file on disk, valid while its
 	// lstat stamp is unchanged (SPEC §6.1). Keyed by path from ~.

@@ -35,6 +35,7 @@ const (
 	Machines    Type = "machines"     // group state: machine records
 	Upgrade     Type = "upgrade"      // a newer binary for the receiver (SPEC §11)
 	Ping        Type = "ping"         // heartbeat: a link silent for 3 intervals is dead
+	Settings    Type = "settings"     // group state: the group's limits (SPEC §8)
 )
 
 type HelloBody struct {
@@ -60,6 +61,22 @@ type MachineRecord struct {
 }
 
 func (r MachineRecord) Newer(o MachineRecord) bool {
+	if r.Clock != o.Clock {
+		return r.Clock > o.Clock
+	}
+	return r.By > o.By
+}
+
+// SettingsRecord holds the group's settings (SPEC §6.4, §8). The record
+// with the highest (Clock, By) wins.
+type SettingsRecord struct {
+	MaxFileSize int64  `json:"max_file_size"`
+	MaxFiles    int    `json:"max_files"`
+	Clock       uint64 `json:"clock"`
+	By          string `json:"by"`
+}
+
+func (r SettingsRecord) Newer(o SettingsRecord) bool {
 	if r.Clock != o.Clock {
 		return r.Clock > o.Clock
 	}
@@ -99,6 +116,7 @@ type Msg struct {
 	Hello    *HelloBody                 `json:"hello,omitempty"`
 	Entries  []EntryRecord              `json:"entries,omitempty"`
 	Machines []MachineRecord            `json:"machines,omitempty"`
+	Settings *SettingsRecord            `json:"settings,omitempty"`
 	Upgrade  *UpgradeBody               `json:"upgrade,omitempty"`
 	Summary  map[string]version.Version `json:"summary,omitempty"`
 	Path     string                     `json:"path,omitempty"`

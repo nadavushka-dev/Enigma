@@ -13,6 +13,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
+	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/fuzzy"
 )
 
@@ -238,10 +239,18 @@ func cmdStatus(c *ctx, args []string) error {
 	}
 	for _, e := range st.Entries {
 		state := "ok"
-		if e.Missing {
+		switch {
+		case e.Missing:
 			state = "MISSING LOCALLY: deletes are not propagated"
-		} else if len(e.Skipped) > 0 {
-			state = fmt.Sprintf("ok, %d skipped (symlinks or too large)", len(e.Skipped))
+		case len(e.OverLimit) > 0:
+			files := "files"
+			if len(e.OverLimit) == 1 {
+				files = "file"
+			}
+			state = fmt.Sprintf("over the %s-file limit, %d new %s not synced (enigma limits --files N raises it)",
+				engine.FormatCount(st.Limits.MaxFiles), len(e.OverLimit), files)
+		case len(e.Skipped) > 0:
+			state = fmt.Sprintf("ok, %d skipped (symlinks or over %s)", len(e.Skipped), engine.FormatSize(st.Limits.MaxFileSize))
 		}
 		fmt.Fprintf(tw, "%s\t%s\n", entryLabel(e.Path, e.Dir), state)
 	}

@@ -328,6 +328,11 @@ func (p *filesPane) markRel(s *Shared, rel string, dir bool) string {
 			return "skipped"
 		}
 	}
+	for _, ol := range e.OverLimit {
+		if ol == rel {
+			return "over limit"
+		}
+	}
 	if ignoreMatcher.Ignored(strings.TrimPrefix(rel, e.Path+"/")) {
 		return "" // inside the folder, but not synced
 	}
@@ -338,7 +343,7 @@ func markStyle(mark string) lipgloss.Style {
 	switch mark {
 	case "synced":
 		return StyleOK
-	case "missing here", "skipped":
+	case "missing here", "skipped", "over limit":
 		return StyleWarn
 	}
 	return StyleDim
@@ -349,7 +354,11 @@ func (p *filesPane) dimmed(s *Shared, n *fileNode) bool {
 	if n.symlink || n.other {
 		return true
 	}
-	if !n.dir && n.size > engine.DefaultMaxFileSize {
+	maxSize := s.Status.Limits.MaxFileSize
+	if maxSize == 0 { // a daemon from before group limits
+		maxSize = engine.DefaultMaxFileSize
+	}
+	if !n.dir && n.size > maxSize {
 		return true
 	}
 	rel := n.rel

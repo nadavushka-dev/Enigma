@@ -245,6 +245,9 @@ func (e *Engine) attach(p *peer) bool {
 		ms = append(ms, r)
 	}
 	p.send(&proto.Msg{Type: proto.Machines, Machines: ms})
+	if e.st.Settings != nil {
+		p.send(&proto.Msg{Type: proto.Settings, Settings: e.st.Settings})
+	}
 	recs := make([]proto.EntryRecord, 0, len(e.st.Entries))
 	for _, r := range e.st.Entries {
 		recs = append(recs, r)
@@ -293,6 +296,10 @@ func (e *Engine) handleMsg(p *peer, m *proto.Msg) {
 	case proto.Machines:
 		for _, r := range m.Machines {
 			e.applyMachine(r, p)
+		}
+	case proto.Settings:
+		if m.Settings != nil {
+			e.applySettings(*m.Settings, p)
 		}
 	case proto.Entries:
 		for _, r := range m.Entries {
