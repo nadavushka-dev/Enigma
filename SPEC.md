@@ -288,7 +288,7 @@ as a normal edit. Restore never overwrites an existing file.
 
 | Path | Content |
 |---|---|
-| `~/.config/enigma/config.toml` | Local-only settings: alias overrides, notifications on/off. Group settings are not here. |
+| `~/.config/enigma/config.toml` | Local-only settings: alias overrides (`[aliases]`), `notifications = false` to turn desktop notifications off (§12.3). Group settings are not here. |
 | `~/.local/share/enigma/state/` | Group state and current versions, as JSON files written atomically (temp + rename). |
 | `~/.local/share/enigma/history/` | Content of past versions, by hash, used as merge bases. A blob is kept while it is among the last 20 versions of some file or younger than 30 days; the store is capped at 200 MB, oldest first, never dropping a current version. |
 | `~/.local/share/enigma/trash/` | §9 |
@@ -474,11 +474,16 @@ Finding a file to add without walking the tree by hand.
 
 ### 12.3 Notifications
 For a conflict copy, a vanished entry root, or a failed merge write:
-- macOS: `osascript -e 'display notification …'`;
-- Linux: `notify-send`, if present.
+- macOS: `osascript -e 'display notification …'`; the text goes in as
+  AppleScript string literals and the script is passed as an argument,
+  never through a shell;
+- Linux: `notify-send`, if present on `PATH`; otherwise nothing.
 
-Rate-limited to one notification per path per 10 minutes. Can be turned off
-in `config.toml`.
+Rate-limited to one notification per path per 10 minutes. Turned off with
+`notifications = false` in `config.toml` (read when the daemon starts).
+Notifying never blocks the engine loop: the command runs on its own
+goroutine and nothing waits for it. The notifier is injected into the
+daemon, so tests never raise real notifications.
 
 ## 13. Engineering
 

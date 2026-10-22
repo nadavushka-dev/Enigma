@@ -50,6 +50,9 @@ type Options struct {
 	Heartbeat      time.Duration
 	NoWatch        bool // no fs watcher: callers drive changes with Rescan (tests, simulation)
 	Log            *slog.Logger
+	// Notify raises a desktop notification about path (SPEC §12.3); nil
+	// is silent. It is called on the loop, so it must return at once.
+	Notify func(path, title, body string)
 
 	// Machines (SPEC §11).
 	Bin        string                      // this machine's enigma binary, for its own record

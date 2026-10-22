@@ -49,6 +49,9 @@ type Options struct {
 	MinBackoff, MaxBackoff time.Duration // reconnect backoff, default 1s .. 60s
 	Debounce               time.Duration // passed to the engine (0 = default)
 	Ready                  func()        // called once sockets are up (tests)
+	// Notify raises desktop notifications (SPEC §12.3), subject to
+	// config.toml `notifications`; nil (tests) is silent.
+	Notify func(path, title, body string)
 }
 
 // ErrRestart: the binary was replaced by an upgrade; the caller re-executes
@@ -131,8 +134,12 @@ func Run(ctx context.Context, o Options) error {
 	defer cancel()
 	d := &daemon{o: o, id: id, log: o.Log.With("machine", id.Name), peers: map[string]*peerState{}, ctx: ctx, stop: cancel}
 	recheck := make(chan struct{}, 1)
+	notify := o.Notify
+	if local, err := config.LoadLocal(o.Paths); err == nil && !local.Notifications {
+		notify = nil
+	}
 	eng, err := engine.New(engine.Options{Home: o.Home, DataDir: o.Paths.Data, MachineID: id.MachineID,
-		Name: id.Name, GroupID: id.GroupID, Debounce: o.Debounce, Log: o.Log,
+		Name: id.Name, GroupID: id.GroupID, Debounce: o.Debounce, Log: o.Log, Notify: notify,
 		Bin: o.Bin, Bootstrap: bootstrap, Version: o.Version,
 		OnMachines: func([]proto.MachineRecord) {
 			select {
