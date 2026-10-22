@@ -4,9 +4,14 @@
 package fuzzy
 
 import (
+	"cmp"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Result is one match: its score (higher is better) and the matched rune
@@ -16,101 +21,171 @@ type Result struct {
 	Positions []int
 }
 
-// Hit is a ranked path.
+// Hit is a ranked path. Positions are not computed here (ranking scores
+// tens of thousands of paths per keystroke); Highlight gives them for the
+// few that are shown.
 type Hit struct {
-	Path string
-	Result
+	Path  string
+	Score int
 }
 
 const (
 	bonusConsecutive  = 3 // right after the previous matched character
 	bonusSegmentStart = 3 // at the start of a segment (after / . _ -)
 	bonusBaseName     = 1 // in the base name
+	none              = -1 << 30
 )
 
-// Match reports whether query matches path. Spaces split the query into
-// terms that must all match; the characters of a term must appear in the
-// path in order. Case is ignored unless the query has an upper case letter.
-func Match(query, path string) (Result, bool) {
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
-		return Result{}, true
+// query is a parsed query: its terms and case rule.
+type query struct {
+	terms     [][]rune
+	sensitive bool
+}
+
+func parse(q string) query {
+	var out query
+	for _, t := range strings.Fields(q) {
+		out.terms = append(out.terms, []rune(t))
 	}
-	sensitive := strings.IndexFunc(query, unicode.IsUpper) >= 0
-	hay := []rune(path)
-	if !sensitive {
-		for i, r := range hay { // rune by rune: hay stays aligned with path
-			hay[i] = unicode.ToLower(r)
-		}
+	out.sensitive = strings.IndexFunc(q, unicode.IsUpper) >= 0
+	return out
+}
+
+// scorer holds the scratch buffers of the dynamic programming, reused
+// across paths so ranking allocates (almost) nothing per path.
+type scorer struct {
+	q         query
+	hay       []rune
+	bonus     []int
+	prev, cur []int
+	baseRunes int
+}
+
+func newScorer(q string) *scorer { return &scorer{q: parse(q)} }
+
+// prepare lowercases path into hay (rune by rune, so hay stays aligned
+// with path) and computes each position's bonus, in one pass.
+func (s *scorer) prepare(path string) {
+	if cap(s.hay) < len(path) {
+		s.hay = make([]rune, 0, len(path))
+		s.bonus, s.prev, s.cur = make([]int, len(path)), make([]int, len(path)), make([]int, len(path))
 	}
-	var total Result
-	seen := map[int]bool{}
-	for _, t := range terms {
-		r, ok := matchTerm([]rune(t), hay, path)
-		if !ok {
-			return Result{}, false
+	hay, bonus := s.hay[:0], s.bonus[:0]
+	fold := !s.q.sensitive
+	prev, base := '/', 0 // base: rune index of the base name
+	for _, r := range path {
+		b := 0
+		if isBoundary(prev) {
+			b += bonusSegmentStart
 		}
-		total.Score += r.Score
-		for _, p := range r.Positions {
-			if !seen[p] {
-				seen[p] = true
-				total.Positions = append(total.Positions, p)
+		if r == '/' {
+			base = len(hay) + 1
+		}
+		prev = r
+		if fold {
+			if r < utf8.RuneSelf { // ASCII fast path
+				if 'A' <= r && r <= 'Z' {
+					r += 'a' - 'A'
+				}
+			} else {
+				r = unicode.ToLower(r)
 			}
 		}
+		hay = append(hay, r)
+		bonus = append(bonus, b)
 	}
-	sort.Ints(total.Positions)
+	for j := base; j < len(bonus); j++ {
+		bonus[j] += bonusBaseName
+	}
+	s.hay, s.bonus = hay, bonus
+	s.prev, s.cur = s.prev[:len(hay)], s.cur[:len(hay)]
+}
+
+// score is the path's total score over every term, or false.
+func (s *scorer) score(path string) (int, bool) {
+	if len(s.q.terms) == 0 {
+		return 0, true
+	}
+	s.prepare(path)
+	total := 0
+	for _, t := range s.q.terms {
+		if !isSubsequence(t, s.hay) {
+			return 0, false
+		}
+		total += s.scoreTerm(t)
+	}
 	return total, true
 }
 
-// matchTerm finds the best placement of q in hay (q is a subsequence of
-// hay) by dynamic programming: dp[i][j] is the best score with q[i] at
-// hay[j]. orig is the path as written, for the segment starts.
-func matchTerm(q, hay []rune, orig string) (Result, bool) {
-	n, m := len(hay), len(q)
-	if m == 0 || !isSubsequence(q, hay) {
-		return Result{}, m == 0
-	}
-	bonus := make([]int, n)
-	base := strings.LastIndex(orig, "/") + 1 // rune index: paths are compared by rune below
-	baseRunes := len([]rune(orig[:base]))
-	for j := range hay {
-		if j == 0 || isBoundary(hay[j-1]) {
-			bonus[j] += bonusSegmentStart
-		}
-		if j >= baseRunes {
-			bonus[j] += bonusBaseName
+// scoreTerm is term without the placement: the hot loop of ranking.
+func (s *scorer) scoreTerm(q []rune) int {
+	hay, bonus, prev, cur := s.hay, s.bonus, s.prev, s.cur
+	n := len(hay)
+	for j := 0; j < n; j++ {
+		prev[j] = none
+		if hay[j] == q[0] {
+			prev[j] = bonus[j]
 		}
 	}
-	const none = -1 << 30
-	prev := make([]int, n) // dp[i-1][*]
-	from := make([][]int, m)
-	for i := range from {
-		from[i] = make([]int, n)
-	}
-	cur := make([]int, n)
-	for i := 0; i < m; i++ {
-		for j := range cur {
-			cur[j] = none
-			from[i][j] = -1
+	for _, c := range q[1:] {
+		bestV := none // best prev[k] for k < j-1
+		for j := 0; j < n; j++ {
+			v := none
+			if hay[j] == c {
+				if j >= 1 && prev[j-1] > none {
+					v = prev[j-1] + bonusConsecutive + bonus[j]
+				}
+				if bestV > none && bestV+bonus[j] > v {
+					v = bestV + bonus[j]
+				}
+			}
+			cur[j] = v
+			if j >= 1 && prev[j-1] > bestV {
+				bestV = prev[j-1]
+			}
 		}
+		prev, cur = cur, prev
+	}
+	s.prev, s.cur = prev, cur
+	best := none
+	for j := 0; j < n; j++ {
+		if prev[j] > best {
+			best = prev[j]
+		}
+	}
+	return best
+}
+
+// term runs the dynamic programming for one term: dp[i][j] is the best
+// score with q[i] at hay[j]. With from == nil only the score is kept, in
+// O(n) memory; with from (m rows of n) the placement is recoverable.
+func (s *scorer) term(q []rune, from [][]int) (int, int) {
+	hay, bonus, prev, cur := s.hay, s.bonus, s.prev, s.cur
+	n := len(hay)
+	for i := range q {
 		bestK, bestV := -1, none // best dp[i-1][k] for k < j-1
 		for j := 0; j < n; j++ {
-			if hay[j] != q[i] {
-				if i > 0 && j >= 1 && prev[j-1] > bestV {
-					bestK, bestV = j-1, prev[j-1]
-				}
-				continue
+			cur[j] = none
+			if from != nil {
+				from[i][j] = -1
 			}
-			if i == 0 {
-				cur[j] = bonus[j]
-			} else {
-				if j >= 1 && prev[j-1] > none {
-					cur[j] = prev[j-1] + bonusConsecutive + bonus[j]
-					from[i][j] = j - 1
-				}
-				if bestV > none && bestV+bonus[j] > cur[j] {
-					cur[j] = bestV + bonus[j]
-					from[i][j] = bestK
+			if hay[j] == q[i] {
+				switch {
+				case i == 0:
+					cur[j] = bonus[j]
+				default:
+					if j >= 1 && prev[j-1] > none {
+						cur[j] = prev[j-1] + bonusConsecutive + bonus[j]
+						if from != nil {
+							from[i][j] = j - 1
+						}
+					}
+					if bestV > none && bestV+bonus[j] > cur[j] {
+						cur[j] = bestV + bonus[j]
+						if from != nil {
+							from[i][j] = bestK
+						}
+					}
 				}
 			}
 			if i > 0 && j >= 1 && prev[j-1] > bestV {
@@ -119,18 +194,63 @@ func matchTerm(q, hay []rune, orig string) (Result, bool) {
 		}
 		prev, cur = cur, prev
 	}
+	s.prev, s.cur = prev, cur
 	endJ, endV := -1, none
 	for j := 0; j < n; j++ {
 		if prev[j] > endV {
 			endJ, endV = j, prev[j]
 		}
 	}
-	pos := make([]int, m)
-	for i, j := m-1, endJ; i >= 0; i-- {
-		pos[i] = j
-		j = from[i][j]
+	return endV, endJ
+}
+
+// positions is the best placement of every term, deduplicated, ascending.
+func (s *scorer) positions(path string) []int {
+	s.prepare(path)
+	seen := map[int]bool{}
+	var out []int
+	for _, t := range s.q.terms {
+		if !isSubsequence(t, s.hay) {
+			return nil
+		}
+		from := make([][]int, len(t))
+		for i := range from {
+			from[i] = make([]int, len(s.hay))
+		}
+		_, j := s.term(t, from)
+		for i := len(t) - 1; i >= 0; i-- {
+			if !seen[j] {
+				seen[j] = true
+				out = append(out, j)
+			}
+			j = from[i][j]
+		}
 	}
-	return Result{Score: endV, Positions: pos}, true
+	sort.Ints(out)
+	return out
+}
+
+// Match reports whether query matches path, with the score and the
+// highlighted positions. Spaces split the query into terms that must all
+// match; the characters of a term must appear in the path in order. Case
+// is ignored unless the query has an upper case letter.
+func Match(query, path string) (Result, bool) {
+	s := newScorer(query)
+	v, ok := s.score(path)
+	if !ok {
+		return Result{}, false
+	}
+	return Result{Score: v, Positions: s.positions(path)}, true
+}
+
+// Highlight is the matched rune positions of query in path (nil when it
+// does not match), for the rows a UI renders.
+func Highlight(query, path string) []int {
+	s := newScorer(query)
+	if _, ok := s.score(path); !ok {
+		return nil
+	}
+	return s.positions(path)
 }
 
 func isSubsequence(q, hay []rune) bool {
@@ -148,21 +268,47 @@ func isBoundary(r rune) bool { return r == '/' || r == '.' || r == '_' || r == '
 // Rank is the paths that match query, best first; ties go to the shorter
 // path, then alphabetically.
 func Rank(query string, paths []string) []Hit {
-	var hits []Hit
-	for _, p := range paths {
-		if r, ok := Match(query, p); ok {
-			hits = append(hits, Hit{Path: p, Result: r})
+	// Score in parallel chunks, one scorer (and its buffers) each.
+	workers := min(runtime.GOMAXPROCS(0), max(1, len(paths)/2000))
+	chunk := (len(paths) + workers - 1) / workers
+	parts := make([][]Hit, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		lo, hi := w*chunk, min((w+1)*chunk, len(paths))
+		if lo >= hi {
+			continue
 		}
+		wg.Add(1)
+		go func(w int, paths []string) {
+			defer wg.Done()
+			s := newScorer(query)
+			hits := make([]Hit, 0, len(paths))
+			for _, p := range paths {
+				if v, ok := s.score(p); ok {
+					hits = append(hits, Hit{Path: p, Score: v})
+				}
+			}
+			parts[w] = hits
+		}(w, paths[lo:hi])
 	}
-	sort.SliceStable(hits, func(i, j int) bool {
-		a, b := hits[i], hits[j]
+	wg.Wait()
+	total := 0
+	for _, p := range parts {
+		total += len(p)
+	}
+	hits := make([]Hit, 0, total)
+	for _, p := range parts {
+		hits = append(hits, p...)
+	}
+	// The order is total (the path is the last key), so no stable sort.
+	slices.SortFunc(hits, func(a, b Hit) int {
 		if a.Score != b.Score {
-			return a.Score > b.Score
+			return cmp.Compare(b.Score, a.Score)
 		}
 		if len(a.Path) != len(b.Path) {
-			return len(a.Path) < len(b.Path)
+			return cmp.Compare(len(a.Path), len(b.Path))
 		}
-		return a.Path < b.Path
+		return strings.Compare(a.Path, b.Path)
 	})
 	return hits
 }

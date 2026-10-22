@@ -191,8 +191,12 @@ func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		p.rebuild()
 		return nil
 	}
-	if _, ok := msg.(indexTickMsg); ok {
+	switch msg := msg.(type) {
+	case indexTickMsg:
 		return p.filterTick(s)
+	case rankedMsg:
+		p.ranked(msg)
+		return nil
 	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {

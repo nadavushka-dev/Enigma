@@ -267,6 +267,18 @@ func (s *stuckIndex) Snapshot() ([]fuzzy.Entry, fuzzy.Progress) {
 	return []fuzzy.Entry{{Path: "a.txt"}}, fuzzy.Progress{Count: 1, Done: s.done}
 }
 
+// ticksIn runs cmd and counts the index ticks it yields (ranking results
+// are dropped on the floor).
+func ticksIn(cmd tea.Cmd) int {
+	n := 0
+	for _, msg := range run(cmd) {
+		if _, ok := msg.(indexTickMsg); ok {
+			n++
+		}
+	}
+	return n
+}
+
 func TestFilterKeepsOneTickChainWhileIndexing(t *testing.T) {
 	_, m := filterHome(t)
 	drive(t, m, key("/"))
@@ -275,26 +287,50 @@ func TestFilterKeepsOneTickChainWhileIndexing(t *testing.T) {
 	p.filter.index = ix
 	ticks := 0
 	for _, k := range []string{"tab", "a", "b", "backspace"} {
-		if cmd := p.Update(key(k), m.s); cmd != nil {
-			ticks++
-		}
+		ticks += ticksIn(p.Update(key(k), m.s))
 	}
 	if ticks != 1 {
 		t.Fatalf("%d pending ticks, want 1", ticks)
 	}
 	viewHas(t, m, "indexing… 1")
-	if cmd := p.Update(indexTickMsg{}, m.s); cmd == nil {
+	if ticksIn(p.Update(indexTickMsg{}, m.s)) != 1 {
 		t.Fatal("the tick re-arms itself while indexing")
 	}
-	if cmd := p.Update(key("c"), m.s); cmd != nil {
+	if ticksIn(p.Update(key("c"), m.s)) != 0 {
 		t.Fatal("a key must not start a second chain")
 	}
 	ix.done = true
-	if cmd := p.Update(indexTickMsg{}, m.s); cmd != nil {
+	if ticksIn(p.Update(indexTickMsg{}, m.s)) != 0 {
 		t.Fatal("the chain ends when the index is done")
 	}
-	if cmd := p.Update(key("d"), m.s); cmd != nil {
+	if ticksIn(p.Update(key("d"), m.s)) != 0 {
 		t.Fatal("no tick after done")
+	}
+}
+
+// Ranking runs in a command; a result from an older query is dropped.
+func TestFilterRanksInACommandAndDropsStaleResults(t *testing.T) {
+	_, m := filterHome(t)
+	drive(t, m, key("/"))
+	p := files(m)
+	cmdA := p.Update(key("a"), m.s)
+	cmdN := p.Update(key("backspace"), m.s)
+	if cmdA == nil || cmdN == nil {
+		t.Fatal("typing must return the ranking command")
+	}
+	before := hits(m)
+	drive(t, m, cmdA()) // the stale result for "a"
+	if got := hits(m); !reflect.DeepEqual(got, before) {
+		t.Fatalf("stale result applied: %v", got)
+	}
+	drive(t, m, cmdN())
+	if got := hits(m); len(got) != 3 {
+		t.Fatalf("current result: %v", got)
+	}
+	drive(t, m, key("esc"))
+	drive(t, m, cmdN()) // a result after the filter closed is ignored
+	if p.filter != nil {
+		t.Fatal("filter reopened")
 	}
 }
 

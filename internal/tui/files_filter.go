@@ -30,6 +30,13 @@ type fileFilter struct {
 	index   homeIndex
 	prog    fuzzy.Progress
 	ticking bool // one tick chain at a time while the index builds
+	gen     int  // the ranking in flight; older results are dropped
+}
+
+// rankedMsg is the result of a ranking command.
+type rankedMsg struct {
+	gen  int
+	hits []fuzzy.Hit
 }
 
 // homeIndex is what the filter needs from fuzzy.Index; tests fake it.
@@ -44,8 +51,7 @@ const indexEvery = 100 * time.Millisecond
 
 func (p *filesPane) openFilter(s *Shared) tea.Cmd {
 	p.filter = &fileFilter{saved: p.cursor}
-	p.refilter(s)
-	return nil
+	return p.refilter(s)
 }
 
 func (p *filesPane) closeFilter() { p.filter = nil }
@@ -79,15 +85,29 @@ func (p *filesPane) candidates(s *Shared) []string {
 	return fuzzy.Paths(ents)
 }
 
+// refilter ranks the current scope's candidates in a command (ranking
+// 50,000 paths takes milliseconds; the UI goroutine must not wait) and,
+// while the home index builds, keeps one tick chain going.
 func (p *filesPane) refilter(s *Shared) tea.Cmd {
 	f := p.filter
-	f.hits = fuzzy.Rank(f.query, p.candidates(s))
-	f.sel = min(f.sel, max(0, len(f.hits)-1))
+	paths := p.candidates(s)
+	f.gen++
+	gen, query := f.gen, f.query
+	cmds := []tea.Cmd{func() tea.Msg { return rankedMsg{gen: gen, hits: fuzzy.Rank(query, paths)} }}
 	if f.scope == scopeHome && !f.prog.Done && !f.ticking {
 		f.ticking = true
-		return tea.Tick(indexEvery, func(time.Time) tea.Msg { return indexTickMsg{} })
+		cmds = append(cmds, tea.Tick(indexEvery, func(time.Time) tea.Msg { return indexTickMsg{} }))
 	}
-	return nil
+	return tea.Batch(cmds...)
+}
+
+func (p *filesPane) ranked(r rankedMsg) {
+	f := p.filter
+	if f == nil || r.gen != f.gen {
+		return // closed, or typed past
+	}
+	f.hits = r.hits
+	f.sel = min(f.sel, max(0, len(f.hits)-1))
 }
 
 func (p *filesPane) filterTick(s *Shared) tea.Cmd {
@@ -241,7 +261,7 @@ func (p *filesPane) filterView(s *Shared, width, height int, focused bool) strin
 		mark := p.markRel(s, strings.TrimSuffix(h.Path, "/"), strings.HasSuffix(h.Path, "/"))
 		var b strings.Builder
 		b.WriteString(" ")
-		for _, seg := range highlightSegments(h.Path, h.Positions) {
+		for _, seg := range highlightSegments(h.Path, fuzzy.Highlight(f.query, h.Path)) {
 			switch {
 			case seg.matched && selected:
 				b.WriteString(styleMatchSel.Render(seg.text))
