@@ -10,6 +10,7 @@ No server, no account, no open ports: if you can `ssh` to it, Enigma can sync it
 [![CI](https://github.com/nadavushka-dev/enigma/actions/workflows/ci.yml/badge.svg)](https://github.com/nadavushka-dev/enigma/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/go-1.26+-00ADD8?logo=go&logoColor=white)
 ![Platforms](https://img.shields.io/badge/macOS%20%7C%20Linux-amd64%20%7C%20arm64-555)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 <img src="demo/sync.gif" alt="enigma init, machine add devbox, add ~/.claude, an edit on devbox arriving on the mac" width="900">
 
@@ -147,3 +148,7 @@ Every feature and every fix starts with a failing test. The suite includes
 multi-machine simulations, a CLI end-to-end run over a fake ssh, and a Docker
 suite over real ssh: network cuts, merges, and upgrades that hop from machine
 to machine.
+
+## License
+
+MIT, see [`LICENSE`](LICENSE).
