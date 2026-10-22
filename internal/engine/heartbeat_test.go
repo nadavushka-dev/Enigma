@@ -1,11 +1,15 @@
 package engine
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/version"
 )
 
 // blackhole is a link end that can go silent like a dead network: after
@@ -59,3 +63,38 @@ func TestDeadLinkIsDroppedByHeartbeat(t *testing.T) {
 }
 
 var _ io.ReadWriteCloser = (*blackhole)(nil)
+
+// Regression: pings were sent from the engine loop, so a machine busy on a
+// long operation (hashing a big folder) stopped pinging and every peer
+// dropped the link as silent once a minute. Liveness is the connection's,
+// not the loop's: a busy loop, even with its inbox full, keeps its links.
+func TestBusyLoopKeepsItsLinks(t *testing.T) {
+	const hb = 30 * time.Millisecond
+	fast := func(o *Options) { o.Heartbeat = hb }
+	a, b := newMachine(t, "a", fast), newMachine(t, "b", fast)
+	link(t, a, b)
+	eventually(t, "linked", func() bool { return len(a.e.Status().Peers) == 1 && len(b.e.Status().Peers) == 1 })
+
+	busy := make(chan struct{})
+	go a.e.do(func() { <-busy })
+	// fill a's inbox from b while a is busy: more frames than the inbox holds
+	b.e.do(func() {
+		for _, p := range b.e.peers {
+			for i := range 600 {
+				v := version.Version{Hash: fmt.Sprint(i)}
+				p.send(&proto.Msg{Type: proto.Announce, Path: "nowhere/" + fmt.Sprint(i), Version: &v})
+			}
+		}
+	})
+	time.Sleep(12 * hb) // four silence windows
+	close(busy)
+
+	for _, m := range []*machine{a, b} {
+		for _, ev := range m.e.Events(0) {
+			if ev.Kind == EvLinkDown {
+				t.Fatalf("%s dropped the link while a was busy", m.name)
+			}
+		}
+	}
+	eventually(t, "still linked", func() bool { return len(a.e.Status().Peers) == 1 && len(b.e.Status().Peers) == 1 })
+}

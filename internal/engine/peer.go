@@ -18,26 +18,53 @@ const handshakeTimeout = 10 * time.Second
 const summaryChunk = 500
 
 // peer is one live link. Sending never blocks the engine loop: messages go
-// into an unbounded queue drained by a writer goroutine.
+// into an unbounded queue drained by a writer goroutine. Pings and the
+// silence check run on the link's own goroutine, so a busy engine loop
+// never looks like a dead link (SPEC §5).
 type peer struct {
 	id, name string
 	dialedBy string // machine ID of the side that dialed this link
 	conn     io.ReadWriteCloser
 	sent     *atomic.Int64
 	lastRecv atomic.Int64 // unix nanos of the last frame received
+	// delivering: the read loop is handing a frame to the engine loop, not
+	// waiting on the network; that wait is not silence.
+	delivering atomic.Bool
 
 	mu     sync.Mutex
 	cond   *sync.Cond
 	queue  []*proto.Msg
 	closed bool
+	quit   chan struct{} // closed with the link
 }
 
 func newPeer(id, name, dialedBy string, conn io.ReadWriteCloser, sent *atomic.Int64) *peer {
-	p := &peer{id: id, name: name, dialedBy: dialedBy, conn: conn, sent: sent}
+	p := &peer{id: id, name: name, dialedBy: dialedBy, conn: conn, sent: sent, quit: make(chan struct{})}
 	p.lastRecv.Store(time.Now().UnixNano())
 	p.cond = sync.NewCond(&p.mu)
 	go p.writeLoop()
 	return p
+}
+
+// heartbeat pings every interval and, when nothing has arrived for three
+// intervals, closes the link and calls dead. A dead network can leave
+// reads blocked forever, so silence is detected here, not by the reader.
+func (p *peer) heartbeat(every time.Duration, dead func()) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.quit:
+			return
+		case <-t.C:
+		}
+		if !p.delivering.Load() && time.Since(time.Unix(0, p.lastRecv.Load())) > 3*every {
+			p.close()
+			dead()
+			return
+		}
+		p.send(&proto.Msg{Type: proto.Ping})
+	}
 }
 
 func (p *peer) send(m *proto.Msg) {
@@ -54,6 +81,7 @@ func (p *peer) close() {
 	p.mu.Lock()
 	if !p.closed {
 		p.closed = true
+		close(p.quit)
 		p.cond.Signal()
 	}
 	p.mu.Unlock()
@@ -168,6 +196,10 @@ func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, 
 		return PeerStatus{ID: h.MachineID, Name: h.Name}, ErrDuplicateLink
 	}
 	go e.readLoop(p)
+	go p.heartbeat(e.o.Heartbeat, func() {
+		e.log.Warn("link silent; dropping it", "peer", p.name)
+		e.post(func() { e.detach(p) })
+	})
 	return PeerStatus{ID: h.MachineID, Name: h.Name}, nil
 }
 
@@ -184,7 +216,10 @@ func (e *Engine) readLoop(p *peer) {
 		if m.Type == proto.Ping {
 			continue
 		}
+		p.delivering.Store(true)
 		e.post(func() { e.handleMsg(p, m) })
+		p.lastRecv.Store(time.Now().UnixNano()) // waiting on our own loop is not silence
+		p.delivering.Store(false)
 	}
 }
 
@@ -231,22 +266,6 @@ func (e *Engine) attach(p *peer) bool {
 	flush()
 	p.send(&proto.Msg{Type: proto.SummaryDone})
 	return true
-}
-
-// heartbeat pings every link and drops those silent for three intervals.
-// A dead network can leave reads blocked forever, so the link is detached
-// here rather than by its read loop.
-func (e *Engine) heartbeat() {
-	now := time.Now().UnixNano()
-	for _, p := range e.peers {
-		if time.Duration(now-p.lastRecv.Load()) > 3*e.o.Heartbeat {
-			e.log.Warn("link silent; dropping it", "peer", p.name)
-			p.close()
-			e.detach(p)
-			continue
-		}
-		p.send(&proto.Msg{Type: proto.Ping})
-	}
 }
 
 func (e *Engine) detach(p *peer) {

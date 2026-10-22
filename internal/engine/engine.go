@@ -181,8 +181,6 @@ func (e *Engine) loop() {
 	}
 	tick := time.NewTicker(e.o.RescanInterval)
 	defer tick.Stop()
-	beat := time.NewTicker(e.o.Heartbeat)
-	defer beat.Stop()
 	for {
 		select {
 		case <-e.quit:
@@ -201,8 +199,6 @@ func (e *Engine) loop() {
 					e.onLocalPath(p)
 				}
 			}
-		case <-beat.C:
-			e.heartbeat()
 		case <-tick.C:
 			e.rescanAll()
 			e.prune()
