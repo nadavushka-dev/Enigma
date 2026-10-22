@@ -16,6 +16,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/fuzzy"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
@@ -32,6 +33,7 @@ type fake struct {
 	calls    []string
 	steps    []string // what AddMachine/RemoveMachine print
 	opErr    error
+	index    *fuzzy.Index
 }
 
 func newFake(t *testing.T) *fake {
@@ -93,6 +95,15 @@ func (f *fake) Events(after uint64, wait time.Duration) ([]engine.Event, error) 
 		}
 	}
 	return out, nil
+}
+
+func (f *fake) HomeIndex() *fuzzy.Index {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.index == nil {
+		f.index = fuzzy.Build(f.home, fuzzy.Options{})
+	}
+	return f.index
 }
 
 func (f *fake) ReadFile(rel string) ([]byte, error) {
@@ -175,6 +186,12 @@ func key(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlD}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "ctrl+n":
+		return tea.KeyMsg{Type: tea.KeyCtrlN}
+	case "ctrl+p":
+		return tea.KeyMsg{Type: tea.KeyCtrlP}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "up":
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":

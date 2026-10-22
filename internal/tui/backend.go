@@ -5,11 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/fuzzy"
 	"github.com/nadavushka-dev/enigma/internal/group"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/sshconfig"
@@ -28,6 +30,7 @@ type Backend interface {
 	RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error
 	Events(after uint64, wait time.Duration) ([]engine.Event, error)
 	ReadFile(rel string) ([]byte, error) // a file under ~
+	HomeIndex() *fuzzy.Index             // the home index (SPEC §12.4), built on first use
 }
 
 // Live is the real Backend.
@@ -35,6 +38,9 @@ type Live struct {
 	Paths config.Paths
 	home  string
 	cl    *daemon.Client
+
+	indexOnce sync.Once
+	index     *fuzzy.Index
 }
 
 func NewLive(p config.Paths) (*Live, error) {
@@ -66,4 +72,11 @@ func (l *Live) Events(after uint64, wait time.Duration) ([]engine.Event, error) 
 
 func (l *Live) ReadFile(rel string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(l.home, filepath.FromSlash(rel)))
+}
+
+func (l *Live) HomeIndex() *fuzzy.Index {
+	l.indexOnce.Do(func() {
+		l.index = fuzzy.Build(l.home, fuzzy.Options{Skip: []string{l.Paths.Data, l.Paths.Config}})
+	})
+	return l.index
 }

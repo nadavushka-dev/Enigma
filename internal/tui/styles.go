@@ -19,6 +19,8 @@ var (
 	StyleBad      = lipgloss.NewStyle().Foreground(colBad)
 	StyleAccent   = lipgloss.NewStyle().Foreground(colAccent)
 	StyleSelected = lipgloss.NewStyle().Reverse(true)
+	styleMatch    = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+	styleMatchSel = lipgloss.NewStyle().Reverse(true).Foreground(colAccent).Bold(true)
 	styleBorder   = lipgloss.NewStyle().Foreground(colDim)
 	styleFocused  = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 )

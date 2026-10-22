@@ -1,19 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
+	"github.com/nadavushka-dev/enigma/internal/fuzzy"
 )
 
 func init() {
-	register(&command{name: "add", args: "[--ignore GLOB]... <path>", summary: "sync a file or folder on every machine", run: cmdAdd})
+	register(&command{name: "add", args: "[--ignore GLOB]... [path]", summary: "sync a file or folder on every machine (no path: pick with fzf)", run: cmdAdd})
 	register(&command{name: "remove", args: "<path>", summary: "stop syncing a file or folder (files stay everywhere)", run: cmdRemove})
 	register(&command{name: "list", summary: "list synced files and folders", run: cmdList})
 	register(&command{name: "status", args: "[--json]", summary: "machines, links, synced entries and conflicts", run: cmdStatus})
@@ -47,26 +51,109 @@ func client() (*daemon.Client, error) {
 	return daemon.NewClient(p), nil
 }
 
+// adder is what `add` needs from the daemon; tests fake it.
+type adder interface {
+	Add(abs string, ignore []string) error
+}
+
+// The seams of `add` with no path (SPEC §12.4), replaced in tests.
+var (
+	entryAdder       = func() (adder, error) { return client() }
+	pickerIsTerminal = func() bool { return isTerminal(os.Stdin) && isTerminal(os.Stdout) }
+	haveFzf          = func() bool { _, err := exec.LookPath("fzf"); return err == nil }
+	runFzf           = fzfMulti
+)
+
+var errNoPicker = errors.New("give a path, or install fzf to pick one")
+
 func cmdAdd(c *ctx, args []string) error {
 	fs := flags("add")
 	var ignore multi
 	fs.Var(&ignore, "ignore", "")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		return usageError{"add needs exactly one path"}
+	if err := fs.Parse(args); err != nil || fs.NArg() > 1 {
+		return usageError{"add takes one path, or none to pick with fzf"}
 	}
-	abs, err := absPath(fs.Arg(0))
+	var picks []string
+	if fs.NArg() == 1 {
+		picks = []string{fs.Arg(0)}
+	} else {
+		var err error
+		if picks, err = pickWithFzf(c); err != nil || len(picks) == 0 {
+			return err
+		}
+	}
+	cl, err := entryAdder()
 	if err != nil {
 		return err
 	}
-	cl, err := client()
-	if err != nil {
-		return err
+	for _, p := range picks {
+		abs, err := absPath(p)
+		if err != nil {
+			return err
+		}
+		if err := cl.Add(abs, ignore); err != nil {
+			return err
+		}
+		fmt.Fprintf(c.stdout, "syncing %s on every machine\n", tilde(abs)+trailingSlash(p))
 	}
-	if err := cl.Add(abs, ignore); err != nil {
-		return err
-	}
-	fmt.Fprintf(c.stdout, "syncing %s on every machine\n", tilde(abs))
 	return nil
+}
+
+// pickWithFzf pipes the home index into `fzf --multi` and returns the
+// picks as paths under ~ (nil when nothing was picked).
+func pickWithFzf(c *ctx) ([]string, error) {
+	if !pickerIsTerminal() || !haveFzf() {
+		return nil, errNoPicker
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	p, err := paths()
+	if err != nil {
+		return nil, err
+	}
+	ix := fuzzy.Build(home, fuzzy.Options{Skip: []string{p.Data, p.Config}})
+	ents, pr := ix.Wait()
+	if pr.Truncated {
+		fmt.Fprintf(c.stderr, "enigma: showing the first %d paths under ~\n", pr.Count)
+	}
+	lines, err := runFzf(fuzzy.Paths(ents))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, l := range lines {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, filepath.Join(home, filepath.FromSlash(l))+trailingSlash(l))
+		}
+	}
+	return out, nil
+}
+
+func trailingSlash(s string) string {
+	if strings.HasSuffix(s, "/") {
+		return "/"
+	}
+	return ""
+}
+
+// fzfMulti runs fzf over lines and returns the chosen ones; a cancelled
+// pick (exit 130) or no match (exit 1) is simply nothing.
+func fzfMulti(lines []string) ([]string, error) {
+	cmd := exec.Command("fzf", "--multi", "--prompt", "add> ")
+	cmd.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
+	cmd.Stderr = os.Stderr
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && (ee.ExitCode() == 1 || ee.ExitCode() == 130) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("fzf: %w", err)
+	}
+	return strings.Split(strings.TrimRight(out.String(), "\n"), "\n"), nil
 }
 
 func cmdRemove(c *ctx, args []string) error {
