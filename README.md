@@ -42,6 +42,10 @@ Enigma is a small daemon on each machine. You pick files and folders under
 - **One version everywhere:** upgrade one machine and it upgrades the rest
   over the same links.
 
+> **Beta.** Enigma is in daily use, but young. Your files are safe from it
+> (deletes go to a trash, conflicts keep both versions), yet expect rough
+> edges and report them.
+
 ## Install
 
 ```sh
@@ -112,6 +116,10 @@ Every command takes `--json`, for scripts and agents.
 - **When you add a folder** that already exists on another machine, the
   other machine backs up its copy first. Files that exist only on the other
   machine are kept and spread to everyone.
+
+**Every member is trusted.** Machines upgrade each other over their links,
+so a member can run a new Enigma binary on any machine it links to. Add
+only machines you control, the same ones you would give ssh access to.
 
 Enigma is not Git. It has no history to browse and no branches. It keeps
 the last versions only to merge with.

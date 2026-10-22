@@ -400,6 +400,10 @@ version.
 - Upgrading one machine (a new binary and a daemon restart) therefore
   upgrades the whole group. Version order: releases by semver; dev builds
   (`make build`) carry the commit time, so a newer build wins.
+- **Trust.** A member can hand any linked machine a binary that machine then
+  runs, whichever side dialed. Joining a group therefore means trusting
+  every member with code on this machine, as with ssh access to it. Only
+  add machines you control.
 
 ## 12. Interface
 
