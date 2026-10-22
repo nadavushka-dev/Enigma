@@ -138,13 +138,18 @@ func (e *Engine) untrack(path string) {
 			delete(e.st.Files, rel)
 		}
 	}
+	for rel := range e.st.Stamps {
+		if rel == path || strings.HasPrefix(rel, path+"/") {
+			delete(e.st.Stamps, rel)
+		}
+	}
 	e.dirty = true
 }
 
 // seedEntry records the files this machine has for a newly active entry.
 // On the adding machine they are Seed versions; elsewhere Preexisting (D7).
 func (e *Engine) seedEntry(path string, r proto.EntryRecord, origin version.Origin) {
-	for rel, info := range e.scanEntry(path, r) {
+	for rel, info := range e.scanEntry(path, r, true) {
 		if fs := e.st.Files[rel]; fs != nil && !fs.V.IsDeleted() {
 			continue
 		}
@@ -153,12 +158,21 @@ func (e *Engine) seedEntry(path string, r proto.EntryRecord, origin version.Orig
 }
 
 // scanEntry returns the syncable files of an entry, keyed by path from ~,
-// and refreshes the entry's skipped list.
-func (e *Engine) scanEntry(path string, r proto.EntryRecord) map[string]fsx.Info {
+// and refreshes the entry's skipped list. Without hash, the infos carry no
+// hash and no file is read (for the skipped list alone).
+func (e *Engine) scanEntry(path string, r proto.EntryRecord, hash bool) map[string]fsx.Info {
 	out := map[string]fsx.Info{}
 	skipped := map[string]bool{}
 	if r.Dir {
-		res, err := fsx.Scan(e.abs(path), e.matchers[path], e.o.MaxFileSize)
+		root := e.abs(path)
+		stat := func(p string) (fsx.Info, error) {
+			if !hash {
+				return fsx.Info{Kind: fsx.Regular}, nil // ScanWith checked the size already
+			}
+			rel, _ := filepath.Rel(root, p)
+			return e.statFile(path + "/" + filepath.ToSlash(rel))
+		}
+		res, err := fsx.ScanWith(root, e.matchers[path], e.o.MaxFileSize, stat)
 		if err != nil {
 			e.log.Error("scan", "entry", path, "err", err)
 		}
@@ -170,6 +184,9 @@ func (e *Engine) scanEntry(path string, r proto.EntryRecord) map[string]fsx.Info
 		}
 	} else {
 		info, _ := fsx.Stat(e.abs(path))
+		if hash {
+			info, _ = e.statFile(path)
+		}
 		switch {
 		case info.Kind == fsx.Regular && info.Size > e.o.MaxFileSize, info.Kind == fsx.Other:
 			skipped[path] = true
@@ -196,7 +213,7 @@ func (e *Engine) rescanEntry(path string) {
 	if e.rootPresent(path, r) {
 		delete(e.missing, path)
 	}
-	e.scanEntry(path, r)
+	e.scanEntry(path, r, false)
 	e.refreshUnder(path, path)
 }
 
@@ -221,8 +238,8 @@ func (e *Engine) onLocalPath(abs string) {
 func (e *Engine) refreshUnder(entry, rel string) {
 	seen := map[string]bool{}
 	if info, _ := fsx.Stat(e.abs(rel)); info.Kind == fsx.Dir {
-		res, _ := fsx.Scan(e.abs(rel), fsx.NewMatcher(nil), 0)
-		for f := range res.Files {
+		files, _ := fsx.ListFiles(e.abs(rel), fsx.NewMatcher(nil))
+		for _, f := range files {
 			p := path.Join(rel, f)
 			seen[p] = true
 			e.refreshFile(entry, p)
@@ -244,7 +261,7 @@ func (e *Engine) refreshFile(entry, rel string) {
 	if e.ignored(entry, rel) {
 		return
 	}
-	info, err := fsx.Stat(e.abs(rel))
+	info, err := e.statFile(rel)
 	if err != nil {
 		e.log.Error("stat", "path", rel, "err", err)
 		return
@@ -668,4 +685,50 @@ func fmtVersion(v *version.Version) string {
 		h = h[:6]
 	}
 	return fmt.Sprintf("%s%v/%s", h, map[string]uint64(v.Vector), v.Origin)
+}
+
+// stampSettle: a stamp younger than this is not trusted. On a file system
+// with coarse timestamps, an edit right after the hash could keep the
+// same size, mtime and ctime (git's "racy" files).
+const stampSettle = 2 * time.Second
+
+// statFile is fsx.Stat for rel that skips reading the file while its
+// stamp matches the one taken with the last hash, and never reads a file
+// over the size limit (its Info then has no hash).
+func (e *Engine) statFile(rel string) (fsx.Info, error) {
+	abs := e.abs(rel)
+	st, ok := fsx.StampOf(abs)
+	if !ok {
+		e.dropStamp(rel)
+		return fsx.Stat(abs) // missing, a folder or not regular: nothing to read
+	}
+	exec := st.Mode&0o111 != 0
+	if st.Size > e.o.MaxFileSize {
+		e.dropStamp(rel)
+		return fsx.Info{Kind: fsx.Regular, Size: st.Size, Mtime: st.Mtime, Exec: exec}, nil
+	}
+	if h := e.st.Stamps[rel]; h != nil && h.Stamp == st {
+		return fsx.Info{Kind: fsx.Regular, Hash: h.Hash, Size: st.Size, Mtime: st.Mtime, Exec: exec}, nil
+	}
+	info, err := e.hashStat(abs)
+	if err != nil || info.Kind != fsx.Regular {
+		e.dropStamp(rel)
+		return info, err
+	}
+	now := time.Now()
+	after, ok := fsx.StampOf(abs)
+	if ok && after == st && now.Sub(time.Unix(0, max(st.Mtime, st.Ctime))) > e.settle {
+		e.st.Stamps[rel] = &hashStamp{Stamp: st, Hash: info.Hash}
+		e.dirty = true
+	} else {
+		e.dropStamp(rel)
+	}
+	return info, nil
+}
+
+func (e *Engine) dropStamp(rel string) {
+	if _, ok := e.st.Stamps[rel]; ok {
+		delete(e.st.Stamps, rel)
+		e.dirty = true
+	}
 }

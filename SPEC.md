@@ -129,6 +129,13 @@ machines, in real time, over ssh.
   current version, nothing changed. This is also what stops echoes: when
   Enigma writes a received version, its own watcher fires and finds the same
   hash.
+- A file is read only when it may have changed. With each hash Enigma keeps
+  the file's lstat stamp (size, mtime, ctime, inode, mode); while the stamp
+  is unchanged, the hash is reused. An in-place edit moves the mtime and the
+  ctime (which no tool can set back), a replaced file has a new inode. A
+  stamp younger than 2 s is not kept, since on coarse timestamps an edit
+  right after the hash could leave it unchanged. Files over the size limit
+  are never read. So a rescan of unchanged entries reads nothing.
 - A safety rescan runs at daemon start, after a watcher error, and every 10
   minutes.
 

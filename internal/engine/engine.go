@@ -92,8 +92,13 @@ type Engine struct {
 	dirty     bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
-	events          []Event       // recent activity (SPEC §12.2)
-	evSeq           uint64
+
+	// hashStat reads and hashes a file (fsx.Stat; tests count calls), and
+	// settle is how old a stamp must be to be trusted (see statFile).
+	hashStat func(string) (fsx.Info, error)
+	settle   time.Duration
+	events   []Event // recent activity (SPEC §12.2)
+	evSeq    uint64
 }
 
 func New(o Options) (*Engine, error) {
@@ -141,6 +146,7 @@ func New(o Options) (*Engine, error) {
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, missing: map[string]bool{},
 		machinesChanged: make(chan struct{}, 1),
+		hashStat:        fsx.Stat, settle: stampSettle,
 	}
 	if e.st, err = loadState(e.statePath); err != nil {
 		return nil, fmt.Errorf("load state: %w", err)

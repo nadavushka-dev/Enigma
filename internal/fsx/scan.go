@@ -63,6 +63,12 @@ type ScanResult struct {
 
 // Scan walks root. Files larger than maxSize (if > 0) are skipped.
 func Scan(root string, m *Matcher, maxSize int64) (ScanResult, error) {
+	return ScanWith(root, m, maxSize, Stat)
+}
+
+// ScanWith is Scan with the stat (which hashes) supplied by the caller,
+// so it can skip files it knows are unchanged.
+func ScanWith(root string, m *Matcher, maxSize int64, stat func(p string) (Info, error)) (ScanResult, error) {
 	res := ScanResult{Files: map[string]Info{}}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -93,7 +99,7 @@ func Scan(root string, m *Matcher, maxSize int64) (ScanResult, error) {
 			res.Skipped = append(res.Skipped, rel)
 			return nil
 		}
-		info, err := Stat(p)
+		info, err := stat(p)
 		if err != nil || info.Kind != Regular {
 			return nil
 		}
@@ -108,6 +114,39 @@ func Scan(root string, m *Matcher, maxSize int64) (ScanResult, error) {
 		return res, nil
 	}
 	return res, err
+}
+
+// ListFiles is the regular files under root that m does not ignore,
+// slash-separated and relative to root. Nothing is read.
+func ListFiles(root string, m *Matcher) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == root {
+				return err
+			}
+			return nil
+		}
+		if p == root {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
+		if m.Ignored(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type().IsRegular() {
+			out = append(out, rel)
+		}
+		return nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return out, err
 }
 
 // CountFiles counts the files Scan would sync under root, without reading

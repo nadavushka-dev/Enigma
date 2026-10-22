@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/nadavushka-dev/enigma/internal/fsx"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/version"
 )
@@ -27,10 +28,18 @@ type state struct {
 	Entries  map[string]proto.EntryRecord   `json:"entries"`
 	Machines map[string]proto.MachineRecord `json:"machines"`
 	Files    map[string]*fileState          `json:"files"`
+	// Stamps: the last hash taken of a file on disk, valid while its
+	// lstat stamp is unchanged (SPEC §6.1). Keyed by path from ~.
+	Stamps map[string]*hashStamp `json:"stamps,omitempty"`
+}
+
+type hashStamp struct {
+	fsx.Stamp
+	Hash string `json:"hash"`
 }
 
 func newState() *state {
-	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Files: map[string]*fileState{}}
+	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}}
 }
 
 func loadState(p string) (*state, error) {
@@ -53,6 +62,9 @@ func loadState(p string) (*state, error) {
 	}
 	if s.Files == nil {
 		s.Files = map[string]*fileState{}
+	}
+	if s.Stamps == nil {
+		s.Stamps = map[string]*hashStamp{}
 	}
 	return s, nil
 }
