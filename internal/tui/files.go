@@ -281,7 +281,7 @@ func (p *filesPane) mark(s *Shared, n *fileNode) string {
 		if n.dir {
 			for _, en := range s.Status.Entries {
 				if strings.HasPrefix(en.Path, n.rel+"/") {
-					return "holds synced"
+					return "contains synced"
 				}
 			}
 		}

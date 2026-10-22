@@ -434,7 +434,8 @@ Every command takes `--json` for agents and scripts.
   not members. `a` on a host adds it (the `machine add` steps, shown live);
   `x` on a member removes it, after a confirmation (`u` also uninstalls).
 - **Files:** a lazy tree rooted at `~`, dotfiles included. Synced entries
-  are marked; ignored, oversized and non-regular items are dimmed. `a` adds
+  are marked, and so is a folder that contains one (`contains synced`);
+  ignored, oversized and non-regular items are dimmed. `a` adds
   the selected file or folder, `x` stops syncing an entry (after a
   confirmation). `/` filters it with fuzzy search (§12.4).
 - **Activity:** the daemon's recent events (a ring of the last 500: changes

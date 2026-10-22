@@ -422,7 +422,7 @@ func TestFilesFolderHoldingAnEntryIsMarked(t *testing.T) {
 	f.status.Entries = []engine.EntryStatus{{Path: ".claude/CLAUDE.md"}}
 	m := filesModel(t, f)
 	p := files(m)
-	if mk := p.mark(m.s, p.rows[0]); p.rows[0].rel != ".claude" || mk != "holds synced" {
+	if mk := p.mark(m.s, p.rows[0]); p.rows[0].rel != ".claude" || mk != "contains synced" {
 		t.Fatalf("%s: mark %q", p.rows[0].rel, mk)
 	}
 	if mk := p.mark(m.s, p.rows[1]); mk != "" {
