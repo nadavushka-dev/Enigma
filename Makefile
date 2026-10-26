@@ -1,4 +1,4 @@
-.PHONY: check test build dist snapshot hooks e2e e2e-long diagrams
+.PHONY: check test build dist snapshot hooks e2e e2e-long diagrams sandbox sandbox-down
 
 # Dev builds are ordered by commit time (SPEC §11): a newer build upgrades the fleet.
 VERSION ?= v0.0.0-dev.$(shell TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD).$(shell git rev-parse --short=7 HEAD)
@@ -39,3 +39,9 @@ e2e-long: ## e2e plus a long network cut that outlives ssh keepalive (~80s)
 
 diagrams: ## render architecture/*.d2 to SVG (needs d2)
 	for f in architecture/*.d2; do d2 --theme 0 --pad 40 "$$f" "$${f%.d2}.svg" || exit 1; done
+
+sandbox: ## three throwaway Linux machines running this tree, linked over ssh (e2e/sandbox.sh shell s1)
+	e2e/sandbox.sh up
+
+sandbox-down:
+	e2e/sandbox.sh down
