@@ -36,6 +36,7 @@ const (
 	Upgrade     Type = "upgrade"      // a newer binary for the receiver (SPEC §11)
 	Ping        Type = "ping"         // heartbeat: a link silent for 3 intervals is dead
 	Settings    Type = "settings"     // fleet state: the fleet's limits (SPEC §8)
+	Groups      Type = "groups"       // fleet state: group records (SPEC §9)
 )
 
 type HelloBody struct {
@@ -98,6 +99,7 @@ type EntryRecord struct {
 	Path    string   `json:"path"` // relative to ~, slash-separated
 	Dir     bool     `json:"dir,omitempty"`
 	Ignore  []string `json:"ignore,omitempty"`
+	Group   string   `json:"group,omitempty"` // group ID (SPEC §9); empty means MainGroup (v0.2 records)
 	Clock   uint64   `json:"clock"`
 	By      string   `json:"by"`
 	Removed bool     `json:"removed,omitempty"`
@@ -117,6 +119,7 @@ type Msg struct {
 	Entries  []EntryRecord              `json:"entries,omitempty"`
 	Machines []MachineRecord            `json:"machines,omitempty"`
 	Settings *SettingsRecord            `json:"settings,omitempty"`
+	Groups   []GroupRecord              `json:"groups,omitempty"`
 	Upgrade  *UpgradeBody               `json:"upgrade,omitempty"`
 	Summary  map[string]version.Version `json:"summary,omitempty"`
 	Path     string                     `json:"path,omitempty"`
@@ -171,4 +174,51 @@ func Read(r io.Reader) (*Msg, error) {
 	}
 	m.HasBody = false
 	return m, nil
+}
+
+// MainGroup is the ID of the group every fleet has (SPEC §9).
+const MainGroup = "main"
+
+// GroupRecord is one group in the replicated fleet state (SPEC §9): a
+// named set of entries and the machines that sync them. The record with
+// the highest (Clock, By) wins. Members are machine IDs, sorted.
+//
+// Main is "every machine except Except": with All set, Members is ignored
+// in the record and new members of the fleet are in the group at once.
+// Every machine therefore creates the same main record, whichever starts
+// first.
+type GroupRecord struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Members []string `json:"members,omitempty"`
+	All     bool     `json:"all,omitempty"`    // every machine in the fleet, minus Except
+	Except  []string `json:"except,omitempty"` // with All: machines kept out
+	Clock   uint64   `json:"clock"`
+	By      string   `json:"by"`
+	Removed bool     `json:"removed,omitempty"`
+}
+
+func (r GroupRecord) Newer(o GroupRecord) bool {
+	if r.Clock != o.Clock {
+		return r.Clock > o.Clock
+	}
+	return r.By > o.By
+}
+
+// Has reports whether machine is a member; for an All group, whether it
+// is not excepted (the caller checks it is in the fleet).
+func (r GroupRecord) Has(machine string) bool {
+	if r.All {
+		return !contains(r.Except, machine)
+	}
+	return contains(r.Members, machine)
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
 }

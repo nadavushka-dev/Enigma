@@ -173,6 +173,7 @@ func New(o Options) (*Engine, error) {
 		e.st.Lamport++
 		e.applyMachine(proto.MachineRecord{ID: o.MachineID, Name: o.Name, Bin: o.Bin, Clock: e.st.Lamport, By: o.MachineID}, nil)
 	}
+	e.ensureMain()
 	if o.OnMachines != nil {
 		go e.notifyMachines()
 	}
@@ -270,9 +271,10 @@ func (e *Engine) Close() error {
 // ---- public API -------------------------------------------------------------
 
 // Add starts syncing the file or folder at abs (D6, D7).
-func (e *Engine) Add(abs string, ignore []string) error {
+// Add starts syncing abs in group (SPEC §9; "" is main).
+func (e *Engine) Add(abs string, ignore []string, group string) error {
 	var err error
-	if derr := e.do(func() { err = e.addEntry(abs, ignore) }); derr != nil {
+	if derr := e.do(func() { err = e.addEntry(abs, ignore, group) }); derr != nil {
 		return derr
 	}
 	return err

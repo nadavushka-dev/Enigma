@@ -18,6 +18,7 @@ const (
 	EvLinkDown     = "link-down"
 	EvUpgrade      = "upgrade"
 	EvLimits       = "limits" // the fleet's limits changed (Detail: the new ones)
+	EvGroup        = "group"  // a group was created, changed or deleted (Detail: what)
 	EvError        = "error"
 )
 

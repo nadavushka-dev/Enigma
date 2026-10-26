@@ -56,7 +56,7 @@ func (l *Live) Home() string                                     { return l.home
 func (l *Live) Status() (daemon.StatusReport, error)             { return l.cl.Status() }
 func (l *Live) Machines() ([]proto.MachineRecord, error)         { return fleet.Members(l.cl) }
 func (l *Live) Hosts() ([]string, error)                         { return sshconfig.Hosts(l.home) }
-func (l *Live) Add(abs string) error                             { return l.cl.Add(abs, nil) }
+func (l *Live) Add(abs string) error                             { return l.cl.Add(abs, nil, "") }
 func (l *Live) Remove(abs string) error                          { return l.cl.Remove(abs) }
 func (l *Live) SetLimits(x engine.Limits) (engine.Limits, error) { return l.cl.SetLimits(x) }
 

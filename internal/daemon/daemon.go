@@ -478,6 +478,21 @@ func (d *daemon) problems(r StatusReport) []problems.Problem {
 type pathRequest struct {
 	Path   string   `json:"path"`
 	Ignore []string `json:"ignore,omitempty"`
+	Group  string   `json:"group,omitempty"` // group ID (SPEC §9); empty: main
+}
+
+// GroupRequest is one change to a group (SPEC §9): create (Name, Add as
+// the members), delete (ID), rename (ID, Name) or members (ID, Add, Remove).
+type GroupRequest struct {
+	Action string   `json:"action"`
+	ID     string   `json:"id,omitempty"`
+	Name   string   `json:"name,omitempty"`
+	Add    []string `json:"add,omitempty"`
+	Remove []string `json:"remove,omitempty"`
+}
+
+type GroupReply struct {
+	ID string `json:"id"`
 }
 
 type apiError struct {
@@ -507,7 +522,7 @@ func (d *daemon) api() http.Handler {
 			reply(w, nil, err)
 			return
 		}
-		reply(w, struct{}{}, d.eng.Add(req.Path, req.Ignore))
+		reply(w, struct{}{}, d.eng.Add(req.Path, req.Ignore, req.Group))
 	})
 	mux.HandleFunc("POST /remove", func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest
@@ -573,6 +588,42 @@ func (d *daemon) api() http.Handler {
 	})
 	mux.HandleFunc("GET /machines", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, d.eng.Machines(), nil)
+	})
+	mux.HandleFunc("GET /groups", func(w http.ResponseWriter, r *http.Request) {
+		gs := d.eng.Groups()
+		if gs == nil {
+			gs = []engine.GroupInfo{}
+		}
+		reply(w, gs, nil)
+	})
+	mux.HandleFunc("GET /entries", func(w http.ResponseWriter, r *http.Request) {
+		es := d.eng.Entries()
+		if es == nil {
+			es = []proto.EntryRecord{}
+		}
+		reply(w, es, nil)
+	})
+	mux.HandleFunc("POST /group", func(w http.ResponseWriter, r *http.Request) {
+		var req GroupRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		var err error
+		id := req.ID
+		switch req.Action {
+		case "create":
+			id, err = d.eng.CreateGroup(req.Name, req.Add)
+		case "delete":
+			err = d.eng.DeleteGroup(req.ID)
+		case "rename":
+			err = d.eng.RenameGroup(req.ID, req.Name)
+		case "members":
+			err = d.eng.GroupMembers(req.ID, req.Add, req.Remove)
+		default:
+			err = fmt.Errorf("unknown group action %q", req.Action)
+		}
+		reply(w, GroupReply{ID: id}, err)
 	})
 	mux.HandleFunc("POST /machine", func(w http.ResponseWriter, r *http.Request) {
 		var rec proto.MachineRecord

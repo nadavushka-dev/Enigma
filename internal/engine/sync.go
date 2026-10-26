@@ -26,10 +26,20 @@ var afterDecide atomic.Pointer[func(machine, rel string, act Action)]
 
 // ---- entries (fleet state, SPEC §6.4) ----------------------------------------
 
-func (e *Engine) addEntry(abs string, ignore []string) error {
+func (e *Engine) addEntry(abs string, ignore []string, group string) error {
 	rel, ok := e.rel(abs)
 	if !ok {
 		return fmt.Errorf("%s: only paths inside your home folder can be synced", abs)
+	}
+	if group == "" {
+		group = proto.MainGroup
+	}
+	g, gok := e.st.Groups[group]
+	switch {
+	case !gok || g.Removed:
+		return fmt.Errorf("no group %q (enigma group list shows them)", group)
+	case !e.inGroup(g, e.o.MachineID):
+		return fmt.Errorf("this machine is not a member of group %s; join it first (enigma group add %s %s)", g.Name, g.Name, e.o.Name)
 	}
 	info, err := fsx.Stat(abs)
 	if err != nil {
@@ -47,7 +57,7 @@ func (e *Engine) addEntry(abs string, ignore []string) error {
 		}
 		switch {
 		case path == rel:
-			return fmt.Errorf("%s is already synced", abs)
+			return fmt.Errorf("%s is already synced in %s; use enigma entry move", abs, e.groupName(r.Group))
 		case r.Dir && strings.HasPrefix(rel, path+"/"):
 			return fmt.Errorf("%s is inside the synced folder ~/%s", abs, path)
 		case strings.HasPrefix(path, rel+"/"):
@@ -66,12 +76,15 @@ func (e *Engine) addEntry(abs string, ignore []string) error {
 		}
 	}
 	e.st.Lamport++
-	e.applyEntry(proto.EntryRecord{Path: rel, Dir: dir, Ignore: ignore, Clock: e.st.Lamport, By: e.o.MachineID}, nil)
+	e.applyEntry(proto.EntryRecord{Path: rel, Dir: dir, Ignore: ignore, Group: group, Clock: e.st.Lamport, By: e.o.MachineID}, nil)
 	return nil
 }
 
 // applyEntry merges a record (local when from is nil) into fleet state.
 func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
+	if r.Group == "" {
+		r.Group = proto.MainGroup
+	}
 	old, had := e.st.Entries[r.Path]
 	if had && !r.Newer(old) {
 		return

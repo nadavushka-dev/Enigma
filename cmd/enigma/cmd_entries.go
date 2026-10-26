@@ -56,7 +56,7 @@ func client() (*daemon.Client, error) {
 
 // adder is what `add` needs from the daemon; tests fake it.
 type adder interface {
-	Add(abs string, ignore []string) error
+	Add(abs string, ignore []string, group string) error
 }
 
 // The seams of `add` with no path (SPEC §12.4), replaced in tests.
@@ -94,7 +94,7 @@ func cmdAdd(c *ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := cl.Add(abs, ignore); err != nil {
+		if err := cl.Add(abs, ignore, ""); err != nil {
 			return err
 		}
 		fmt.Fprintf(c.stdout, "syncing %s on every machine\n", tilde(abs)+trailingSlash(p))

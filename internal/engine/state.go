@@ -27,6 +27,7 @@ type state struct {
 	Lamport  uint64                         `json:"lamport"` // fleet state clock
 	Entries  map[string]proto.EntryRecord   `json:"entries"`
 	Machines map[string]proto.MachineRecord `json:"machines"`
+	Groups   map[string]proto.GroupRecord   `json:"groups,omitempty"`   // by ID (SPEC §9)
 	Settings *proto.SettingsRecord          `json:"settings,omitempty"` // nil: the defaults
 	Files    map[string]*fileState          `json:"files"`
 	// Stamps: the last hash taken of a file on disk, valid while its
@@ -40,7 +41,7 @@ type hashStamp struct {
 }
 
 func newState() *state {
-	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}}
+	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}}
 }
 
 func loadState(p string) (*state, error) {
@@ -60,6 +61,15 @@ func loadState(p string) (*state, error) {
 	}
 	if s.Machines == nil {
 		s.Machines = map[string]proto.MachineRecord{}
+	}
+	if s.Groups == nil {
+		s.Groups = map[string]proto.GroupRecord{}
+	}
+	for p, r := range s.Entries {
+		if r.Group == "" { // a v0.2 entry: it is in main (SPEC §9)
+			r.Group = proto.MainGroup
+			s.Entries[p] = r
+		}
 	}
 	if s.Files == nil {
 		s.Files = map[string]*fileState{}

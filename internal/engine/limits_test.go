@@ -176,7 +176,7 @@ func TestFolderOverTheLimitErrorSaysHowToRaiseIt(t *testing.T) {
 	for _, n := range []string{"1", "2", "3"} {
 		a.write("d/"+n, n)
 	}
-	err := a.e.Add(a.path("d"), nil)
+	err := a.e.Add(a.path("d"), nil, "")
 	if err == nil || !strings.Contains(err.Error(), "enigma limits --files") {
 		t.Fatalf("Add = %v, want a hint at enigma limits", err)
 	}

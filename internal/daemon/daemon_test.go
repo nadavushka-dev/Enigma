@@ -256,7 +256,7 @@ func TestDaemonsLinkAndSync(t *testing.T) {
 	eventually(t, "a linked to b", connected(a, "b"))
 	eventually(t, "b sees a", connected(b, "a"))
 	a.write(".claude/CLAUDE.md", "# shared")
-	if err := a.client().Add(filepath.Join(a.home, ".claude/CLAUDE.md"), nil); err != nil {
+	if err := a.client().Add(filepath.Join(a.home, ".claude/CLAUDE.md"), nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "file on b", func() bool { return b.read(".claude/CLAUDE.md") == "# shared" })
@@ -268,7 +268,7 @@ func TestStatusReportsIdentityEntriesAndPeers(t *testing.T) {
 	_, a, b := pair(t)
 	eventually(t, "linked", connected(b, "a"))
 	a.write("notes/x.md", "x")
-	a.client().Add(filepath.Join(a.home, "notes"), []string{"*.log"})
+	a.client().Add(filepath.Join(a.home, "notes"), []string{"*.log"}, "")
 	eventually(t, "entry on b", func() bool {
 		st, _ := b.client().Status()
 		return len(st.Entries) == 1 && st.Entries[0].Path == "notes" && st.Entries[0].Dir
@@ -287,7 +287,7 @@ func TestReconnectAndCatchUpAfterPeerRestart(t *testing.T) {
 	_, a, b := pair(t)
 	eventually(t, "linked", connected(b, "a"))
 	a.write("f.md", "v1")
-	a.client().Add(filepath.Join(a.home, "f.md"), nil)
+	a.client().Add(filepath.Join(a.home, "f.md"), nil, "")
 	eventually(t, "synced", func() bool { return b.read("f.md") == "v1" })
 	a.stop()
 	b.write("f.md", "edited while a was down")
@@ -481,7 +481,7 @@ func TestDaemonRequiresInit(t *testing.T) {
 
 func TestAddErrorsReachTheClient(t *testing.T) {
 	_, a, _ := pair(t)
-	err := a.client().Add(filepath.Join(a.home, "does-not-exist"), nil)
+	err := a.client().Add(filepath.Join(a.home, "does-not-exist"), nil, "")
 	if err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("err = %v", err)
 	}
@@ -512,7 +512,7 @@ func TestEventsLongPoll(t *testing.T) {
 	}()
 	time.Sleep(200 * time.Millisecond)
 	a.write("f.md", "x")
-	a.client().Add(filepath.Join(a.home, "f.md"), nil)
+	a.client().Add(filepath.Join(a.home, "f.md"), nil, "")
 	select {
 	case evs := <-got:
 		if len(evs) == 0 || evs[0].Seq <= last {

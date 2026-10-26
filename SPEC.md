@@ -299,14 +299,20 @@ A **group** is a named set of entries and the machines that sync them (D19).
 Membership is the only thing that decides who syncs what; the version
 machinery (§6, §7) is unchanged.
 
-- **`main`** is created by `enigma init` with the first machine in it. New
-  machines join `main` unless `machine add --group` says otherwise, and
-  `enigma add` puts an entry in `main` unless `--group` says otherwise.
-  `main` can be emptied but not deleted or renamed.
-- **Records.** A `GroupRecord {name, members [machine_id], clock, by,
-  removed}` in fleet state, last writer wins (§6.4), replicated to every
-  member of the fleet, so groups are managed from any machine. An
-  `EntryRecord` carries its `group`.
+- **`main`** is created by `enigma init`. It is "every machine in the
+  fleet, except those kept out": new machines are in `main` at once unless
+  `machine add --group` says otherwise, `group remove main X` keeps X out,
+  and `group add main X` lets it back in. `enigma add` puts an entry in
+  `main` unless `--group` says otherwise. `main` can be emptied but not
+  deleted or renamed.
+- **Records.** A `GroupRecord {id, name, members [machine_id] | all +
+  except [machine_id], clock, by, removed}` in fleet state, last writer
+  wins (§6.4), replicated to every member of the fleet, so groups are
+  managed from any machine. Groups are keyed by a random ID so a rename is
+  a record change; `main` has the fixed ID `main`. Storing `main` as "all
+  except" means every machine creates the identical record at start (a
+  fresh fleet, or one upgraded from v0.2), so no first writer can drop
+  another machine from it. An `EntryRecord` carries its group's ID.
 - **Scope.** Machine X syncs entry E when X is a member of E's group. E's
   record, announcements, fetches and summaries (§6.5) travel only over links
   whose both ends are in E's group. A non-member never learns E's paths:

@@ -43,8 +43,27 @@ func (c *Client) Problems() ([]problems.Problem, error) {
 	return ps, c.do(http.MethodGet, "/problems", nil, &ps)
 }
 
-func (c *Client) Add(abs string, ignore []string) error {
-	return c.do(http.MethodPost, "/add", pathRequest{Path: abs, Ignore: ignore}, nil)
+// Add starts syncing abs in group (a group ID; "" is main).
+func (c *Client) Add(abs string, ignore []string, group string) error {
+	return c.do(http.MethodPost, "/add", pathRequest{Path: abs, Ignore: ignore, Group: group}, nil)
+}
+
+// Groups returns the live groups, main first.
+func (c *Client) Groups() ([]engine.GroupInfo, error) {
+	var gs []engine.GroupInfo
+	return gs, c.do(http.MethodGet, "/groups", nil, &gs)
+}
+
+// Entries returns the live entry records, by path.
+func (c *Client) Entries() ([]proto.EntryRecord, error) {
+	var es []proto.EntryRecord
+	return es, c.do(http.MethodGet, "/entries", nil, &es)
+}
+
+// Group applies one change to a group and returns the group's ID.
+func (c *Client) Group(req GroupRequest) (string, error) {
+	var rep GroupReply
+	return rep.ID, c.do(http.MethodPost, "/group", req, &rep)
 }
 
 func (c *Client) Remove(abs string) error {

@@ -12,7 +12,7 @@ import (
 
 type fakeAdder struct{ adds []string }
 
-func (f *fakeAdder) Add(abs string, ignore []string) error {
+func (f *fakeAdder) Add(abs string, ignore []string, group string) error {
 	f.adds = append(f.adds, abs+" "+strings.Join(ignore, ","))
 	return nil
 }

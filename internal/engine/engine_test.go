@@ -87,7 +87,7 @@ func (m *machine) read(rel string) string {
 
 func (m *machine) add(rel string, ignore ...string) {
 	m.t.Helper()
-	if err := m.e.Add(m.path(rel), ignore); err != nil {
+	if err := m.e.Add(m.path(rel), ignore, ""); err != nil {
 		m.t.Fatal(err)
 	}
 }
@@ -370,7 +370,7 @@ func TestD16_PathsOutsideHomeAreRefused(t *testing.T) {
 	a := newMachine(t, "a")
 	outside, _ := filepath.EvalSymlinks(t.TempDir())
 	os.WriteFile(filepath.Join(outside, "f"), []byte("x"), 0o644)
-	if err := a.e.Add(filepath.Join(outside, "f"), nil); err == nil {
+	if err := a.e.Add(filepath.Join(outside, "f"), nil, ""); err == nil {
 		t.Fatal("path outside ~ accepted")
 	}
 }
@@ -397,7 +397,7 @@ func TestD18_FolderWithTooManyFilesIsRefused(t *testing.T) {
 	for _, n := range []string{"1", "2", "3"} {
 		a.write("d/"+n, n)
 	}
-	if err := a.e.Add(a.path("d"), nil); err == nil {
+	if err := a.e.Add(a.path("d"), nil, ""); err == nil {
 		t.Fatal("folder over the file limit accepted")
 	}
 }
@@ -413,7 +413,7 @@ func TestFolderOverTheLimitIsRefusedWithoutReadingIt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	err := a.e.Add(a.path("d"), nil)
+	err := a.e.Add(a.path("d"), nil, "")
 	if err == nil || !strings.Contains(err.Error(), "more than 2 files") {
 		t.Fatalf("Add = %v, want the file-limit error", err)
 	}
@@ -441,13 +441,13 @@ func TestOverlappingEntriesAreRefused(t *testing.T) {
 	a.write(".claude/skills/x.md", "x")
 	a.write(".claude/CLAUDE.md", "y")
 	a.add(".claude/skills")
-	if err := a.e.Add(a.path(".claude/skills/x.md"), nil); err == nil {
+	if err := a.e.Add(a.path(".claude/skills/x.md"), nil, ""); err == nil {
 		t.Fatal("entry inside an entry accepted")
 	}
-	if err := a.e.Add(a.path(".claude"), nil); err == nil {
+	if err := a.e.Add(a.path(".claude"), nil, ""); err == nil {
 		t.Fatal("entry containing an entry accepted")
 	}
-	if err := a.e.Add(a.path(".claude/CLAUDE.md"), nil); err != nil {
+	if err := a.e.Add(a.path(".claude/CLAUDE.md"), nil, ""); err != nil {
 		t.Fatalf("sibling entry refused: %v", err)
 	}
 }
@@ -688,14 +688,14 @@ func TestHomeBehindASymlinkAcceptsItsPaths(t *testing.T) {
 	}
 	defer e.Close()
 	for _, p := range []string{filepath.Join(link, ".claude"), filepath.Join(real, ".claude", "CLAUDE.md")} {
-		if err := e.Add(p, nil); err != nil {
+		if err := e.Add(p, nil, ""); err != nil {
 			t.Fatalf("add %s: %v", p, err)
 		}
 		if err := e.Remove(p); err != nil {
 			t.Fatalf("remove %s: %v", p, err)
 		}
 	}
-	if err := e.Add(filepath.Join(base, "elsewhere"), nil); err == nil || !strings.Contains(err.Error(), "inside your home") {
+	if err := e.Add(filepath.Join(base, "elsewhere"), nil, ""); err == nil || !strings.Contains(err.Error(), "inside your home") {
 		t.Fatalf("outside home: %v", err)
 	}
 }
