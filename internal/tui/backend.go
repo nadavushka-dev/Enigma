@@ -61,7 +61,7 @@ func (l *Live) Remove(abs string) error                          { return l.cl.R
 func (l *Live) SetLimits(x engine.Limits) (engine.Limits, error) { return l.cl.SetLimits(x) }
 
 func (l *Live) AddMachine(ctx context.Context, alias string, out io.Writer) error {
-	return fleet.Add(ctx, l.cl, l.Paths, alias, "", out)
+	return fleet.Add(ctx, l.cl, l.Paths, alias, "", nil, out)
 }
 
 func (l *Live) RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error {

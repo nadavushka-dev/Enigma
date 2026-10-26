@@ -48,6 +48,11 @@ func (c *Client) Add(abs string, ignore []string, group string) error {
 	return c.do(http.MethodPost, "/add", pathRequest{Path: abs, Ignore: ignore, Group: group}, nil)
 }
 
+// MoveEntry puts the entry at abs in another group (a group ID).
+func (c *Client) MoveEntry(abs string, group string) error {
+	return c.do(http.MethodPost, "/move", pathRequest{Path: abs, Group: group}, nil)
+}
+
 // Groups returns the live groups, main first.
 func (c *Client) Groups() ([]engine.GroupInfo, error) {
 	var gs []engine.GroupInfo

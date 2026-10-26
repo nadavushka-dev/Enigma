@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	register(&command{name: "add", args: "[--ignore GLOB]... [path]", summary: "sync a file or folder on every machine (no path: pick with fzf)", run: cmdAdd})
+	register(&command{name: "add", args: "[--group G] [--ignore GLOB]... [path]", summary: "sync a file or folder on the machines of a group (default main; no path: pick with fzf)", run: cmdAdd})
 	register(&command{name: "remove", args: "<path>", summary: "stop syncing a file or folder (files stay everywhere)", run: cmdRemove})
 	register(&command{name: "list", summary: "list synced files and folders", run: cmdList})
 	register(&command{name: "status", args: "[--json]", summary: "machines, links, synced entries and conflicts", run: cmdStatus})
@@ -73,8 +73,21 @@ func cmdAdd(c *ctx, args []string) error {
 	fs := flags("add")
 	var ignore multi
 	fs.Var(&ignore, "ignore", "")
+	group := fs.String("group", "", "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 1 {
 		return usageError{"add takes one path, or none to pick with fzf"}
+	}
+	groupID, groupName := "", ""
+	if *group != "" && *group != "main" {
+		cl, err := client()
+		if err != nil {
+			return err
+		}
+		g, err := groupNamed(cl, *group)
+		if err != nil {
+			return err
+		}
+		groupID, groupName = g.ID, g.Name
 	}
 	var picks []string
 	if fs.NArg() == 1 {
@@ -94,10 +107,14 @@ func cmdAdd(c *ctx, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := cl.Add(abs, ignore, ""); err != nil {
+		if err := cl.Add(abs, ignore, groupID); err != nil {
 			return err
 		}
-		fmt.Fprintf(c.stdout, "syncing %s on every machine\n", tilde(abs)+trailingSlash(p))
+		if groupName != "" {
+			fmt.Fprintf(c.stdout, "syncing %s in group %s\n", tilde(abs)+trailingSlash(p), groupName)
+		} else {
+			fmt.Fprintf(c.stdout, "syncing %s on every machine\n", tilde(abs)+trailingSlash(p))
+		}
 	}
 	return nil
 }
@@ -191,10 +208,23 @@ func cmdList(c *ctx, args []string) error {
 		fmt.Fprintln(c.stdout, "nothing is synced yet; add something with `enigma add <path>`")
 		return nil
 	}
-	for _, e := range st.Entries {
-		fmt.Fprintln(c.stdout, entryLabel(e.Path, e.Dir))
+	gs, err := cl.Groups()
+	if err != nil {
+		return err
 	}
-	return nil
+	names := map[string]string{}
+	for _, g := range gs {
+		names[g.ID] = g.Name
+	}
+	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+	for _, e := range st.Entries {
+		note := ""
+		if e.Frozen {
+			note = "(not synced here: this machine is not in " + names[e.Group] + ")"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", entryLabel(e.Path, e.Dir), names[e.Group], note)
+	}
+	return tw.Flush()
 }
 
 func cmdStatus(c *ctx, args []string) error {

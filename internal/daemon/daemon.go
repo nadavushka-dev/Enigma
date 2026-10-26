@@ -589,6 +589,14 @@ func (d *daemon) api() http.Handler {
 	mux.HandleFunc("GET /machines", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, d.eng.Machines(), nil)
 	})
+	mux.HandleFunc("POST /move", func(w http.ResponseWriter, r *http.Request) {
+		var req pathRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		reply(w, struct{}{}, d.eng.MoveEntry(req.Path, req.Group))
+	})
 	mux.HandleFunc("GET /groups", func(w http.ResponseWriter, r *http.Request) {
 		gs := d.eng.Groups()
 		if gs == nil {

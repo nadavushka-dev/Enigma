@@ -18,6 +18,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/buildinfo"
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
+	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/link"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/release"
@@ -67,8 +68,10 @@ func PeerByName(ps []daemon.PeerReport, name string) (daemon.PeerReport, bool) {
 }
 
 // Add installs enigma on the machine at ssh alias and makes it a member
-// named name (default: the alias), printing every step to out (D9).
-func Add(ctx context.Context, cl *daemon.Client, p config.Paths, alias, name string, out io.Writer) error {
+// named name (default: the alias), printing every step to out (D9). It
+// joins the groups named in groups (SPEC §9): none given means main;
+// "none" means no group; otherwise exactly those, so main only if listed.
+func Add(ctx context.Context, cl *daemon.Client, p config.Paths, alias, name string, groups []string, out io.Writer) error {
 	if name == "" {
 		name = alias
 	}
@@ -77,6 +80,10 @@ func Add(ctx context.Context, cl *daemon.Client, p config.Paths, alias, name str
 		return err
 	}
 	ms, err := Members(cl)
+	if err != nil {
+		return err
+	}
+	join, err := resolveGroups(cl, groups)
 	if err != nil {
 		return err
 	}
@@ -141,6 +148,12 @@ func Add(ctx context.Context, cl *daemon.Client, p config.Paths, alias, name str
 	step(5, "record "+name+" in the fleet; every machine links to it", "(this machine's daemon)")
 	if err := cl.SetMachine(rec); err != nil {
 		return err
+	}
+	if groups != nil {
+		if err := placeInGroups(cl, rec.ID, join); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "   %s\n", describeGroups(join))
 	}
 
 	step(6, "start its daemon", "ssh "+alias+" "+RemoteBin+" service install")
@@ -280,4 +293,79 @@ func AskStatus(ctx context.Context, r proto.MachineRecord) (daemon.StatusReport,
 		return st, nil
 	}
 	return daemon.StatusReport{}, lastErr
+}
+
+// resolveGroups turns group names into records; nil groups means main.
+func resolveGroups(cl *daemon.Client, groups []string) ([]engine.GroupInfo, error) {
+	if groups == nil {
+		return nil, nil
+	}
+	all, err := cl.Groups()
+	if err != nil {
+		return nil, err
+	}
+	var out []engine.GroupInfo
+	for _, name := range groups {
+		if name == "none" {
+			continue
+		}
+		g, ok := GroupByName(all, name)
+		if !ok {
+			return nil, fmt.Errorf("no group named %q (enigma group list shows them)", name)
+		}
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// placeInGroups puts a new member in exactly those groups: main unless
+// listed, the others as listed.
+func placeInGroups(cl *daemon.Client, machineID string, join []engine.GroupInfo) error {
+	inMain := false
+	for _, g := range join {
+		if g.ID == proto.MainGroup {
+			inMain = true
+			continue
+		}
+		if _, err := cl.Group(daemon.GroupRequest{Action: "members", ID: g.ID, Add: []string{machineID}}); err != nil {
+			return err
+		}
+	}
+	if !inMain {
+		if _, err := cl.Group(daemon.GroupRequest{Action: "members", ID: proto.MainGroup, Remove: []string{machineID}}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func describeGroups(join []engine.GroupInfo) string {
+	var names []string
+	inMain := false
+	for _, g := range join {
+		if g.ID == proto.MainGroup {
+			inMain = true
+		} else {
+			names = append(names, g.Name)
+		}
+	}
+	switch {
+	case len(names) == 0 && !inMain:
+		return "in no group yet"
+	case len(names) == 0:
+		return "in group main"
+	case inMain:
+		return "in group " + strings.Join(append(names, "main"), ", ")
+	}
+	return "in group " + strings.Join(names, ", ") + ", not in main"
+}
+
+// GroupByName finds a live group by name.
+func GroupByName(gs []engine.GroupInfo, name string) (engine.GroupInfo, bool) {
+	for _, g := range gs {
+		if g.Name == name {
+			return g, true
+		}
+	}
+	return engine.GroupInfo{}, false
 }

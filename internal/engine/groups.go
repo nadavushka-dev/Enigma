@@ -18,10 +18,12 @@ import (
 
 var groupName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-// GroupInfo is a group as the API reports it.
+// GroupInfo is a group as the API reports it: Members expanded (main is
+// "all except"), with the members' names alongside.
 type GroupInfo struct {
 	proto.GroupRecord
-	Entries int `json:"entries"` // live entries in it
+	MemberNames []string `json:"member_names"`
+	Entries     int      `json:"entries"` // live entries in it
 }
 
 // ensureMain creates main when it is missing: the first machine of a fleet,
@@ -138,7 +140,12 @@ func (e *Engine) Groups() []GroupInfo {
 		for _, g := range e.st.Groups {
 			if !g.Removed {
 				g.Members = e.members(g) // expanded for All groups
-				out = append(out, GroupInfo{GroupRecord: g, Entries: count[g.ID]})
+				names := make([]string, 0, len(g.Members))
+				for _, id := range g.Members {
+					names = append(names, e.st.Machines[id].Name)
+				}
+				sort.Strings(names)
+				out = append(out, GroupInfo{GroupRecord: g, MemberNames: names, Entries: count[g.ID]})
 			}
 		}
 	})

@@ -56,7 +56,7 @@ x 2026-10-26 2026-10-26 M7 tui: one-line prompt widget (bubbles textinput) + mul
 x 2026-10-26 2026-10-26 M7 fleet rename: group_id->fleet_id, internal/group->internal/fleet, docs and CLI text; mechanical commit, proto bump with M7 +m7
 x 2026-10-26 2026-10-26 M7 groups state: GroupRecord + EntryRecord.group, main created at init and on upgrade from v0.2, LWW merge, tombstones (§9) +m7
 x 2026-10-26 2026-10-26 M7 groups scope: entry records/announce/fetch/summary only over links where both ends are members; non-members never see paths; sim test invariant per group (§9) +m7
-2026-10-26 M7 groups enter/leave scope: first-add on join, remove-like on leave, frozen versions re-enter via §7 (§9) +m7
+x 2026-10-26 2026-10-26 M7 groups enter/leave scope: first-add on join, remove-like on leave, frozen versions re-enter via §7 (§9) +m7
 2026-10-26 M7 groups cli: group list/create/delete/rename/add/remove/merge (plan + --add-members), entry move, add --group, machine add --group, --json (§13.1) +m7
 2026-10-26 M7 tui groups: Groups pane (n r x enter M), Files shows group + a asks group + m move, Machines enter shows groups (§13.2) +m7
 2026-10-26 M7 e2e: 3 containers, main + pair group, non-member never gets pair paths, merge pair into main, upgrade from v0.2 keeps everything in main +m7

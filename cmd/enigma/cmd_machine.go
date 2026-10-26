@@ -14,7 +14,7 @@ import (
 )
 
 func init() {
-	register(&command{name: "machine", args: "add <ssh-alias> [--name NAME] | list [--json] | remove <name> [--uninstall] | rename <name> <new> | alias <name> [<ssh-alias>]",
+	register(&command{name: "machine", args: "add <ssh-alias> [--name NAME] [--group G]... | list [--json] | remove <name> [--uninstall] | rename <name> <new> | alias <name> [<ssh-alias>]",
 		summary: "manage the machines in the fleet", run: cmdMachine})
 }
 
@@ -41,6 +41,8 @@ func cmdMachine(c *ctx, args []string) error {
 func machineAdd(c *ctx, args []string) error {
 	fs := flags("machine add")
 	name := fs.String("name", "", "")
+	var groups multi
+	fs.Var(&groups, "group", "")
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") { // alias first, flags after
 		args = append(args[1:], args[0])
 	}
@@ -54,7 +56,11 @@ func machineAdd(c *ctx, args []string) error {
 	p, _ := paths()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	return fleet.Add(ctx, cl, p, fs.Arg(0), *name, c.stdout)
+	var gs []string
+	if len(groups) > 0 {
+		gs = groups
+	}
+	return fleet.Add(ctx, cl, p, fs.Arg(0), *name, gs, c.stdout)
 }
 
 func machineList(c *ctx, args []string) error {

@@ -168,7 +168,7 @@ func (h *host) startDaemon() (stop func()) {
 // add adds machine b to h's fleet with `enigma machine add`, the way a
 // user would. b's daemon then runs in the background (from the binary
 // installed in b's ~/.local/bin) until the test ends.
-func (h *host) add(b *host) string {
+func (h *host) add(b *host, extra ...string) string {
 	h.w.t.Helper()
 	h.w.t.Cleanup(func() {
 		b.run("service", "uninstall")
@@ -177,7 +177,23 @@ func (h *host) add(b *host) string {
 			h.w.t.Logf("--- %s daemon log (background) ---\n%s", b.name, log)
 		}
 	})
-	return h.must("machine", "add", b.name)
+	return h.must(append([]string{"machine", "add", b.name}, extra...)...)
+}
+
+// groupMembers is the member names of a group as h lists it.
+func (h *host) groupMembers(name string) []string {
+	var gs []struct {
+		Name    string   `json:"name"`
+		Members []string `json:"member_names"`
+	}
+	out, _ := h.run("group", "list", "--json")
+	json.Unmarshal([]byte(out), &gs)
+	for _, g := range gs {
+		if g.Name == name {
+			return g.Members
+		}
+	}
+	return nil
 }
 
 // blockFrom makes h unreachable over ssh from one machine only.
@@ -787,5 +803,138 @@ func TestE2E_D20_StatusAndDoctorShowStandingProblemsFirst(t *testing.T) {
 	}
 	if len(rep.Problems) == 0 || !strings.HasPrefix(rep.Problems[0], "c link down") {
 		t.Fatalf("doctor --json problems: %q", rep.Problems)
+	}
+}
+
+func TestE2E_D19_GroupsCLI(t *testing.T) {
+	w := newWorld(t)
+	a, b, c := w.host("a"), w.host("b"), w.host("c")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	a.add(b)
+	a.add(c)
+	eventuallyT(t, "everyone linked", func() bool { return a.connectedTo("b") && a.connectedTo("c") && b.connectedTo("c") })
+
+	// main lists every machine.
+	out := a.must("group", "list")
+	for _, want := range []string{"main", "a", "b", "c"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("group list missing %q:\n%s", want, out)
+		}
+	}
+	out = a.must("group", "create", "pair", "a", "b")
+	if !strings.Contains(out, "created group pair with a, b") {
+		t.Fatalf("create: %s", out)
+	}
+	eventuallyT(t, "c knows pair", func() bool { out, _ := c.run("group", "list"); return strings.Contains(out, "pair") })
+	if out, code := c.run("group", "create", "pair"); code == 0 || !strings.Contains(out, "already exists") {
+		t.Fatalf("duplicate name: %d %s", code, out)
+	}
+
+	// An entry in pair never reaches c, and c cannot add to pair.
+	a.write("secret/x.md", "x")
+	out = a.must("add", "--group", "pair", "~/secret")
+	if !strings.Contains(out, "syncing ~/secret in group pair") {
+		t.Fatalf("add --group: %s", out)
+	}
+	eventuallyT(t, "b has it", func() bool { return b.read("secret/x.md") == "x" })
+	c.write("other/y.md", "y")
+	if out, code := c.run("add", "--group", "pair", "~/other"); code == 0 || !strings.Contains(out, "not a member") {
+		t.Fatalf("c added to pair: %d %s", code, out)
+	}
+	if out, _ := c.run("list"); strings.Contains(out, "secret") {
+		t.Fatalf("c lists the pair entry:\n%s", out)
+	}
+	out = a.must("list")
+	if !strings.Contains(out, "secret/") || !strings.Contains(out, "pair") {
+		t.Fatalf("list must show the group:\n%s", out)
+	}
+
+	// Membership: c joins pair and gets the entry; b leaves and freezes.
+	a.must("group", "add", "pair", "c")
+	eventuallyT(t, "c has it", func() bool { return c.read("secret/x.md") == "x" })
+	a.must("group", "remove", "pair", "b")
+	eventuallyT(t, "b's entry is frozen", func() bool { out, _ := b.run("list"); return strings.Contains(out, "not synced here") })
+	if out, code := b.run("remove", "~/secret"); code == 0 || !strings.Contains(out, "which this machine is not in") {
+		t.Fatalf("b removed a frozen entry: %d %s", code, out)
+	}
+
+	// Rename, move, delete.
+	a.must("group", "rename", "pair", "duo")
+	eventuallyT(t, "c sees duo", func() bool { out, _ := c.run("list"); return strings.Contains(out, "duo") })
+	if out, code := a.run("group", "delete", "duo"); code == 0 || !strings.Contains(out, "still has 1 entry") {
+		t.Fatalf("delete with entries: %d %s", code, out)
+	}
+	out = a.must("entry", "move", "~/secret", "main")
+	if !strings.Contains(out, "moved ~/secret to main") {
+		t.Fatalf("entry move: %s", out)
+	}
+	eventuallyT(t, "b is live again", func() bool { return b.read("secret/x.md") == "x" })
+	a.must("group", "delete", "duo")
+	eventuallyT(t, "duo is gone everywhere", func() bool { out, _ := c.run("group", "list"); return !strings.Contains(out, "duo") })
+	if out, code := a.run("group", "delete", "main"); code == 0 || !strings.Contains(out, "main cannot be deleted") {
+		t.Fatalf("delete main: %d %s", code, out)
+	}
+	var gs []struct {
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+		Entries int      `json:"entries"`
+	}
+	if out := a.must("group", "list", "--json"); json.Unmarshal([]byte(out), &gs) != nil || len(gs) != 1 || gs[0].Name != "main" || gs[0].Entries != 1 || len(gs[0].Members) != 3 {
+		t.Fatalf("group list --json: %s", out)
+	}
+}
+
+func TestE2E_D19_GroupMergeShowsThePlanAndMovesEntries(t *testing.T) {
+	w := newWorld(t)
+	a, b, c := w.host("a"), w.host("b"), w.host("c")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	a.add(b)
+	a.add(c)
+	eventuallyT(t, "everyone linked", func() bool { return a.connectedTo("b") && a.connectedTo("c") })
+	a.must("group", "create", "pair", "a", "b")
+	a.write("p/x.md", "x")
+	a.must("add", "--group", "pair", "~/p")
+	a.must("group", "remove", "main", "b") // b is in pair only
+	eventuallyT(t, "b is out of main", func() bool { return strings.Join(b.groupMembers("main"), ",") == "a,c" })
+
+	// The plan: c gains p; b would lose it, so the merge is refused.
+	out, code := a.run("group", "merge", "pair", "main", "--yes")
+	if code == 0 || !strings.Contains(out, "c gains ~/p") || !strings.Contains(out, "b would lose ~/p") || !strings.Contains(out, "--add-members") {
+		t.Fatalf("merge without --add-members: %d\n%s", code, out)
+	}
+	out = a.must("group", "merge", "pair", "main", "--yes", "--add-members")
+	if !strings.Contains(out, "b joins main") || !strings.Contains(out, "merged pair into main") {
+		t.Fatalf("merge: %s", out)
+	}
+	eventuallyT(t, "c has p", func() bool { return c.read("p/x.md") == "x" })
+	eventuallyT(t, "b still has p, live", func() bool {
+		out, _ := b.run("list")
+		return strings.Contains(out, "p/") && !strings.Contains(out, "not synced here")
+	})
+	eventuallyT(t, "pair is gone", func() bool { out, _ := a.run("group", "list"); return !strings.Contains(out, "pair") })
+	if out, code := a.run("group", "merge", "main", "main", "--yes"); code == 0 {
+		t.Fatalf("merging main into itself: %s", out)
+	}
+}
+
+func TestE2E_D19_MachineAddWithGroups(t *testing.T) {
+	w := newWorld(t)
+	a, b, c := w.host("a"), w.host("b"), w.host("c")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	a.must("group", "create", "build")
+	out := a.add(b, "--group", "build") // build only: not in main
+	if !strings.Contains(out, "in group build, not in main") {
+		t.Fatalf("machine add --group: %s", out)
+	}
+	a.add(c)
+	eventuallyT(t, "linked", func() bool { return a.connectedTo("b") && a.connectedTo("c") })
+	eventuallyT(t, "b is in build only, c in main", func() bool {
+		return strings.Join(a.groupMembers("build"), ",") == "b" && strings.Join(a.groupMembers("main"), ",") == "a,c"
+	})
+	if out, code := a.run("machine", "add", "d", "--group", "nope"); code == 0 || !strings.Contains(out, "no group") {
+		t.Fatalf("unknown group must fail before touching the machine: %d %s", code, out)
 	}
 }
