@@ -216,6 +216,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case OpenConfirm:
 		m.modal = &confirmModal{q: msg}
 		return m, nil
+	case OpenPrompt:
+		m.modal = newPrompt(msg)
+		return m, nil
+	case OpenPick:
+		m.modal = &pickModal{p: msg}
+		return m, nil
 	case OpenProgress:
 		pm, cmd := startProgress(msg)
 		m.modal = pm
@@ -273,6 +279,8 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		m.modal = &problemsModal{ps: m.s.Status.Problems}
 		return m, nil
+	case "L":
+		return m, tea.Batch(m.editLimits(), func() tea.Msg { return RefreshMsg{} })
 	case "tab":
 		m.focus = (m.focus + 1) % len(m.panes)
 		return m, nil
@@ -327,7 +335,7 @@ func (m *Model) footer() string {
 		parts = append(parts, StyleAccent.Render(h.Key)+" "+h.Does)
 	}
 	if g, ok := m.panes[m.focus].(keyGrabber); !ok || !g.grabsKeys() {
-		parts = append(parts, StyleAccent.Render("tab")+" focus", StyleAccent.Render("p")+" problems", StyleAccent.Render("?")+" help", StyleAccent.Render("q")+" quit")
+		parts = append(parts, StyleAccent.Render("tab")+" focus", StyleAccent.Render("p")+" problems", StyleAccent.Render("L")+" limits", StyleAccent.Render("?")+" help", StyleAccent.Render("q")+" quit")
 	}
 	return fit(" "+strings.Join(parts, "  "), m.width)
 }
@@ -355,6 +363,7 @@ func (m *Model) helpView() string {
 	}
 	b.WriteString("\n")
 	row("p", "the standing problems, with hints (enter goes to one)")
+	row("L", "the fleet's limits: size per file, files per folder")
 	row("?", "this help (any key closes it)")
 	row("q", "quit")
 	return b.String()

@@ -29,8 +29,9 @@ type Backend interface {
 	AddMachine(ctx context.Context, alias string, out io.Writer) error
 	RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error
 	Events(after uint64, wait time.Duration) ([]engine.Event, error)
-	ReadFile(rel string) ([]byte, error) // a file under ~
-	HomeIndex() *fuzzy.Index             // the home index (SPEC §12.4), built on first use
+	ReadFile(rel string) ([]byte, error)            // a file under ~
+	HomeIndex() *fuzzy.Index                        // the home index (SPEC §12.4), built on first use
+	SetLimits(engine.Limits) (engine.Limits, error) // change the fleet's limits (SPEC §8); zero fields keep their value
 }
 
 // Live is the real Backend.
@@ -51,12 +52,13 @@ func NewLive(p config.Paths) (*Live, error) {
 	return &Live{Paths: p, home: home, cl: daemon.NewClient(p)}, nil
 }
 
-func (l *Live) Home() string                             { return l.home }
-func (l *Live) Status() (daemon.StatusReport, error)     { return l.cl.Status() }
-func (l *Live) Machines() ([]proto.MachineRecord, error) { return group.Members(l.cl) }
-func (l *Live) Hosts() ([]string, error)                 { return sshconfig.Hosts(l.home) }
-func (l *Live) Add(abs string) error                     { return l.cl.Add(abs, nil) }
-func (l *Live) Remove(abs string) error                  { return l.cl.Remove(abs) }
+func (l *Live) Home() string                                     { return l.home }
+func (l *Live) Status() (daemon.StatusReport, error)             { return l.cl.Status() }
+func (l *Live) Machines() ([]proto.MachineRecord, error)         { return group.Members(l.cl) }
+func (l *Live) Hosts() ([]string, error)                         { return sshconfig.Hosts(l.home) }
+func (l *Live) Add(abs string) error                             { return l.cl.Add(abs, nil) }
+func (l *Live) Remove(abs string) error                          { return l.cl.Remove(abs) }
+func (l *Live) SetLimits(x engine.Limits) (engine.Limits, error) { return l.cl.SetLimits(x) }
 
 func (l *Live) AddMachine(ctx context.Context, alias string, out io.Writer) error {
 	return group.Add(ctx, l.cl, l.Paths, alias, "", out)

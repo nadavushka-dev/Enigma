@@ -2,10 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/nadavushka-dev/enigma/internal/engine"
 )
@@ -25,9 +23,9 @@ func cmdLimits(c *ctx, args []string) error {
 	}
 	var want engine.Limits
 	if *size != "" {
-		n, err := parseSize(*size)
+		n, err := engine.ParseSize(*size)
 		if err != nil {
-			return usageError{err.Error()}
+			return usageError{"--file-size " + err.Error()}
 		}
 		want.MaxFileSize = n
 	}
@@ -59,26 +57,4 @@ func cmdLimits(c *ctx, args []string) error {
 		fmt.Fprintln(c.stdout, "set for every machine in the group")
 	}
 	return nil
-}
-
-// parseSize reads a size like 25MB, 500K or 1.5 MB (binary units; a bare
-// number is bytes).
-func parseSize(s string) (int64, error) {
-	t := strings.ToUpper(strings.ReplaceAll(s, " ", ""))
-	units := []struct {
-		suffix string
-		mult   float64
-	}{{"GB", 1 << 30}, {"G", 1 << 30}, {"MB", 1 << 20}, {"M", 1 << 20}, {"KB", 1 << 10}, {"K", 1 << 10}, {"B", 1}}
-	mult := 1.0
-	for _, u := range units {
-		if strings.HasSuffix(t, u.suffix) {
-			t, mult = strings.TrimSuffix(t, u.suffix), u.mult
-			break
-		}
-	}
-	v, err := strconv.ParseFloat(t, 64)
-	if err != nil || v <= 0 {
-		return 0, errors.New("--file-size wants a size like 25MB, not " + strconv.Quote(s))
-	}
-	return int64(v * mult), nil
 }

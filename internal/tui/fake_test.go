@@ -69,6 +69,22 @@ func (f *fake) Hosts() ([]string, error) { return f.hosts, nil }
 func (f *fake) Add(abs string) error     { f.call("add " + abs); return f.opErr }
 func (f *fake) Remove(abs string) error  { f.call("remove " + abs); return f.opErr }
 
+func (f *fake) SetLimits(l engine.Limits) (engine.Limits, error) {
+	f.call(fmt.Sprintf("set-limits %d %d", l.MaxFileSize, l.MaxFiles))
+	if f.opErr != nil {
+		return engine.Limits{}, f.opErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if l.MaxFileSize > 0 {
+		f.status.Limits.MaxFileSize = l.MaxFileSize
+	}
+	if l.MaxFiles > 0 {
+		f.status.Limits.MaxFiles = l.MaxFiles
+	}
+	return f.status.Limits, nil
+}
+
 func (f *fake) AddMachine(ctx context.Context, alias string, out io.Writer) error {
 	f.call("add-machine " + alias)
 	for _, s := range f.steps {
@@ -190,6 +206,8 @@ func key(k string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlN}
 	case "ctrl+p":
 		return tea.KeyMsg{Type: tea.KeyCtrlP}
+	case "space":
+		return tea.KeyMsg{Type: tea.KeySpace}
 	case "backspace":
 		return tea.KeyMsg{Type: tea.KeyBackspace}
 	case "up":
