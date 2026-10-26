@@ -63,6 +63,12 @@ func (p *machinesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 			p.hosts = msg.hosts
 		}
 		p.rebuild(s)
+	case JumpMsg:
+		for i, r := range p.rows {
+			if msg.Peer != "" && r.name == msg.Peer {
+				p.cur = i
+			}
+		}
 	case tea.KeyMsg:
 		return p.key(msg, s)
 	}

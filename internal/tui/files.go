@@ -192,6 +192,12 @@ func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		return nil
 	}
 	switch msg := msg.(type) {
+	case JumpMsg:
+		if msg.Path != "" {
+			p.closeFilter()
+			p.jumpTo(s, msg.Path)
+		}
+		return nil
 	case indexTickMsg:
 		return p.filterTick(s)
 	case rankedMsg:

@@ -224,3 +224,8 @@ func viewHas(t *testing.T, m *Model, wants ...string) {
 }
 
 var errDown = errors.New("the enigma daemon is not running (start it with `enigma service install`)")
+
+// machineRec is a member record for tests.
+func machineRec(name string) proto.MachineRecord {
+	return proto.MachineRecord{ID: "id-" + name, Name: name, Alias: name, Target: "ssh://" + name}
+}

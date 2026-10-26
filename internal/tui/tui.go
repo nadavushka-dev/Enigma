@@ -120,6 +120,9 @@ type Model struct {
 	modal   modal
 	lastErr string
 	lastSeq uint64
+
+	notice    string // an action's result (SPEC §13.5), cleared by noticeExpiredMsg
+	noticeSeq uint64
 }
 
 // New builds the TUI over b.
@@ -195,6 +198,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ShowError:
 		m.lastErr = msg.Err.Error()
 		return m, nil
+	case ShowNotice:
+		return m, m.showNotice(msg.Text)
+	case noticeExpiredMsg:
+		if msg.seq == m.noticeSeq {
+			m.notice = ""
+		}
+		return m, nil
+	case JumpMsg:
+		switch {
+		case msg.Path != "":
+			m.focus = 1
+		case msg.Peer != "":
+			m.focus = 0
+		}
+		return m, m.broadcast(msg)
 	case OpenConfirm:
 		m.modal = &confirmModal{q: msg}
 		return m, nil
@@ -252,6 +270,9 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.help = true
 		return m, nil
+	case "p":
+		m.modal = &problemsModal{ps: m.s.Status.Problems}
+		return m, nil
 	case "tab":
 		m.focus = (m.focus + 1) % len(m.panes)
 		return m, nil
@@ -262,7 +283,8 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, m.panes[m.focus].Update(k, m.s)
 }
 
-// layout: Machines | Files on top, Activity below, footer last.
+// layout: Machines | Files on top, Activity below, then the notice line
+// (SPEC §13.5) and the key hints.
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "starting…"
@@ -272,7 +294,7 @@ func (m *Model) View() string {
 		banner = StyleBad.Render(fit(" "+m.s.StatusErr.Error(), m.width))
 	}
 	footer := m.footer()
-	bodyH := m.height - 1
+	bodyH := m.height - 2 // the notice line and the key hints
 	if banner != "" {
 		bodyH--
 	}
@@ -289,7 +311,7 @@ func (m *Model) View() string {
 	if banner != "" {
 		screen = banner + "\n" + screen
 	}
-	screen += "\n" + footer
+	screen += "\n" + m.noticeLine() + "\n" + footer
 	switch {
 	case m.modal != nil:
 		return overlay(screen, m.modal.view(m.width, m.height), m.width, m.height)
@@ -300,15 +322,12 @@ func (m *Model) View() string {
 }
 
 func (m *Model) footer() string {
-	if m.lastErr != "" {
-		return StyleBad.Render(fit(" "+m.lastErr, m.width))
-	}
 	var parts []string
 	for _, h := range m.panes[m.focus].Help() {
 		parts = append(parts, StyleAccent.Render(h.Key)+" "+h.Does)
 	}
 	if g, ok := m.panes[m.focus].(keyGrabber); !ok || !g.grabsKeys() {
-		parts = append(parts, StyleAccent.Render("tab")+" focus", StyleAccent.Render("?")+" help", StyleAccent.Render("q")+" quit")
+		parts = append(parts, StyleAccent.Render("tab")+" focus", StyleAccent.Render("p")+" problems", StyleAccent.Render("?")+" help", StyleAccent.Render("q")+" quit")
 	}
 	return fit(" "+strings.Join(parts, "  "), m.width)
 }
@@ -335,6 +354,7 @@ func (m *Model) helpView() string {
 		}
 	}
 	b.WriteString("\n")
+	row("p", "the standing problems, with hints (enter goes to one)")
 	row("?", "this help (any key closes it)")
 	row("q", "quit")
 	return b.String()

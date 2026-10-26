@@ -50,7 +50,7 @@ x 2026-10-22 2026-10-21 M6 cli: enigma add with no path picks via fzf when insta
 2026-10-21 M6 founder machine has no ssh target: other members cannot dial it without enigma machine alias (design talk) +m6
 x 2026-10-22 2026-10-22 M6 limits: group setting (enigma limits), ceilings 64MB/20k, folder growth past the file limit skips new files with a clear error, receiver refuses oversized files +m6
 x 2026-10-26 2026-10-26 M7 spec review: groups (D19, §9), problems (D20, §13.5), fleet rename, TUI parity (D21); user signs off before code +m7
-2026-10-26 M7 problems: internal/problems standing set derived from state, GET /problems, enigma status prints it first, doctor exits non-zero (§13.5) +m7
+x 2026-10-26 2026-10-26 M7 problems: internal/problems standing set derived from state, GET /problems, enigma status prints it first, doctor exits non-zero (§13.5) +m7
 2026-10-26 M7 tui: notice line (problems count, action results, failed actions in red) + p problems modal with hints and jump-to-row (§13.5) +m7
 2026-10-26 M7 tui: one-line prompt widget (bubbles textinput) + multi-pick list; L edits limits (§13.2) +m7
 2026-10-26 M7 fleet rename: group_id->fleet_id, internal/group->internal/fleet, docs and CLI text; mechanical commit, proto bump with M7 +m7
