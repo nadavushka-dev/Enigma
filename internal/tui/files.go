@@ -19,6 +19,7 @@ import (
 // filesPane is the Files pane (SPEC §12.2): a lazy tree rooted at ~.
 // Folders are read only when expanded; the root is expanded at start.
 type filesPane struct {
+	target string // name of the selected group, for the title
 	root   *fileNode
 	rows   []*fileNode // visible nodes, in order (the root excluded)
 	cursor int
@@ -46,7 +47,12 @@ var ignoreMatcher = fsx.NewMatcher(nil)
 
 func newFiles() *filesPane { return &filesPane{} }
 
-func (p *filesPane) Title() string { return "Files ~/" }
+func (p *filesPane) Title() string {
+	if p.target == "" {
+		return "Files ~/"
+	}
+	return "Files ~/ · adding to " + p.target
+}
 
 func (p *filesPane) Help() []KeyHelp {
 	if p.filter != nil {
@@ -270,30 +276,24 @@ func (p *filesPane) add(s *Shared, n *fileNode) tea.Cmd {
 	}
 	abs := filepath.Join(s.Backend.Home(), filepath.FromSlash(n.rel))
 	b := s.Backend
-	add := func(group string) tea.Cmd {
-		return func() tea.Msg {
-			if err := b.Add(abs, group); err != nil {
-				return ShowError{Err: err}
-			}
-			return RefreshMsg{}
-		}
-	}
-	if len(s.Groups) <= 1 {
-		return add("")
-	}
+	g := targetGroup(s)
 	return func() tea.Msg {
-		return OpenPrompt{Title: "Add ~/" + n.rel + " to group", Label: "group", Initial: "main", Submit: func(name string) tea.Cmd {
-			g, err := groupByName(s, name)
-			if err != nil {
-				return showErr(err)
-			}
-			if g.ID == proto.MainGroup {
-				return add("")
-			}
-			return add(g.ID)
-		}}
+		if err := b.Add(abs, s.Target); err != nil {
+			return ShowError{Err: err}
+		}
+		return done("added ~/" + n.rel + " to " + g)
 	}
 }
+
+// targetID is the selected group's ID, main when nothing is selected.
+func targetID(s *Shared) string {
+	if s.Target == "" {
+		return proto.MainGroup
+	}
+	return s.Target
+}
+
+func targetGroup(s *Shared) string { return groupNameOf(s, targetID(s)) }
 
 // move puts an entry in another group (SPEC §9).
 func (p *filesPane) move(s *Shared, n *fileNode) tea.Cmd {
@@ -306,19 +306,16 @@ func (p *filesPane) move(s *Shared, n *fileNode) tea.Cmd {
 	}
 	abs := filepath.Join(s.Backend.Home(), filepath.FromSlash(n.rel))
 	b := s.Backend
+	g := targetGroup(s)
+	if e.Group == targetID(s) {
+		return notice("~/" + n.rel + " is already in " + g)
+	}
+	target := targetID(s)
 	return func() tea.Msg {
-		return OpenPrompt{Title: "Move ~/" + n.rel + " to group", Label: "group", Initial: groupNameOf(s, e.Group), Submit: func(name string) tea.Cmd {
-			g, err := groupByName(s, name)
-			if err != nil {
-				return showErr(err)
-			}
-			return func() tea.Msg {
-				if err := b.MoveEntry(abs, g.ID); err != nil {
-					return ShowError{Err: err}
-				}
-				return done("moved ~/" + n.rel + " to " + g.Name)
-			}
-		}}
+		if err := b.MoveEntry(abs, target); err != nil {
+			return ShowError{Err: err}
+		}
+		return done("moved ~/" + n.rel + " to " + g)
 	}
 }
 
@@ -427,6 +424,7 @@ func (p *filesPane) dimmed(s *Shared, n *fileNode) bool {
 }
 
 func (p *filesPane) View(s *Shared, width, height int, focused bool) string {
+	p.target = targetGroup(s)
 	p.ensure(s)
 	p.height = height
 	if height <= 0 {

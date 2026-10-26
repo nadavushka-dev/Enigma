@@ -129,40 +129,74 @@ func TestFilesRowsShowTheGroupAndFrozenEntries(t *testing.T) {
 	}
 }
 
-func TestFilesAddAsksForTheGroupWhenThereIsMoreThanOne(t *testing.T) {
+// The Groups pane cursor is the selected group: adds and moves go there,
+// no typed name (SPEC §13.2).
+func TestGroupsCursorIsTheSelectedGroupShownInBothPanes(t *testing.T) {
+	f := groupsFake(t)
+	m := groupsModel(t, f)
+	viewHas(t, m, "Files ~/ · adding to main")
+	gv := m.panes[paneGroups].View(m.s, 50, 10, false)
+	if !strings.Contains(gv, "▸ main") || strings.Contains(gv, "▸ pair") {
+		t.Fatalf("main should carry the marker:\n%s", gv)
+	}
+	drive(t, m, key("j"))
+	viewHas(t, m, "Files ~/ · adding to pair")
+	gv = m.panes[paneGroups].View(m.s, 50, 10, false)
+	if !strings.Contains(gv, "▸ pair") || strings.Contains(gv, "▸ main") {
+		t.Fatalf("pair should carry the marker:\n%s", gv)
+	}
+	// the selection survives a status refresh that reorders nothing
+	drive(t, m, StatusMsg{Status: f.status, Machines: f.machines, Groups: f.groups})
+	viewHas(t, m, "adding to pair")
+}
+
+func TestFilesAddGoesToTheSelectedGroupWithoutAPrompt(t *testing.T) {
 	f := groupsFake(t)
 	f.write(t, "new/x.md", "x")
-	m := filesModel(t, f)
+	m := groupsModel(t, f)
+	drive(t, m, key("j"), key("tab")) // select pair, focus Files
 	drive(t, m, key("G"), key("k"))
-	n := m.panes[2].(*filesPane).current()
+	n := m.panes[paneFiles].(*filesPane).current()
 	if n == nil || n.rel != "new" {
 		t.Fatalf("cursor on %v", n)
 	}
 	drive(t, m, key("a"))
-	viewHas(t, m, "Add ~/new to group", "main")
-	drive(t, m, key("ctrl+u"))
-	typeText(t, m, "pair")
-	drive(t, m, key("enter"))
 	if c := f.Calls(); len(c) != 1 || c[0] != "add "+filepath.Join(f.home, "new")+" g-pair" {
 		t.Fatalf("calls %v", c)
 	}
-	drive(t, m, key("a"), key("ctrl+u"))
-	typeText(t, m, "nope")
-	drive(t, m, key("enter"))
-	viewHas(t, m, `no group named "nope"`)
+	if l := noticeLine(m); !strings.Contains(l, "added ~/new to pair") {
+		t.Fatalf("notice %q", l)
+	}
 }
 
-func TestFilesMoveEntryPrompts(t *testing.T) {
+func TestFilesAddWithMainSelectedUsesTheDefaultGroup(t *testing.T) {
+	f := groupsFake(t)
+	f.write(t, "new/x.md", "x")
+	m := filesModel(t, f)
+	drive(t, m, key("G"), key("k"), key("a"))
+	if c := f.Calls(); len(c) != 1 || c[0] != "add "+filepath.Join(f.home, "new") {
+		t.Fatalf("calls %v", c)
+	}
+}
+
+func TestFilesMoveGoesToTheSelectedGroup(t *testing.T) {
 	f := groupsFake(t)
 	f.write(t, "secret/x.md", "x")
-	m := filesModel(t, f)
+	m := filesModel(t, f) // main selected; secret is in pair
 	drive(t, m, key("m"))
-	viewHas(t, m, "Move ~/secret to group", "pair")
-	drive(t, m, key("ctrl+u"))
-	typeText(t, m, "main")
-	drive(t, m, key("enter"))
 	if c := f.Calls(); len(c) != 1 || c[0] != "move "+filepath.Join(f.home, "secret")+" main" {
 		t.Fatalf("calls %v", c)
+	}
+	if l := noticeLine(m); !strings.Contains(l, "moved ~/secret to main") {
+		t.Fatalf("notice %q", l)
+	}
+	// an entry already in the selected group: a notice, no call
+	drive(t, m, key("shift+tab"), key("j"), key("tab"), key("m"))
+	if c := f.Calls(); len(c) != 1 {
+		t.Fatalf("calls %v", c)
+	}
+	if l := noticeLine(m); !strings.Contains(l, "already in pair") {
+		t.Fatalf("notice %q", l)
 	}
 }
 

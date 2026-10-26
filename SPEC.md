@@ -534,27 +534,35 @@ a notice line (§13.5), and the key hints.
   `x` on a member removes it, after a confirmation (`u` also uninstalls).
   Adding asks which groups the machine joins (default `main`). `enter` on a
   member lists its groups; `a`/`x` there add it to or remove it from one.
-- **Groups:** every group with its members and entry count. `n` creates one
-  (prompts for the name and members), `r` renames, `x` deletes (refused with
-  a notice while it has entries), `enter` opens the member list where
-  `a`/`x` add and remove machines, `M` merges it into another group after
-  showing the plan (§9). Membership changes ask for confirmation, since they
-  start first adds or stop syncing.
+- **Groups:** every group with its members and entry count. The cursor is
+  the **selected group**, marked `▸` whether or not the pane has focus: it
+  is where the Files pane adds and moves entries, and the Files title says
+  so (`Files ~/ · adding to pair`). It starts on `main` and follows the
+  group by ID across refreshes; a deleted selection falls back to `main`.
+  The selection never filters the Files pane. `n` creates a group (prompts
+  for the name and members), `r` renames, `x` deletes (refused with a
+  notice while it has entries), `enter` opens the member list where `a`/`x`
+  add and remove machines, `M` merges it into another group after showing
+  the plan (§9). Membership changes ask for confirmation, since they start
+  first adds or stop syncing.
 - **Files:** a lazy tree rooted at `~`, dotfiles included. Synced entries
   are marked, and so is a folder that contains one (`contains synced`);
   ignored, oversized and non-regular items are dimmed, and files kept out
   by the folder limit are marked `over limit` (§8). Each synced row shows
-  its group. `a` adds the selected file or folder, asking for the group when
-  there is more than one (default `main`); `m` moves an entry to another
-  group; `x` stops syncing an entry (after a confirmation). `/` filters it
-  with fuzzy search (§13.4).
+  its group. `a` adds the selected file or folder to the selected group,
+  `m` moves an entry there (a notice when it is already there), each with a
+  notice naming the group, so a wrong target is seen at once and undone by
+  selecting the other group and pressing `m`. No group is ever typed. `x`
+  stops syncing an entry (after a confirmation). `/` filters it with fuzzy
+  search (§13.4).
 - **Activity:** the daemon's recent events (a ring of the last 500: changes
   received and made, merges, conflict copies, deletes, links up and down,
   upgrades, errors), live. `enter` on a conflict shows the original and the
   copy side by side, differing lines marked.
-- **Prompts:** names, machine lists, the group for an add and the limits
-  (`L`, §8) are typed into a one-line prompt (bubbles `textinput`), with
-  `esc` to cancel. Lists of machines or groups are picked with `space`.
+- **Prompts:** names and the limits (`L`, §8) are typed into a one-line
+  prompt (bubbles `textinput`), with `esc` to cancel. Lists of machines or
+  groups are picked with `space`. A group is never typed where a typo could
+  go wrong: adds and moves use the selected group.
 - Keys: `tab`/`shift+tab` move focus; `j`/`k`, `g`/`G`, `ctrl+d`/`ctrl+u`;
   `l`/`enter` opens a folder, `h` closes it; `/` search; `p` problems;
   `L` limits; `?` help; `q` quits.

@@ -27,11 +27,14 @@ const statusEvery = 2 * time.Second
 
 // Shared is the state every pane may read.
 type Shared struct {
-	Backend   Backend
-	Status    daemon.StatusReport
-	Machines  []proto.MachineRecord
-	Groups    []engine.GroupInfo // main first (SPEC §9)
-	StatusErr error              // the daemon is unreachable
+	Backend  Backend
+	Status   daemon.StatusReport
+	Machines []proto.MachineRecord
+	Groups   []engine.GroupInfo // main first (SPEC §9)
+	// Target is the group selected in the Groups pane, the one adds and
+	// moves go to (SPEC §13.2). "" is main.
+	Target    string
+	StatusErr error // the daemon is unreachable
 }
 
 // Pane indexes.
@@ -327,7 +330,8 @@ func (m *Model) View() string {
 	rightW := m.width - leftW - midW
 	render := func(i, w, h int) string {
 		p := m.panes[i]
-		return box(p.Title(), p.View(m.s, w-2, h-2, i == m.focus), w, h, i == m.focus)
+		body := p.View(m.s, w-2, h-2, i == m.focus) // first: a View may update its Title
+		return box(p.Title(), body, w, h, i == m.focus)
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, render(paneMachines, leftW, topH), render(paneGroups, midW, topH), render(paneFiles, rightW, topH))
 	screen := lipgloss.JoinVertical(lipgloss.Left, top, render(paneActivity, m.width, actH))

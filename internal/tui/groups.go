@@ -15,7 +15,8 @@ import (
 
 // groupsPane is the Groups pane (SPEC §13.2): every group with its
 // members and entry count; n new, r rename, x delete, enter members, M
-// merge.
+// merge. Its cursor is the selected group, where the Files pane adds
+// and moves entries; it follows the group by ID across refreshes.
 type groupsPane struct {
 	cur    int
 	height int
@@ -32,9 +33,12 @@ func (p *groupsPane) Help() []KeyHelp {
 func (p *groupsPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
+		p.follow(s)
 		return nil
 	}
-	p.cur = max(0, min(p.cur, len(s.Groups)-1))
+	p.follow(s)
+	s.Target = "" // a key moves the cursor; follow then publishes the new row
+	defer p.follow(s)
 	switch k.String() {
 	case "j", "down":
 		p.cur = min(p.cur+1, max(0, len(s.Groups)-1))
@@ -56,6 +60,24 @@ func (p *groupsPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		return p.merge(s)
 	}
 	return nil
+}
+
+// follow keeps the cursor on the selected group when the list changes,
+// and publishes the selection; a selected group that vanished falls back
+// to main.
+func (p *groupsPane) follow(s *Shared) {
+	if s.Target != "" {
+		for i, g := range s.Groups {
+			if g.ID == s.Target {
+				p.cur = i
+			}
+		}
+	}
+	p.cur = max(0, min(p.cur, len(s.Groups)-1))
+	s.Target = ""
+	if p.cur < len(s.Groups) && s.Groups[p.cur].ID != proto.MainGroup {
+		s.Target = s.Groups[p.cur].ID
+	}
 }
 
 func (p *groupsPane) current(s *Shared) (engine.GroupInfo, bool) {
@@ -326,7 +348,11 @@ func (p *groupsPane) View(s *Shared, width, height int, focused bool) string {
 			members = "(no machines)"
 		}
 		count := fmt.Sprintf("%d", g.Entries)
-		left := fmt.Sprintf(" %-*s  %s", nameW, g.Name, members)
+		mark := " "
+		if i == p.cur {
+			mark = "▸" // the selected group: adds and moves go here
+		}
+		left := fmt.Sprintf("%s %-*s  %s", mark, nameW, g.Name, members)
 		if focused && i == p.cur {
 			lines = append(lines, StyleSelected.Render(fit(padBetween(left, count, width), width)))
 		} else {
