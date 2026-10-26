@@ -87,8 +87,10 @@ func (e *Engine) applyGroup(r proto.GroupRecord, from *peer) {
 	case !r.Removed && had && strings.Join(e.members(old), ",") != strings.Join(e.members(r), ","):
 		e.event(EvGroup, "", by, "group "+r.Name+" members: "+e.memberNames(e.members(r)))
 	}
-	// Membership decides what each link carries: tell every peer what it
+	// Membership decides what is synced here and what each link carries:
+	// watch or freeze this machine's entries, and tell every peer what it
 	// shares with this machine now (new members get the entries).
+	e.refreshScope()
 	for _, p := range e.peers {
 		e.sendScope(p)
 	}
@@ -373,4 +375,17 @@ func (e *Engine) sendScope(p *peer) {
 	}
 	flush()
 	p.send(&proto.Msg{Type: proto.SummaryDone})
+}
+
+// sendEntrySummary sends p the current versions under one entry.
+func (e *Engine) sendEntrySummary(p *peer, entry string) {
+	chunk := map[string]version.Version{}
+	for path, fs := range e.st.Files {
+		if path == entry || strings.HasPrefix(path, entry+"/") {
+			chunk[path] = fs.V
+		}
+	}
+	if len(chunk) > 0 {
+		p.send(&proto.Msg{Type: proto.Summary, Summary: chunk})
+	}
 }

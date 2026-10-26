@@ -85,10 +85,10 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 	if r.Group == "" {
 		r.Group = proto.MainGroup
 	}
-	if from != nil && !e.shares(r, from.id) {
+	old, had := e.st.Entries[r.Path]
+	if from != nil && !had && !e.shares(r, from.id) {
 		return // not ours to know (SPEC §9), or a peer with a stale view
 	}
-	old, had := e.st.Entries[r.Path]
 	if had && !r.Newer(old) {
 		return
 	}
@@ -97,13 +97,26 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 	}
 	e.st.Entries[r.Path] = r
 	e.dirty = true
+	// Peers in the entry's group get it; so do peers that shared its old
+	// group, so a moved entry freezes where it no longer belongs. A peer
+	// that newly shares it also gets the entry's current versions, as it
+	// would on link-up (§6.5), since it missed every announcement so far.
 	for _, p := range e.peers {
-		if p != from && e.shares(r, p.id) {
+		if p == from {
+			continue
+		}
+		now, before := e.shares(r, p.id), had && !old.Removed && e.shares(old, p.id)
+		if now || before {
 			p.send(&proto.Msg{Type: proto.Entries, Entries: []proto.EntryRecord{r}})
+		}
+		if now && !before && !r.Removed {
+			e.sendEntrySummary(p, r.Path)
 		}
 	}
 
 	wasActive := had && !old.Removed
+	wasLive := wasActive && e.inScope(old)
+	nowLive := !r.Removed && e.inScope(r)
 	by := ""
 	if from != nil {
 		by = from.name
@@ -113,23 +126,95 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 		e.event(EvEntryRemoved, r.Path, by, "")
 	case !r.Removed && !wasActive:
 		e.event(EvEntryAdded, r.Path, by, "")
+	case !r.Removed && wasActive && old.Group != r.Group:
+		e.event(EvEntryMoved, r.Path, by, "moved to group "+e.groupName(r.Group))
 	}
-	if r.Removed {
-		if wasActive {
-			e.untrack(r.Path)
+	switch {
+	case r.Removed:
+		if wasLive {
+			e.unwatch(r.Path)
 		}
-		return
-	}
-	e.track(r.Path, r)
-	if wasActive {
+		if wasActive {
+			e.forget(r.Path)
+		}
+	case nowLive && wasLive:
+		e.track(r.Path, r)
 		e.rescanEntry(r.Path)
-		return
+	case nowLive: // entering scope (new here, or thawed)
+		e.track(r.Path, r)
+		if wasActive {
+			e.rescanEntry(r.Path) // edits made while frozen become versions (§7)
+			return
+		}
+		origin := version.Preexisting
+		if from == nil && r.By == e.o.MachineID {
+			origin = version.Seed
+		}
+		e.seedEntry(r.Path, r, origin)
+	case wasLive: // leaving scope: stop syncing, keep files and versions
+		e.unwatch(r.Path)
 	}
-	origin := version.Preexisting
-	if from == nil && r.By == e.o.MachineID {
-		origin = version.Seed
+}
+
+// inScope: this machine is in r's group, so r is synced here.
+func (e *Engine) inScope(r proto.EntryRecord) bool {
+	g, ok := e.st.Groups[r.Group]
+	return ok && !g.Removed && e.inGroup(g, e.o.MachineID)
+}
+
+// refreshScope watches the live entries this machine is in scope for and
+// stops watching the rest, after a group change (SPEC §9).
+func (e *Engine) refreshScope() {
+	for path, r := range e.st.Entries {
+		if r.Removed {
+			continue
+		}
+		_, watched := e.matchers[path]
+		switch {
+		case e.inScope(r) && !watched:
+			e.track(path, r)
+			e.rescanEntry(path)
+		case !e.inScope(r) && watched:
+			e.unwatch(path)
+		}
 	}
-	e.seedEntry(r.Path, r, origin)
+}
+
+// MoveEntry puts the entry at abs in another group (SPEC §9). This machine
+// must be in both groups.
+func (e *Engine) MoveEntry(abs string, group string) error {
+	var err error
+	if derr := e.do(func() {
+		rel, ok := e.rel(abs)
+		r, exists := e.st.Entries[rel]
+		if !ok || !exists || r.Removed {
+			err = fmt.Errorf("%s is not synced", abs)
+			return
+		}
+		if !e.inScope(r) {
+			err = fmt.Errorf("%s belongs to group %s, which this machine is not in", abs, e.groupName(r.Group))
+			return
+		}
+		g, gerr := e.liveGroup(group)
+		if gerr != nil {
+			err = gerr
+			return
+		}
+		if !e.inGroup(g, e.o.MachineID) {
+			err = fmt.Errorf("this machine is not a member of group %s; join it first", g.Name)
+			return
+		}
+		if r.Group == group {
+			err = fmt.Errorf("%s is already in %s", abs, g.Name)
+			return
+		}
+		e.st.Lamport++
+		r.Clock, r.By, r.Group = e.st.Lamport, e.o.MachineID, group
+		e.applyEntry(r, nil)
+	}); derr != nil {
+		return derr
+	}
+	return err
 }
 
 func (e *Engine) track(path string, r proto.EntryRecord) {
@@ -148,7 +233,8 @@ func (e *Engine) track(path string, r proto.EntryRecord) {
 	}
 }
 
-func (e *Engine) untrack(path string) {
+// unwatch stops watching an entry; its versions stay (a frozen entry).
+func (e *Engine) unwatch(path string) {
 	if e.w != nil {
 		e.w.Remove(e.abs(path))
 	}
@@ -156,6 +242,10 @@ func (e *Engine) untrack(path string) {
 	delete(e.skipped, path)
 	delete(e.overLimit, path)
 	delete(e.missing, path)
+}
+
+// forget drops an entry's versions and stamps (it was removed).
+func (e *Engine) forget(path string) {
 	for rel := range e.st.Files {
 		if rel == path || strings.HasPrefix(rel, path+"/") {
 			delete(e.st.Files, rel)
@@ -241,7 +331,7 @@ func (e *Engine) scanEntry(path string, r proto.EntryRecord, hash bool) map[stri
 
 func (e *Engine) rescanAll() {
 	for path, r := range e.st.Entries {
-		if !r.Removed {
+		if !r.Removed && e.inScope(r) {
 			e.rescanEntry(path)
 		}
 	}

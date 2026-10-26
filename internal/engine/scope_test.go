@@ -2,6 +2,7 @@ package engine
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,5 +130,109 @@ func TestD19_EntryRecordsFromANonMemberPeerAreDropped(t *testing.T) {
 	})
 	if hasEntry(b, "leak") {
 		t.Fatal("stored an entry of a group b is not in")
+	}
+}
+
+func entryStatus(m *machine, path string) (EntryStatus, bool) {
+	for _, es := range m.e.Status().Entries {
+		if es.Path == path {
+			return es, true
+		}
+	}
+	return EntryStatus{}, false
+}
+
+func TestD19_LeavingAGroupFreezesItsEntriesAndReenteringResolvesEdits(t *testing.T) {
+	a, b, _, pair := pairFleet(t)
+	a.write("p/x.md", "one\n")
+	if err := a.e.Add(a.path("p"), nil, pair); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "b has it", hasFile(b, "p/x.md", "one\n"))
+	if err := a.e.GroupMembers(pair, nil, []string{"id-b"}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "b's entry is frozen", func() bool { es, ok := entryStatus(b, "p"); return ok && es.Frozen && es.Group == pair })
+	a.write("p/x.md", "two\n")
+	a.e.Rescan()
+	time.Sleep(200 * time.Millisecond)
+	if b.read("p/x.md") != "one\n" {
+		t.Fatalf("b still syncs p: %q", b.read("p/x.md"))
+	}
+	if es, _ := entryStatus(a, "p"); es.Frozen {
+		t.Fatal("a's entry must stay live")
+	}
+	// An edit on b while out of scope is kept when b rejoins (SPEC §9, §7).
+	b.write("p/x.md", "mine\n")
+	b.e.Rescan()
+	time.Sleep(100 * time.Millisecond)
+	if err := a.e.GroupMembers(pair, []string{"id-b"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "b is live again", func() bool { es, ok := entryStatus(b, "p"); return ok && !es.Frozen })
+	eventually(t, "both converge", func() bool { return a.read("p/x.md") == b.read("p/x.md") })
+	eventually(t, "nothing lost: both edits exist on both", func() bool {
+		for _, m := range []*machine{a, b} {
+			have := map[string]bool{}
+			filepathWalk(m.path("p"), func(c string) { have[c] = true })
+			if !have["two\n"] || !have["mine\n"] {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func TestD19_MoveEntryBetweenGroups(t *testing.T) {
+	a, b, c, pair := pairFleet(t)
+	a.write("p/x.md", "x")
+	a.add("p") // main: everyone
+	eventually(t, "c has it", hasFile(c, "p/x.md", "x"))
+	if err := c.e.MoveEntry(c.path("p"), pair); err == nil || !strings.Contains(err.Error(), "not a member") {
+		t.Fatalf("a non-member of the target moved it: %v", err)
+	}
+	if err := a.e.MoveEntry(a.path("p"), "nope"); err == nil {
+		t.Fatal("unknown group")
+	}
+	if err := a.e.MoveEntry(a.path("p"), pair); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "c's copy is frozen", func() bool { es, ok := entryStatus(c, "p"); return ok && es.Frozen })
+	eventually(t, "b's record moved", func() bool { es, ok := entryStatus(b, "p"); return ok && es.Group == pair && !es.Frozen })
+	a.write("p/x.md", "x2")
+	a.e.Rescan()
+	eventually(t, "b follows", hasFile(b, "p/x.md", "x2"))
+	time.Sleep(150 * time.Millisecond)
+	if c.read("p/x.md") != "x" {
+		t.Fatalf("c followed a pair entry: %q", c.read("p/x.md"))
+	}
+	if err := b.e.MoveEntry(b.path("p"), proto.MainGroup); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "c is live again and catches up", func() bool {
+		es, ok := entryStatus(c, "p")
+		return ok && !es.Frozen && c.read("p/x.md") == "x2"
+	})
+	if err := a.e.MoveEntry(a.path("p"), proto.MainGroup); err == nil || !strings.Contains(err.Error(), "already in main") {
+		t.Fatalf("move to the same group: %v", err)
+	}
+}
+
+func TestD19_FrozenEntriesSurviveARestartAndStayFrozen(t *testing.T) {
+	a, b, _, pair := pairFleet(t)
+	a.write("p/x.md", "x")
+	if err := a.e.Add(a.path("p"), nil, pair); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "b has it", hasFile(b, "p/x.md", "x"))
+	a.e.GroupMembers(pair, nil, []string{"id-b"})
+	eventually(t, "frozen", func() bool { es, ok := entryStatus(b, "p"); return ok && es.Frozen })
+	b.restart()
+	es, ok := entryStatus(b, "p")
+	if !ok || !es.Frozen {
+		t.Fatalf("after restart: %+v %v", es, ok)
+	}
+	if b.e.Remove(b.path("p")) == nil {
+		t.Fatal("a frozen entry cannot be removed from a machine out of its group")
 	}
 }

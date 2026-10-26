@@ -14,6 +14,7 @@ const (
 	EvConflict     = "conflict"      // a conflict copy was kept (Path: the copy, Detail: the original)
 	EvEntryAdded   = "entry-added"   // a file or folder started syncing
 	EvEntryRemoved = "entry-removed" // ... stopped syncing
+	EvEntryMoved   = "entry-moved"   // ... moved to another group (Detail: which)
 	EvLinkUp       = "link-up"
 	EvLinkDown     = "link-down"
 	EvUpgrade      = "upgrade"

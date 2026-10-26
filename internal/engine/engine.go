@@ -160,11 +160,6 @@ func New(o Options) (*Engine, error) {
 			return nil, err
 		}
 	}
-	for path, r := range e.st.Entries {
-		if !r.Removed {
-			e.track(path, r)
-		}
-	}
 	for _, r := range o.Bootstrap {
 		e.applyMachine(r, nil)
 	}
@@ -174,6 +169,7 @@ func New(o Options) (*Engine, error) {
 		e.applyMachine(proto.MachineRecord{ID: o.MachineID, Name: o.Name, Bin: o.Bin, Clock: e.st.Lamport, By: o.MachineID}, nil)
 	}
 	e.ensureMain()
+	e.refreshScope() // watch the entries of the groups this machine is in
 	if o.OnMachines != nil {
 		go e.notifyMachines()
 	}
@@ -290,6 +286,10 @@ func (e *Engine) Remove(abs string) error {
 			err = fmt.Errorf("%s is not synced", abs)
 			return
 		}
+		if !e.inScope(r) {
+			err = fmt.Errorf("%s belongs to group %s, which this machine is not in; a member must remove it", abs, e.groupName(r.Group))
+			return
+		}
 		e.st.Lamport++
 		r.Clock, r.By, r.Removed = e.st.Lamport, e.o.MachineID, true
 		e.applyEntry(r, nil)
@@ -305,6 +305,8 @@ func (e *Engine) Rescan() { e.do(e.rescanAll) }
 type EntryStatus struct {
 	Path    string
 	Dir     bool
+	Group   string   // group ID (SPEC §9)
+	Frozen  bool     // this machine is not in the group: not synced here, files kept
 	Missing bool     // root vanished locally; deletes are not propagated
 	Skipped []string // files not synced: symlinks, oversized
 	// OverLimit: new files not synced because the folder is at its file
@@ -330,7 +332,7 @@ func (e *Engine) Status() Status {
 			if r.Removed {
 				continue
 			}
-			es := EntryStatus{Path: path, Dir: r.Dir, Missing: e.missing[path]}
+			es := EntryStatus{Path: path, Dir: r.Dir, Group: r.Group, Frozen: !e.inScope(r), Missing: e.missing[path]}
 			for rel := range e.skipped[path] {
 				es.Skipped = append(es.Skipped, rel)
 			}
@@ -404,10 +406,11 @@ func (e *Engine) rel(abs string) (string, bool) {
 
 func (e *Engine) abs(rel string) string { return filepath.Join(e.o.Home, filepath.FromSlash(rel)) }
 
-// entryFor returns the active entry covering rel.
+// entryFor returns the live entry covering rel: not removed, and of a
+// group this machine is in (a frozen entry is not synced here, SPEC §9).
 func (e *Engine) entryFor(rel string) (string, proto.EntryRecord, bool) {
 	for path, r := range e.st.Entries {
-		if r.Removed {
+		if r.Removed || !e.inScope(r) {
 			continue
 		}
 		if rel == path || (r.Dir && strings.HasPrefix(rel, path+"/")) {
