@@ -5,7 +5,7 @@ cmd: cmd/enigma {
   label: "cmd/enigma\nCLI subcommands, daemon, bridge"
 }
 tui: internal/tui {label: "tui\nMachines · Files · Activity"}
-group: internal/group {label: "group\nmachine add / remove"}
+fleet: internal/fleet {label: "fleet\nmachine add / remove"}
 
 daemon: internal/daemon {
   label: "daemon\nAPI on enigma.sock · dial loops · peer.sock"
@@ -40,12 +40,12 @@ service: internal/service {label: "service\nlaunchd · systemd · background"}
 release: internal/release {label: "release\nbinaries for other platforms"}
 
 cmd -> tui
-cmd -> group
+cmd -> fleet
 cmd -> daemon
 cmd -> service
 tui -> daemon: client
-group -> daemon: client
-group -> sshlink
+fleet -> daemon: client
+fleet -> sshlink
 daemon -> engine
 daemon -> sshlink: dial peers
 daemon -> release

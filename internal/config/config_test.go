@@ -64,7 +64,7 @@ func TestIdentityInitLoadJoin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(id.MachineID) < 16 || len(id.GroupID) < 16 || id.Name != "mac" || id.MachineID == id.GroupID {
+	if len(id.MachineID) < 16 || len(id.FleetID) < 16 || id.Name != "mac" || id.MachineID == id.FleetID {
 		t.Fatalf("identity = %+v", id)
 	}
 	if _, err := Init(p, "mac"); err == nil {
@@ -74,21 +74,21 @@ func TestIdentityInitLoadJoin(t *testing.T) {
 	if err != nil || got != id {
 		t.Fatalf("load = %+v, %v", got, err)
 	}
-	// Joining as the same machine of the same group is fine; anything else is not.
+	// Joining as the same machine of the same fleet is fine; anything else is not.
 	if err := Join(p, id, nil); err != nil {
-		t.Fatalf("rejoin same group: %v", err)
+		t.Fatalf("rejoin same fleet: %v", err)
 	}
-	if err := Join(p, Identity{MachineID: id.MachineID, GroupID: "another-group", Name: "mac"}, nil); err == nil {
-		t.Fatal("joining a different group must fail")
+	if err := Join(p, Identity{MachineID: id.MachineID, FleetID: "another-fleet", Name: "mac"}, nil); err == nil {
+		t.Fatal("joining a different fleet must fail")
 	}
-	if err := Join(p, Identity{MachineID: NewID(), GroupID: id.GroupID, Name: "mac"}, nil); err == nil {
+	if err := Join(p, Identity{MachineID: NewID(), FleetID: id.FleetID, Name: "mac"}, nil); err == nil {
 		t.Fatal("joining again as another machine must fail")
 	}
 }
 
 func TestJoinWritesIdentityAndBootstrap(t *testing.T) {
 	p := Paths{Data: t.TempDir()}
-	id := Identity{MachineID: NewID(), GroupID: "group-123", Name: "box"}
+	id := Identity{MachineID: NewID(), FleetID: "fleet-123", Name: "box"}
 	members := []proto.MachineRecord{{ID: "a", Name: "mac", Clock: 1, By: "a"}, {ID: id.MachineID, Name: "box", Target: "ssh://me@box:22", Clock: 2, By: "a"}}
 	if err := Join(p, id, members); err != nil {
 		t.Fatal(err)

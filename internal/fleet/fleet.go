@@ -1,8 +1,8 @@
-// Package group runs the multi-step operations on the group's machines
+// Package fleet runs the multi-step operations on the fleet's machines
 // over ssh (SPEC §11): adding a machine, removing one, asking a member for
 // its status. The CLI and the TUI both use it; steps are written to an
 // io.Writer as they happen.
-package group
+package fleet
 
 import (
 	"bytes"
@@ -82,10 +82,10 @@ func Add(ctx context.Context, cl *daemon.Client, p config.Paths, alias, name str
 	}
 	for _, r := range ms {
 		if r.Name == name {
-			return fmt.Errorf("a machine named %q is already in the group (use --name)", name)
+			return fmt.Errorf("a machine named %q is already in the fleet (use --name)", name)
 		}
 		if r.Alias == alias {
-			return fmt.Errorf("%s is already in the group, as %s", alias, r.Name)
+			return fmt.Errorf("%s is already in the fleet, as %s", alias, r.Name)
 		}
 	}
 	step := func(n int, what, cmd string) {
@@ -132,13 +132,13 @@ func Add(ctx context.Context, cl *daemon.Client, p config.Paths, alias, name str
 	fmt.Fprintf(out, "   %s\n", target)
 	rec := proto.MachineRecord{ID: config.NewID(), Name: name, Alias: alias, Target: target, Bin: RemoteBin}
 
-	step(4, "join the group (the group is sent on stdin)", "ssh "+alias+" "+RemoteBin+" join")
-	req, _ := json.Marshal(JoinRequest{Identity: config.Identity{MachineID: rec.ID, GroupID: id.GroupID, Name: name}, Members: append(ms, rec)})
+	step(4, "join the fleet (the fleet is sent on stdin)", "ssh "+alias+" "+RemoteBin+" join")
+	req, _ := json.Marshal(JoinRequest{Identity: config.Identity{MachineID: rec.ID, FleetID: id.FleetID, Name: name}, Members: append(ms, rec)})
 	if _, err := link.Shell(ctx, alias, RemoteBin+" join", bytes.NewReader(req)); err != nil {
 		return err
 	}
 
-	step(5, "record "+name+" in the group; every machine links to it", "(this machine's daemon)")
+	step(5, "record "+name+" in the fleet; every machine links to it", "(this machine's daemon)")
 	if err := cl.SetMachine(rec); err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func Add(ctx context.Context, cl *daemon.Client, p config.Paths, alias, name str
 	if missing > 0 {
 		fmt.Fprintln(out, "   changes still reach it through the machines it is linked to")
 	}
-	fmt.Fprintf(out, "done: %s is in the group\n", name)
+	fmt.Fprintf(out, "done: %s is in the fleet\n", name)
 	return nil
 }
 
@@ -194,7 +194,7 @@ func remoteLinks(ctx context.Context, alias, self string) []daemon.PeerReport {
 	return st.Peers
 }
 
-// Remove takes member name out of the group and, if it is reachable, tells
+// Remove takes member name out of the fleet and, if it is reachable, tells
 // it to leave (and with uninstall, to remove enigma).
 func Remove(ctx context.Context, cl *daemon.Client, name string, uninstall bool, out io.Writer) error {
 	ms, err := Members(cl)
@@ -203,7 +203,7 @@ func Remove(ctx context.Context, cl *daemon.Client, name string, uninstall bool,
 	}
 	r, ok := ByName(ms, name)
 	if !ok {
-		return fmt.Errorf("no machine named %q in the group (see `enigma machine list`)", name)
+		return fmt.Errorf("no machine named %q in the fleet (see `enigma machine list`)", name)
 	}
 	st, err := cl.Status()
 	if err != nil {
@@ -216,7 +216,7 @@ func Remove(ctx context.Context, cl *daemon.Client, name string, uninstall bool,
 	if err := cl.SetMachine(r); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "removed %s from the group; no machine links to it anymore\n", name)
+	fmt.Fprintf(out, "removed %s from the fleet; no machine links to it anymore\n", name)
 
 	leave := r.Bin + " leave"
 	if r.Bin == "" {

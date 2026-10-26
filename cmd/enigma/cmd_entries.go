@@ -216,7 +216,7 @@ func cmdStatus(c *ctx, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(st)
 	}
-	fmt.Fprintf(c.stdout, "machine %s (group %s, enigma %s)\n\n", st.Machine, short(st.Group), st.Version)
+	fmt.Fprintf(c.stdout, "machine %s (fleet %s, enigma %s)\n\n", st.Machine, short(st.Fleet), st.Version)
 	if len(st.Problems) > 0 {
 		tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "PROBLEMS\tSINCE\tHINT")

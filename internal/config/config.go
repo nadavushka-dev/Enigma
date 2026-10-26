@@ -67,11 +67,11 @@ func (p Paths) socket(name string) string {
 
 // ---- identity ---------------------------------------------------------------
 
-var ErrNotInitialized = errors.New("this machine is not in a group yet: run `enigma init` (first machine), or add it from a member with `enigma machine add <ssh-alias>`")
+var ErrNotInitialized = errors.New("this machine is not in a fleet yet: run `enigma init` (first machine), or add it from a member with `enigma machine add <ssh-alias>`")
 
 type Identity struct {
 	MachineID string `json:"machine_id"`
-	GroupID   string `json:"group_id"`
+	FleetID   string `json:"group_id"` // key kept so v0.2 identity files still load
 	Name      string `json:"name"`
 }
 
@@ -88,16 +88,16 @@ func LoadIdentity(p Paths) (Identity, error) {
 	return id, nil
 }
 
-// Init creates a new group with this machine as its first member.
+// Init creates a new fleet with this machine as its first member.
 func Init(p Paths, name string) (Identity, error) {
 	if id, err := LoadIdentity(p); err == nil {
-		return id, fmt.Errorf("this machine already belongs to group %s", id.GroupID)
+		return id, fmt.Errorf("this machine already belongs to fleet %s", id.FleetID)
 	}
-	id := Identity{MachineID: randomID(), GroupID: randomID(), Name: name}
+	id := Identity{MachineID: randomID(), FleetID: randomID(), Name: name}
 	return id, writeJSON(p.identityPath(), id)
 }
 
-// Leave forgets the group: identity, state and history go; trash and
+// Leave forgets the fleet: identity, state and history go; trash and
 // backups (the user's own data) stay.
 func Leave(p Paths) error {
 	for _, f := range []string{p.identityPath(), p.bootstrapPath(), filepath.Join(p.Data, "state.json")} {
@@ -108,17 +108,17 @@ func Leave(p Paths) error {
 	return os.RemoveAll(filepath.Join(p.Data, "history"))
 }
 
-// Join makes this machine a member of a group, as the identity the adding
-// machine chose for it, and leaves members (the group's machine records)
+// Join makes this machine a member of a fleet, as the identity the adding
+// machine chose for it, and leaves members (the fleet's machine records)
 // for the daemon to start from (SPEC §11). Joining again as the same
 // machine is a no-op; anything else is refused.
 func Join(p Paths, id Identity, members []proto.MachineRecord) error {
 	if cur, err := LoadIdentity(p); err == nil {
 		switch {
-		case cur.GroupID != id.GroupID:
-			return fmt.Errorf("this machine already belongs to another group (%s)", cur.GroupID)
+		case cur.FleetID != id.FleetID:
+			return fmt.Errorf("this machine already belongs to another fleet (%s)", cur.FleetID)
 		case cur.MachineID != id.MachineID:
-			return fmt.Errorf("this machine is already in this group as %s", cur.Name)
+			return fmt.Errorf("this machine is already in this fleet as %s", cur.Name)
 		}
 	} else if !errors.Is(err, ErrNotInitialized) {
 		return err
@@ -129,7 +129,7 @@ func Join(p Paths, id Identity, members []proto.MachineRecord) error {
 	return writeJSON(p.identityPath(), id)
 }
 
-// NewID is a random machine or group ID.
+// NewID is a random machine or fleet ID.
 func NewID() string { return randomID() }
 
 func randomID() string {

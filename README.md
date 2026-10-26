@@ -57,12 +57,12 @@ It picks the release for your OS and CPU, checks its checksum and installs
 macOS and Linux, amd64 and arm64.
 
 Or from source, with Go 1.26+: `make build` writes `bin/enigma`, stamped
-with the commit time so that a newer build upgrades the rest of the group.
+with the commit time so that a newer build upgrades the rest of the fleet.
 
 ## Quick start
 
 ```sh
-enigma init                    # this machine starts a group
+enigma init                    # this machine starts a fleet
 enigma service install         # run the daemon at login (launchd / systemd)
 enigma machine add devbox      # any host in your ~/.ssh/config
 enigma add ~/.claude           # sync a folder...
@@ -71,7 +71,7 @@ enigma status
 ```
 
 `machine add` does the rest on the other machine. It copies the right
-binary over ssh, joins it to the group, starts its daemon and checks which
+binary over ssh, joins it to the fleet, starts its daemon and checks which
 machines it can reach. Every step prints the exact command it runs.
 
 ## The TUI
@@ -89,18 +89,18 @@ activity feed. Add machines and files from there with `a`, and press
 
 | Command | What it does |
 |---|---|
-| `enigma init [--name NAME]` | Start a group with this machine as its first member. |
+| `enigma init [--name NAME]` | Start a fleet with this machine as its first member. |
 | `enigma machine add <ssh-alias>` | Add a machine. |
-| `enigma machine list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | Manage the machines in the group. |
+| `enigma machine list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | Manage the machines in the fleet. |
 | `enigma add <path> [--ignore GLOB]…` | Sync a file or folder on every machine. |
 | `enigma remove <path>` | Stop syncing it. The files stay everywhere. |
 | `enigma list` · `status` | What's synced, and the state of each link. |
-| `enigma limits [--file-size SIZE] [--files N]` | Show the group's limits, or change them on every machine. |
+| `enigma limits [--file-size SIZE] [--files N]` | Show the fleet's limits, or change them on every machine. |
 | `enigma conflicts [--local]` | Conflict copies on every machine. |
 | `enigma trash list` · `restore <id>` · `empty` | Files removed here by a synced delete. |
 | `enigma doctor` | Check this machine and the links between all machines. |
 | `enigma service install` / `uninstall` | Run the daemon at login. |
-| `enigma update [--check]` | Move to the latest release. The group follows. |
+| `enigma update [--check]` | Move to the latest release. The fleet follows. |
 | `enigma tui`, or plain `enigma` | The terminal UI. |
 
 Every command takes `--json`, for scripts and agents.
@@ -111,7 +111,7 @@ Every command takes `--json`, for scripts and agents.
   symlinks are listed in status and skipped.
 - **Small things.** By default the limits are 10 MB per file and 2,000
   files per folder. Enigma is for the files around your projects, not the
-  projects themselves. Change them for the whole group with
+  projects themselves. Change them for the whole fleet with
   `enigma limits --file-size 25MB --files 5000` (at most 64 MB and 20,000).
   A folder that grows past its limit keeps syncing what it has, and status
   shows the new files left out until there is room.

@@ -361,7 +361,7 @@ func (p *filesPane) dimmed(s *Shared, n *fileNode) bool {
 		return true
 	}
 	maxSize := s.Status.Limits.MaxFileSize
-	if maxSize == 0 { // a daemon from before group limits
+	if maxSize == 0 { // a daemon from before fleet limits
 		maxSize = engine.DefaultMaxFileSize
 	}
 	if !n.dir && n.size > maxSize {

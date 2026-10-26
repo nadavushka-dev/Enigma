@@ -450,7 +450,7 @@ func TestFilesMarksFilesOverTheFolderLimit(t *testing.T) {
 	}
 }
 
-func TestFilesDimmingFollowsTheGroupSizeLimit(t *testing.T) {
+func TestFilesDimmingFollowsTheFleetSizeLimit(t *testing.T) {
 	f := newFake(t)
 	f.write(t, "small.txt", "1234")
 	f.write(t, "large.txt", "123456789")

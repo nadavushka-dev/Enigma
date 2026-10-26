@@ -10,7 +10,7 @@ you -> x: enigma machine add devbox
 x -> r: "1. ssh devbox uname -sm → linux/arm64"
 x -> x: "2. binary for linux/arm64: this one, bin/<version>/ cache, or the release"
 x -> r: "3. copy to ~/.local/bin/enigma (temp name, then rename)"
-x -> r: "4. enigma join  (group + member records on stdin)"
+x -> r: "4. enigma join  (fleet + member records on stdin)"
 r -> x: its new machine ID
 x -> d: "5. record the machine (ssh -G target, alias, bin)"
 d -> d: "replicates to every member; all start dialing devbox"

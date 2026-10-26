@@ -10,7 +10,7 @@ import (
 
 func init() {
 	register(&command{name: "limits", args: "[--file-size SIZE] [--files N] [--json]",
-		summary: "show the group's limits, or change them for every machine", run: cmdLimits})
+		summary: "show the fleet's limits, or change them for every machine", run: cmdLimits})
 }
 
 func cmdLimits(c *ctx, args []string) error {
@@ -54,7 +54,7 @@ func cmdLimits(c *ctx, args []string) error {
 	}
 	fmt.Fprintln(c.stdout, l)
 	if want != (engine.Limits{}) {
-		fmt.Fprintln(c.stdout, "set for every machine in the group")
+		fmt.Fprintln(c.stdout, "set for every machine in the fleet")
 	}
 	return nil
 }

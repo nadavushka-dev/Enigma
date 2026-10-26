@@ -39,7 +39,7 @@ func roundTrip(t *testing.T, msgs ...*Msg) []*Msg {
 func TestRoundTripAllTypes(t *testing.T) {
 	v := version.Version{Hash: "h", Vector: version.Vector{"a": 1}, Mtime: 42, By: "a", ByName: "mac", Origin: version.Seed}
 	msgs := []*Msg{
-		{Type: Hello, Hello: &HelloBody{GroupID: "g", MachineID: "a", Name: "mac", Proto: Version}},
+		{Type: Hello, Hello: &HelloBody{FleetID: "g", MachineID: "a", Name: "mac", Proto: Version}},
 		{Type: Entries, Entries: []EntryRecord{{Path: ".claude/skills", Dir: true, Ignore: []string{"*.log"}, Clock: 3, By: "a"}}},
 		{Type: Announce, Path: ".claude/CLAUDE.md", Version: &v},
 		{Type: Fetch, Path: ".claude/CLAUDE.md"},

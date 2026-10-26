@@ -1,6 +1,6 @@
 .PHONY: check test build dist snapshot hooks e2e e2e-long diagrams
 
-# Dev builds are ordered by commit time (SPEC §11): a newer build upgrades the group.
+# Dev builds are ordered by commit time (SPEC §11): a newer build upgrades the fleet.
 VERSION ?= v0.0.0-dev.$(shell TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S HEAD).$(shell git rev-parse --short=7 HEAD)
 LDFLAGS := -X github.com/nadavushka-dev/enigma/internal/buildinfo.Version=$(VERSION)
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64

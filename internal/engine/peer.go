@@ -126,7 +126,7 @@ func (e *Engine) Connect(conn io.ReadWriteCloser, dialed bool) error {
 // ConnectPeer is Connect that also reports who is on the other end.
 func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, error) {
 	hello := &proto.Msg{Type: proto.Hello, Hello: &proto.HelloBody{
-		GroupID: e.o.GroupID, MachineID: e.o.MachineID, Name: e.o.Name, Proto: proto.Version,
+		FleetID: e.o.FleetID, MachineID: e.o.MachineID, Name: e.o.Name, Proto: proto.Version,
 		Version: e.o.Version, Platform: e.o.Platform}}
 	sendErr := make(chan error, 1)
 	go func() { sendErr <- proto.Write(conn, hello) }()
@@ -159,8 +159,8 @@ func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, 
 		r.err = errors.New("handshake: expected hello")
 	case h.Proto != proto.Version:
 		r.err = fmt.Errorf("protocol mismatch: peer v%d, local v%d (upgrade enigma on both machines)", h.Proto, proto.Version)
-	case h.GroupID != e.o.GroupID:
-		r.err = fmt.Errorf("peer %q belongs to another group", h.Name)
+	case h.FleetID != e.o.FleetID:
+		r.err = fmt.Errorf("peer %q belongs to another fleet", h.Name)
 	case h.MachineID == e.o.MachineID:
 		r.err = errors.New("connected to itself")
 	}
@@ -175,7 +175,7 @@ func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, 
 	}
 	if removed {
 		conn.Close()
-		return PeerStatus{}, fmt.Errorf("machine %q was removed from the group", h.Name)
+		return PeerStatus{}, fmt.Errorf("machine %q was removed from the fleet", h.Name)
 	}
 	if h.Version != e.o.Version {
 		return PeerStatus{ID: h.MachineID, Name: h.Name}, e.upgradeLink(conn, h)
@@ -223,7 +223,7 @@ func (e *Engine) readLoop(p *peer) {
 	}
 }
 
-// attach registers p and starts the catch-up (§6.5): group state first,
+// attach registers p and starts the catch-up (§6.5): fleet state first,
 // then a summary of every tracked file. With two links to one peer, both
 // sides keep the one dialed by the lower machine ID; between two links
 // dialed by the same side, the newer wins (the old one is likely dead).

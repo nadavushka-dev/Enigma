@@ -13,14 +13,14 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
-	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/fleet"
 	"github.com/nadavushka-dev/enigma/internal/service"
 )
 
 func init() {
-	register(&command{name: "init", args: "[--name NAME]", summary: "create a group with this machine as its first member", run: cmdInit})
-	register(&command{name: "join", summary: "join a group; the group arrives on stdin (run by machine add)", hidden: true, run: cmdJoin})
-	register(&command{name: "leave", args: "[--uninstall]", summary: "stop and forget the group (run by machine remove)", hidden: true, run: cmdLeave})
+	register(&command{name: "init", args: "[--name NAME]", summary: "create a fleet with this machine as its first member", run: cmdInit})
+	register(&command{name: "join", summary: "join a fleet; the fleet arrives on stdin (run by machine add)", hidden: true, run: cmdJoin})
+	register(&command{name: "leave", args: "[--uninstall]", summary: "stop and forget the fleet (run by machine remove)", hidden: true, run: cmdLeave})
 	register(&command{name: "identity", summary: "print this machine's identity as JSON", hidden: true, run: cmdIdentity})
 }
 
@@ -54,17 +54,17 @@ func cmdInit(c *ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.stdout, "created group %s with this machine (%s) as its first member\n", short(id.GroupID), id.Name)
+	fmt.Fprintf(c.stdout, "created fleet %s with this machine (%s) as its first member\n", short(id.FleetID), id.Name)
 	fmt.Fprintln(c.stdout, "next: `enigma service install` to run the daemon, then `enigma machine add <ssh-alias>` for each other machine")
 	return nil
 }
 
 func cmdJoin(c *ctx, args []string) error {
-	var req group.JoinRequest
+	var req fleet.JoinRequest
 	if err := json.NewDecoder(c.stdin).Decode(&req); err != nil {
-		return fmt.Errorf("join: reading the group from stdin: %w", err)
+		return fmt.Errorf("join: reading the fleet from stdin: %w", err)
 	}
-	if req.Identity.MachineID == "" || req.Identity.GroupID == "" {
+	if req.Identity.MachineID == "" || req.Identity.FleetID == "" {
 		return errors.New("join: no identity in the request")
 	}
 	p, err := paths()
@@ -74,7 +74,7 @@ func cmdJoin(c *ctx, args []string) error {
 	if err := config.Join(p, req.Identity, req.Members); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.stdout, "joined group %s as %s\n", short(req.Identity.GroupID), req.Identity.Name)
+	fmt.Fprintf(c.stdout, "joined fleet %s as %s\n", short(req.Identity.FleetID), req.Identity.Name)
 	return nil
 }
 
@@ -103,7 +103,7 @@ func cmdLeave(c *ctx, args []string) error {
 	if err := config.Leave(p); err != nil {
 		return err
 	}
-	msg := "left the group; files stay as they are"
+	msg := "left the fleet; files stay as they are"
 	if *uninstall {
 		home, _ := os.UserHomeDir()
 		installed := filepath.Join(home, ".local", "bin", "enigma")

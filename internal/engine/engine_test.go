@@ -44,7 +44,7 @@ func newMachine(t *testing.T, name string, mods ...func(*Options)) *machine {
 func (m *machine) start() {
 	m.t.Helper()
 	o := Options{Home: m.home, DataDir: m.data, MachineID: "id-" + m.name, Name: m.name,
-		GroupID: "group-1", Debounce: 30 * time.Millisecond, Log: quietLog}
+		FleetID: "fleet-1", Debounce: 30 * time.Millisecond, Log: quietLog}
 	m.opts(&o)
 	m.noWatch = o.NoWatch
 	e, err := New(o)
@@ -551,15 +551,15 @@ func TestRemoveEntryStopsSyncAndKeepsFiles(t *testing.T) {
 	}
 }
 
-func TestHandshakeRejectsOtherGroup(t *testing.T) {
+func TestHandshakeRejectsOtherFleet(t *testing.T) {
 	a := newMachine(t, "a")
-	b := newMachine(t, "b", func(o *Options) { o.GroupID = "other" })
+	b := newMachine(t, "b", func(o *Options) { o.FleetID = "other" })
 	c1, c2 := net.Pipe()
 	errs := make(chan error, 2)
 	go func() { errs <- a.e.Connect(c1, true) }()
 	go func() { errs <- b.e.Connect(c2, false) }()
 	if e1, e2 := <-errs, <-errs; e1 == nil || e2 == nil {
-		t.Fatalf("cross-group link accepted: %v / %v", e1, e2)
+		t.Fatalf("cross-fleet link accepted: %v / %v", e1, e2)
 	}
 }
 
@@ -682,7 +682,7 @@ func TestHomeBehindASymlinkAcceptsItsPaths(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	e, err := New(Options{Home: link, DataDir: filepath.Join(base, "data"), MachineID: "id-a", GroupID: "g", Log: quietLog, NoWatch: true})
+	e, err := New(Options{Home: link, DataDir: filepath.Join(base, "data"), MachineID: "id-a", FleetID: "g", Log: quietLog, NoWatch: true})
 	if err != nil {
 		t.Fatal(err)
 	}

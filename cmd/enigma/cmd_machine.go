@@ -10,12 +10,12 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
-	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/fleet"
 )
 
 func init() {
 	register(&command{name: "machine", args: "add <ssh-alias> [--name NAME] | list [--json] | remove <name> [--uninstall] | rename <name> <new> | alias <name> [<ssh-alias>]",
-		summary: "manage the machines in the group", run: cmdMachine})
+		summary: "manage the machines in the fleet", run: cmdMachine})
 }
 
 func cmdMachine(c *ctx, args []string) error {
@@ -54,7 +54,7 @@ func machineAdd(c *ctx, args []string) error {
 	p, _ := paths()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	return group.Add(ctx, cl, p, fs.Arg(0), *name, c.stdout)
+	return fleet.Add(ctx, cl, p, fs.Arg(0), *name, c.stdout)
 }
 
 func machineList(c *ctx, args []string) error {
@@ -67,7 +67,7 @@ func machineList(c *ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	ms, err := group.Members(cl)
+	ms, err := fleet.Members(cl)
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func machineList(c *ctx, args []string) error {
 			continue
 		}
 		state, at := "not linked", r.Target
-		if pr, ok := group.PeerByName(st.Peers, r.Name); ok {
+		if pr, ok := fleet.PeerByName(st.Peers, r.Name); ok {
 			if pr.Connected {
 				state = "connected"
 			}
@@ -119,7 +119,7 @@ func machineRemove(c *ctx, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	return group.Remove(ctx, cl, fs.Arg(0), *uninstall, c.stdout)
+	return fleet.Remove(ctx, cl, fs.Arg(0), *uninstall, c.stdout)
 }
 
 func machineRename(c *ctx, args []string) error {
@@ -130,16 +130,16 @@ func machineRename(c *ctx, args []string) error {
 	if err != nil {
 		return err
 	}
-	ms, err := group.Members(cl)
+	ms, err := fleet.Members(cl)
 	if err != nil {
 		return err
 	}
-	r, ok := group.ByName(ms, args[0])
+	r, ok := fleet.ByName(ms, args[0])
 	if !ok {
-		return fmt.Errorf("no machine named %q in the group", args[0])
+		return fmt.Errorf("no machine named %q in the fleet", args[0])
 	}
-	if _, taken := group.ByName(ms, args[1]); taken {
-		return fmt.Errorf("a machine named %q is already in the group", args[1])
+	if _, taken := fleet.ByName(ms, args[1]); taken {
+		return fmt.Errorf("a machine named %q is already in the fleet", args[1])
 	}
 	r.Name = args[1]
 	if err := cl.SetMachine(r); err != nil {

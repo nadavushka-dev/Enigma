@@ -41,7 +41,7 @@ type Options struct {
 	DataDir   string // state, trash, backups (SPEC §10)
 	MachineID string
 	Name      string // display name
-	GroupID   string
+	FleetID   string
 
 	MaxFileSize    int64
 	MaxFiles       int
@@ -106,8 +106,8 @@ type Engine struct {
 }
 
 func New(o Options) (*Engine, error) {
-	if o.Home == "" || o.DataDir == "" || o.MachineID == "" || o.GroupID == "" {
-		return nil, errors.New("engine: Home, DataDir, MachineID and GroupID are required")
+	if o.Home == "" || o.DataDir == "" || o.MachineID == "" || o.FleetID == "" {
+		return nil, errors.New("engine: Home, DataDir, MachineID and FleetID are required")
 	}
 	givenHome := filepath.Clean(o.Home)
 	home, err := filepath.EvalSymlinks(o.Home)
@@ -318,7 +318,7 @@ type Status struct {
 	Files          int      // tracked, not deleted
 	Conflicts      []string // conflict copies on this machine's disk, from ~
 	Sent, Received int64
-	Limits         Limits // the group's (SPEC §8)
+	Limits         Limits // the fleet's (SPEC §8)
 }
 
 func (e *Engine) Status() Status {

@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/config"
-	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/fleet"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
@@ -111,7 +111,7 @@ func TestDocker_ThreeContainers(t *testing.T) {
 	}
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 
-	// Linux binaries for the containers' architecture: the group starts on
+	// Linux binaries for the containers' architecture: the fleet starts on
 	// "old", then c1 moves to "new" and the others must follow (SPEC §11).
 	oldV, newV := "v0.0.0-dev.20261020100000.aaaaaaa", "v0.0.0-dev.20261020110000.bbbbbbb"
 	build := func(version string) string {
@@ -171,7 +171,7 @@ func TestDocker_ThreeContainers(t *testing.T) {
 	c1, c2, c3 := boxes[0], boxes[1], boxes[2]
 	docker(t, "network", "connect", "--alias", "c2", nets[1], c2.name)
 
-	// The group: c1 first, c1 adds c2, c2 adds c3 (c1 cannot reach c3).
+	// The fleet: c1 first, c1 adds c2, c2 adds c3 (c1 cannot reach c3).
 	c1.sh("enigma init --name c1")
 	c1.startDaemon()
 	out := c1.sh("enigma machine add c2")
@@ -307,7 +307,7 @@ func TestDocker_ThreeContainers(t *testing.T) {
 // joinMac makes this Mac a fourth member, with a throwaway HOME and
 // ENIGMA_HOME and a background daemon (never launchd: the real service is
 // not touched). The containers cannot ssh into the Mac, so it joins the
-// way the first machine of a group works: it has no target and dials
+// way the first machine of a fleet works: it has no target and dials
 // outward, to c1 and c2 through their published ports. It never reaches c3,
 // which it gets through c2. c1 and c2 keep a darwin build of newV in their
 // binary cache, so the upgrade reaches the Mac over a link too.
@@ -355,13 +355,13 @@ func joinMac(t *testing.T, root, keys, oldV, newV string, c1, c2 *box) *host {
 	}
 	me := proto.MachineRecord{ID: config.NewID(), Name: "mac", Bin: macOld, Clock: 1}
 	me.By = me.ID
-	req, _ := json.Marshal(group.JoinRequest{Identity: config.Identity{MachineID: me.ID, GroupID: id.GroupID, Name: "mac"}, Members: append(members, me)})
+	req, _ := json.Marshal(fleet.JoinRequest{Identity: config.Identity{MachineID: me.ID, FleetID: id.FleetID, Name: "mac"}, Members: append(members, me)})
 	cmd := exec.Command(mac.bin, "join")
 	cmd.Env, cmd.Stdin = mac.env(), bytes.NewReader(req)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("mac join: %v\n%s", err, out)
 	}
-	// c1 founded the group, so its record has no target; like any member
+	// c1 founded the fleet, so its record has no target; like any member
 	// that wants to reach it, the Mac names an ssh alias for it.
 	mac.must("machine", "alias", "c1", "c1")
 	mac.must("service", "install")

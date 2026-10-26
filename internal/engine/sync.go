@@ -24,7 +24,7 @@ const maxApplyAttempts = 3
 // where a concurrent user edit would race the engine.
 var afterDecide atomic.Pointer[func(machine, rel string, act Action)]
 
-// ---- entries (group state, SPEC §6.4) ----------------------------------------
+// ---- entries (fleet state, SPEC §6.4) ----------------------------------------
 
 func (e *Engine) addEntry(abs string, ignore []string) error {
 	rel, ok := e.rel(abs)
@@ -70,7 +70,7 @@ func (e *Engine) addEntry(abs string, ignore []string) error {
 	return nil
 }
 
-// applyEntry merges a record (local when from is nil) into group state.
+// applyEntry merges a record (local when from is nil) into fleet state.
 func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 	old, had := e.st.Entries[r.Path]
 	if had && !r.Newer(old) {

@@ -9,14 +9,14 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
-// Ceilings for the group's limits (SPEC §8): a file travels as one message,
+// Ceilings for the fleet's limits (SPEC §8): a file travels as one message,
 // and a folder past a few thousand files is a project, not a dotfile.
 const (
 	CeilingFileSize = proto.MaxBody
 	CeilingFiles    = 20000
 )
 
-// Limits are the group's limits (SPEC §8).
+// Limits are the fleet's limits (SPEC §8).
 type Limits struct {
 	MaxFileSize int64 `json:"max_file_size"`
 	MaxFiles    int   `json:"max_files"`
@@ -34,14 +34,14 @@ func (e *Engine) lim() Limits {
 	return Limits{MaxFileSize: e.o.MaxFileSize, MaxFiles: e.o.MaxFiles}
 }
 
-// Limits returns the group's limits.
+// Limits returns the fleet's limits.
 func (e *Engine) Limits() Limits {
 	var l Limits
 	e.do(func() { l = e.lim() })
 	return l
 }
 
-// SetLimits changes the group's limits for every machine. A zero field
+// SetLimits changes the fleet's limits for every machine. A zero field
 // keeps its value.
 func (e *Engine) SetLimits(l Limits) error {
 	switch {
@@ -67,7 +67,7 @@ func (e *Engine) SetLimits(l Limits) error {
 	})
 }
 
-// applySettings merges a record (local when from is nil) into group state.
+// applySettings merges a record (local when from is nil) into fleet state.
 // New limits rescan every entry: files may now fit, or no longer.
 func (e *Engine) applySettings(r proto.SettingsRecord, from *peer) {
 	old := e.st.Settings

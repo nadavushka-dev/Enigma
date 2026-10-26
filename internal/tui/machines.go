@@ -165,7 +165,7 @@ func (p *machinesPane) add(s *Shared) tea.Cmd {
 	}
 	r := p.rows[p.cur]
 	if r.member {
-		return showError(fmt.Errorf("%s is already in the group", r.name))
+		return showError(fmt.Errorf("%s is already in the fleet", r.name))
 	}
 	b := s.Backend
 	return func() tea.Msg {
@@ -196,7 +196,7 @@ func (p *machinesPane) remove(s *Shared) tea.Cmd {
 	}
 	return func() tea.Msg {
 		return OpenConfirm{
-			Question: fmt.Sprintf("Remove %s from the group? Its files stay.", r.name),
+			Question: fmt.Sprintf("Remove %s from the fleet? Its files stay.", r.name),
 			Yes:      progress(false),
 			AltKey:   "u", AltLabel: "remove and uninstall",
 			Alt: progress(true),
@@ -317,7 +317,7 @@ func (p *machinesPane) detailOf(i int) string {
 	r := p.rows[i]
 	switch {
 	case !r.member:
-		return "a: add to the group"
+		return "a: add to the fleet"
 	case r.peer == nil:
 		return ""
 	}

@@ -20,7 +20,7 @@ var ErrUpgrade = errors.New("version mismatch")
 
 // ---- machine records (SPEC §11) ------------------------------------------------
 
-// applyMachine merges a record (local when from is nil) into group state.
+// applyMachine merges a record (local when from is nil) into fleet state.
 func (e *Engine) applyMachine(r proto.MachineRecord, from *peer) {
 	if old, had := e.st.Machines[r.ID]; had && !r.Newer(old) {
 		return
@@ -33,7 +33,7 @@ func (e *Engine) applyMachine(r proto.MachineRecord, from *peer) {
 	e.broadcast(&proto.Msg{Type: proto.Machines, Machines: []proto.MachineRecord{r}}, from)
 	if r.Removed {
 		if p := e.peers[r.ID]; p != nil {
-			e.log.Info("machine removed from the group; dropping its link", "peer", p.name)
+			e.log.Info("machine removed from the fleet; dropping its link", "peer", p.name)
 			p.close()
 		}
 	}
@@ -60,7 +60,7 @@ func (e *Engine) notifyMachines() {
 	}
 }
 
-// SetMachine records r (add, rename, remove) in group state, as the latest
+// SetMachine records r (add, rename, remove) in fleet state, as the latest
 // change. Its Clock and By are set here.
 func (e *Engine) SetMachine(r proto.MachineRecord) error {
 	if r.ID == "" {

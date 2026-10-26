@@ -40,7 +40,7 @@ several engines over in-memory pipes and get the same behaviour as over ssh.
 - **fsx:** atomic writes.
 - **daemon:** the API, the dial loops that keep links up, and the
   self-upgrade.
-- **group:** `machine add` and `machine remove`, shared by the CLI and the
+- **fleet:** `machine add` and `machine remove`, shared by the CLI and the
   TUI.
 
 ## 3. One edit, every machine
@@ -81,12 +81,12 @@ step 1 then collapses the two into one.
 
 ![link up](05-link-up.svg)
 
-A link starts with a **handshake**: both sides send `HELLO` with the group,
-the machine ID and the Enigma version. A wrong group or a removed machine is
+A link starts with a **handshake**: both sides send `HELLO` with the fleet,
+the machine ID and the Enigma version. A wrong fleet or a removed machine is
 refused, and a version mismatch turns the link into an upgrade (section 7).
 
 The two sides then **catch up**:
-1. They exchange the group state: machine records and entries. For each
+1. They exchange the fleet state: machine records and entries. For each
    record, the last writer wins.
 2. They exchange a summary of every tracked file. Each difference is handled
    like an announcement.
@@ -104,7 +104,7 @@ and dialed again. Without the ping, the accepting side would keep a dead link
 2. Finds a binary for it: this one, the `bin/<version>/` cache, or the
    release.
 3. Copies the binary to the remote.
-4. Joins the remote to the group.
+4. Joins the remote to the fleet.
 5. Records the new machine, so every member starts dialing it.
 6. Installs the remote's service.
 7. Asks the new machine which peers it can reach, and warns about any
@@ -123,7 +123,7 @@ strictly newer, and the binary runs), swaps it in and re-executes itself.
 The link then comes back up with matching versions and catches up.
 
 This works whichever side dialed, and it travels hop by hop: upgrading one
-machine upgrades the whole group, including machines reachable only through
+machine upgrades the whole fleet, including machines reachable only through
 another member. A downgrade is never accepted.
 
 ## 8. Storage

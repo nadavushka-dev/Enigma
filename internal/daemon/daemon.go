@@ -141,7 +141,7 @@ func Run(ctx context.Context, o Options) error {
 		notify = nil
 	}
 	eng, err := engine.New(engine.Options{Home: o.Home, DataDir: o.Paths.Data, MachineID: id.MachineID,
-		Name: id.Name, GroupID: id.GroupID, Debounce: o.Debounce, Log: o.Log, Notify: notify,
+		Name: id.Name, FleetID: id.FleetID, Debounce: o.Debounce, Log: o.Log, Notify: notify,
 		Bin: o.Bin, Bootstrap: bootstrap, Version: o.Version,
 		OnMachines: func([]proto.MachineRecord) {
 			select {
@@ -173,7 +173,7 @@ func Run(ctx context.Context, o Options) error {
 			}
 		}
 	}()
-	d.log.Info("daemon started", "group", id.GroupID, "version", o.Version, "data", o.Paths.Data)
+	d.log.Info("daemon started", "fleet", id.FleetID, "version", o.Version, "data", o.Paths.Data)
 	if o.Ready != nil {
 		o.Ready()
 	}
@@ -420,7 +420,7 @@ type PeerReport struct {
 type StatusReport struct {
 	Machine   string               `json:"machine"`
 	MachineID string               `json:"machine_id"`
-	Group     string               `json:"group"`
+	Fleet     string               `json:"fleet"`
 	Version   string               `json:"version"`
 	Entries   []engine.EntryStatus `json:"entries"`
 	Peers     []PeerReport         `json:"peers"`
@@ -436,7 +436,7 @@ func (d *daemon) status() StatusReport {
 	for _, p := range st.Peers {
 		live[p.ID] = p
 	}
-	r := StatusReport{Machine: d.id.Name, MachineID: d.id.MachineID, Group: d.id.GroupID, Version: d.o.Version,
+	r := StatusReport{Machine: d.id.Name, MachineID: d.id.MachineID, Fleet: d.id.FleetID, Version: d.o.Version,
 		Entries: st.Entries, Files: st.Files, Conflicts: st.Conflicts, Limits: st.Limits}
 	d.mu.Lock()
 	for id, ps := range d.peers {

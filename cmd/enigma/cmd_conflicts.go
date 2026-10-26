@@ -12,7 +12,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/engine"
-	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/fleet"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
@@ -45,7 +45,7 @@ func cmdConflicts(c *ctx, args []string) error {
 	if !*local {
 		// Copies beside single-file entries exist only on the machines that
 		// resolved the conflict (SPEC §7): ask every member.
-		ms, err := group.Members(cl)
+		ms, err := fleet.Members(cl)
 		if err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func cmdConflicts(c *ctx, args []string) error {
 				defer wg.Done()
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
-				rs, err := group.AskStatus(ctx, r)
+				rs, err := fleet.AskStatus(ctx, r)
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {

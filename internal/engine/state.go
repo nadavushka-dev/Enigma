@@ -21,10 +21,10 @@ type fileState struct {
 	Anc version.Graph `json:"anc,omitempty"`
 }
 
-// state is everything a machine persists about the group (SPEC §10).
+// state is everything a machine persists about the fleet (SPEC §10).
 type state struct {
 	Counter  uint64                         `json:"counter"` // this machine's vector counter, global across files
-	Lamport  uint64                         `json:"lamport"` // group-state clock
+	Lamport  uint64                         `json:"lamport"` // fleet state clock
 	Entries  map[string]proto.EntryRecord   `json:"entries"`
 	Machines map[string]proto.MachineRecord `json:"machines"`
 	Settings *proto.SettingsRecord          `json:"settings,omitempty"` // nil: the defaults

@@ -89,7 +89,7 @@ func TestRoomInAFullFolderIsUsedAtOnce(t *testing.T) {
 	}
 }
 
-func TestLimitsAreAGroupSetting(t *testing.T) {
+func TestLimitsAreAFleetSetting(t *testing.T) {
 	a, b, c := newMachine(t, "a"), newMachine(t, "b"), newMachine(t, "c")
 	if got := a.e.Limits(); got != (Limits{MaxFileSize: DefaultMaxFileSize, MaxFiles: DefaultMaxFiles}) {
 		t.Fatalf("default limits %+v", got)

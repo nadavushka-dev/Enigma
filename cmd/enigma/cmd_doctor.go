@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/daemon"
-	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/fleet"
 	"github.com/nadavushka-dev/enigma/internal/problems"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/service"
@@ -78,7 +78,7 @@ func cmdDoctor(c *ctx, args []string) error {
 			rep.Warnings = append(rep.Warnings, msg)
 		}
 	}
-	ms, err := group.Members(cl)
+	ms, err := fleet.Members(cl)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func fromStatus(name string, st daemon.StatusReport) doctorMachine {
 func askMachine(r proto.MachineRecord) doctorMachine {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	st, err := group.AskStatus(ctx, r)
+	st, err := fleet.AskStatus(ctx, r)
 	if err != nil {
 		return doctorMachine{Name: r.Name, Error: err.Error()}
 	}

@@ -6,8 +6,8 @@ cfg: "~/.config/enigma/" {
 }
 
 data: "~/.local/share/enigma/" {
-  identity: "identity.json\nmachine ID, group ID, name"
-  state: "state/\ngroup state + current versions (JSON, atomic)"
+  identity: "identity.json\nmachine ID, fleet ID, name"
+  state: "state/\nfleet state + current versions (JSON, atomic)"
   history: "history/\npast contents by hash: merge bases\nlast 20 per file or 30 days, 200 MB cap"
   trash: "trash/<day>[.N]/<path>\ndeleted files, 30 days"
   backups: "backups/\nyour copy, before a first add replaced it"

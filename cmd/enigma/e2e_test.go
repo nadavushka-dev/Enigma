@@ -165,7 +165,7 @@ func (h *host) startDaemon() (stop func()) {
 	return stop
 }
 
-// add adds machine b to h's group with `enigma machine add`, the way a
+// add adds machine b to h's fleet with `enigma machine add`, the way a
 // user would. b's daemon then runs in the background (from the binary
 // installed in b's ~/.local/bin) until the test ends.
 func (h *host) add(b *host) string {
@@ -226,7 +226,7 @@ func eventuallyLongT(t *testing.T, what string, d time.Duration, cond func() boo
 
 type statusJSON struct {
 	Machine string `json:"machine"`
-	Group   string `json:"group"`
+	Fleet   string `json:"fleet"`
 	Version string `json:"version"`
 	Peers   []struct {
 		Name      string `json:"name"`
@@ -269,8 +269,8 @@ func TestE2E_ThreeMachinesSyncThroughTheCLI(t *testing.T) {
 	c.blockFrom(a)
 	b.add(c) // any member can add a machine
 
-	if b.status().Group != a.status().Group || a.status().Group == "" {
-		t.Fatal("machines are not in the same group")
+	if b.status().Fleet != a.status().Fleet || a.status().Fleet == "" {
+		t.Fatal("machines are not in the same fleet")
 	}
 	eventuallyT(t, "c linked to b", func() bool { return c.connectedTo("b") })
 	eventuallyT(t, "a reports it cannot reach c", func() bool {
@@ -333,10 +333,10 @@ func TestE2E_FolderEntryAndRemove(t *testing.T) {
 func TestE2E_UsefulErrors(t *testing.T) {
 	w := newWorld(t)
 	a := w.host("a")
-	if out, code := a.run("status"); code == 0 || !strings.Contains(out, "not in a group") && !strings.Contains(out, "not running") {
+	if out, code := a.run("status"); code == 0 || !strings.Contains(out, "not in a fleet") && !strings.Contains(out, "not running") {
 		t.Fatalf("status before init: %d %s", code, out)
 	}
-	if out, code := a.run("machine", "add", "b"); code == 0 || !strings.Contains(out, "not in a group") {
+	if out, code := a.run("machine", "add", "b"); code == 0 || !strings.Contains(out, "not in a fleet") {
 		t.Fatalf("machine add before init: %d %s", code, out)
 	}
 	a.must("init", "--name", "a")
@@ -369,14 +369,14 @@ func TestE2E_UsefulErrors(t *testing.T) {
 	}
 }
 
-func TestE2E_MachineAddRefusesAMemberOfAnotherGroup(t *testing.T) {
+func TestE2E_MachineAddRefusesAMemberOfAnotherFleet(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.host("a"), w.host("b")
 	a.must("init", "--name", "a")
 	a.startDaemon()
 	b.must("init", "--name", "b")
-	if out, code := a.run("machine", "add", "b"); code == 0 || !strings.Contains(out, "another group") {
-		t.Fatalf("adding a machine of another group: %d %s", code, out)
+	if out, code := a.run("machine", "add", "b"); code == 0 || !strings.Contains(out, "another fleet") {
+		t.Fatalf("adding a machine of another fleet: %d %s", code, out)
 	}
 	if out := a.must("machine", "list"); strings.Contains(out, "b ") {
 		t.Fatalf("refused machine recorded:\n%s", out)
@@ -396,12 +396,12 @@ func TestE2E_MachineRemoveWithUninstall(t *testing.T) {
 	eventuallyT(t, "synced to c", func() bool { return c.read("n/f.md") == "kept" })
 
 	out := a.must("machine", "remove", "c", "--uninstall")
-	if !strings.Contains(out, "left the group") {
+	if !strings.Contains(out, "left the fleet") {
 		t.Fatalf("remove output:\n%s", out)
 	}
 	eventuallyT(t, "c's daemon stopped", func() bool { _, code := c.run("status"); return code != 0 })
-	if out, _ := c.run("status"); !strings.Contains(out, "not in a group") {
-		t.Fatalf("c still in the group: %s", out)
+	if out, _ := c.run("status"); !strings.Contains(out, "not in a fleet") {
+		t.Fatalf("c still in the fleet: %s", out)
 	}
 	if _, err := os.Stat(filepath.Join(c.home, ".local/bin/enigma")); !os.IsNotExist(err) {
 		t.Fatal("--uninstall kept the binary")
@@ -434,7 +434,7 @@ func TestE2E_MachineRename(t *testing.T) {
 
 // One version everywhere (SPEC §11): a machine running a newer build
 // upgrades the others over the link.
-func TestE2E_NewerBuildUpgradesTheGroup(t *testing.T) {
+func TestE2E_NewerBuildUpgradesTheFleet(t *testing.T) {
 	dir := t.TempDir()
 	oldV, newV := "v0.0.0-dev.20261020100000.aaaaaaa", "v0.0.0-dev.20261020110000.bbbbbbb"
 	oldBin, newBin := buildVersion(t, dir, oldV), buildVersion(t, dir, newV)
@@ -514,9 +514,9 @@ func TestE2E_TrashListRestoreEmpty(t *testing.T) {
 	}
 }
 
-// SPEC §8: the limits are a group setting, and a folder that grows past
+// SPEC §8: the limits are a fleet setting, and a folder that grows past
 // its file limit says so instead of syncing everything.
-func TestE2E_LimitsAreSetForTheWholeGroup(t *testing.T) {
+func TestE2E_LimitsAreSetForTheWholeFleet(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.host("a"), w.host("b")
 	a.must("init", "--name", "a")
@@ -643,7 +643,7 @@ func TestE2E_DoctorShowsTheConnectivityMatrix(t *testing.T) {
 	}
 }
 
-func TestE2E_ConflictsAcrossTheGroup(t *testing.T) {
+func TestE2E_ConflictsAcrossTheFleet(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.host("a"), w.host("b")
 	a.must("init", "--name", "a")

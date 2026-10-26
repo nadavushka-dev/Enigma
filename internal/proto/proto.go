@@ -26,20 +26,20 @@ type Type string
 
 const (
 	Hello       Type = "hello"
-	Entries     Type = "entries"      // group state: entry records
+	Entries     Type = "entries"      // fleet state: entry records
 	Summary     Type = "summary"      // catch-up: path -> current version
 	SummaryDone Type = "summary_done" // end of the catch-up summary
 	Announce    Type = "announce"     // a new current version exists
 	Fetch       Type = "fetch"        // send me the content of path
 	File        Type = "file"         // version + content
-	Machines    Type = "machines"     // group state: machine records
+	Machines    Type = "machines"     // fleet state: machine records
 	Upgrade     Type = "upgrade"      // a newer binary for the receiver (SPEC §11)
 	Ping        Type = "ping"         // heartbeat: a link silent for 3 intervals is dead
-	Settings    Type = "settings"     // group state: the group's limits (SPEC §8)
+	Settings    Type = "settings"     // fleet state: the fleet's limits (SPEC §8)
 )
 
 type HelloBody struct {
-	GroupID   string `json:"group_id"`
+	FleetID   string `json:"group_id"` // wire key kept from v0.2 so an old daemon still takes the upgrade
 	MachineID string `json:"machine_id"`
 	Name      string `json:"name"`
 	Proto     int    `json:"proto"`
@@ -47,7 +47,7 @@ type HelloBody struct {
 	Platform  string `json:"platform,omitempty"` // os/arch, so a newer peer can send the right binary
 }
 
-// MachineRecord is one member in the replicated group state (SPEC §11).
+// MachineRecord is one member in the replicated fleet state (SPEC §11).
 // The record with the highest (Clock, By) wins.
 type MachineRecord struct {
 	ID      string `json:"id"`
@@ -67,7 +67,7 @@ func (r MachineRecord) Newer(o MachineRecord) bool {
 	return r.By > o.By
 }
 
-// SettingsRecord holds the group's settings (SPEC §6.4, §8). The record
+// SettingsRecord holds the fleet's settings (SPEC §6.4, §8). The record
 // with the highest (Clock, By) wins.
 type SettingsRecord struct {
 	MaxFileSize int64  `json:"max_file_size"`
@@ -92,7 +92,7 @@ type UpgradeBody struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// EntryRecord is one entry in the replicated group state (SPEC §6.4).
+// EntryRecord is one entry in the replicated fleet state (SPEC §6.4).
 // The record with the highest (Clock, By) wins.
 type EntryRecord struct {
 	Path    string   `json:"path"` // relative to ~, slash-separated

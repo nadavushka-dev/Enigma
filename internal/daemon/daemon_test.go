@@ -194,7 +194,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// joinTo makes b a member of a's group the way `machine add` does: b joins
+// joinTo makes b a member of a's fleet the way `machine add` does: b joins
 // with its own record, then a records it. It returns b's record.
 func joinTo(t *testing.T, a, b *node, rec proto.MachineRecord) proto.MachineRecord {
 	t.Helper()
@@ -203,7 +203,7 @@ func joinTo(t *testing.T, a, b *node, rec proto.MachineRecord) proto.MachineReco
 	if rec.Name == "" {
 		rec.Name = b.name
 	}
-	if err := config.Join(b.paths, config.Identity{MachineID: rec.ID, GroupID: ida.GroupID, Name: rec.Name}, []proto.MachineRecord{rec}); err != nil {
+	if err := config.Join(b.paths, config.Identity{MachineID: rec.ID, FleetID: ida.FleetID, Name: rec.Name}, []proto.MachineRecord{rec}); err != nil {
 		t.Fatal(err)
 	}
 	return rec
@@ -278,7 +278,7 @@ func TestStatusReportsIdentityEntriesAndPeers(t *testing.T) {
 		t.Fatal(err)
 	}
 	ida, _ := config.LoadIdentity(a.paths)
-	if st.Machine != "b" || st.Group != ida.GroupID {
+	if st.Machine != "b" || st.Fleet != ida.FleetID {
 		t.Fatalf("identity in status: %+v", st)
 	}
 }

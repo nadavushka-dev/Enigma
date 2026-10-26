@@ -11,14 +11,14 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/fleet"
 	"github.com/nadavushka-dev/enigma/internal/fuzzy"
-	"github.com/nadavushka-dev/enigma/internal/group"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/sshconfig"
 )
 
 // Backend is everything the TUI does to the world. The live one talks to
-// the local daemon and runs group operations over ssh; tests use a fake.
+// the local daemon and runs fleet operations over ssh; tests use a fake.
 type Backend interface {
 	Home() string
 	Status() (daemon.StatusReport, error)
@@ -54,18 +54,18 @@ func NewLive(p config.Paths) (*Live, error) {
 
 func (l *Live) Home() string                                     { return l.home }
 func (l *Live) Status() (daemon.StatusReport, error)             { return l.cl.Status() }
-func (l *Live) Machines() ([]proto.MachineRecord, error)         { return group.Members(l.cl) }
+func (l *Live) Machines() ([]proto.MachineRecord, error)         { return fleet.Members(l.cl) }
 func (l *Live) Hosts() ([]string, error)                         { return sshconfig.Hosts(l.home) }
 func (l *Live) Add(abs string) error                             { return l.cl.Add(abs, nil) }
 func (l *Live) Remove(abs string) error                          { return l.cl.Remove(abs) }
 func (l *Live) SetLimits(x engine.Limits) (engine.Limits, error) { return l.cl.SetLimits(x) }
 
 func (l *Live) AddMachine(ctx context.Context, alias string, out io.Writer) error {
-	return group.Add(ctx, l.cl, l.Paths, alias, "", out)
+	return fleet.Add(ctx, l.cl, l.Paths, alias, "", out)
 }
 
 func (l *Live) RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error {
-	return group.Remove(ctx, l.cl, name, uninstall, out)
+	return fleet.Remove(ctx, l.cl, name, uninstall, out)
 }
 
 func (l *Live) Events(after uint64, wait time.Duration) ([]engine.Event, error) {

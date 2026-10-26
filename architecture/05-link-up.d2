@@ -7,9 +7,9 @@ b: B daemon
 
 a -> s: "dial: alias override → shared ssh alias → ssh://user@host:port"
 s -> b: bytes into peer.sock
-a -> b: "HELLO {group, machine, proto, enigma version, platform}"
+a -> b: "HELLO {fleet, machine, proto, enigma version, platform}"
 b -> a: HELLO
-b -> b: "wrong group or removed machine → refuse\ndifferent version → upgrade instead (diagram 07)\nduplicate link → keep the one the lower ID dialed"
+b -> b: "wrong fleet or removed machine → refuse\ndifferent version → upgrade instead (diagram 07)\nduplicate link → keep the one the lower ID dialed"
 a -> b: MACHINES (records)
 a -> b: ENTRIES (records)
 b -> b: "last writer wins (Lamport clock, then machine ID)"
