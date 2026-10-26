@@ -36,6 +36,9 @@ type peer struct {
 	queue  []*proto.Msg
 	closed bool
 	quit   chan struct{} // closed with the link
+	// onClose runs once, from whichever path closes the link (a read or
+	// write error, silence, a removal), so the engine always detaches it.
+	onClose func()
 }
 
 func newPeer(id, name, dialedBy string, conn io.ReadWriteCloser, sent *atomic.Int64) *peer {
@@ -79,13 +82,17 @@ func (p *peer) send(m *proto.Msg) {
 
 func (p *peer) close() {
 	p.mu.Lock()
-	if !p.closed {
+	first := !p.closed
+	if first {
 		p.closed = true
 		close(p.quit)
 		p.cond.Signal()
 	}
 	p.mu.Unlock()
 	p.conn.Close()
+	if first && p.onClose != nil {
+		p.onClose()
+	}
 }
 
 func (p *peer) writeLoop() {
@@ -186,6 +193,7 @@ func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, 
 		dialedBy = e.o.MachineID
 	}
 	p := newPeer(h.MachineID, h.Name, dialedBy, conn, &e.sent)
+	p.onClose = func() { e.post(func() { e.detach(p) }) }
 	kept := false
 	if err := e.do(func() { kept = e.attach(p) }); err != nil {
 		p.close()
@@ -198,7 +206,6 @@ func (e *Engine) ConnectPeer(conn io.ReadWriteCloser, dialed bool) (PeerStatus, 
 	go e.readLoop(p)
 	go p.heartbeat(e.o.Heartbeat, func() {
 		e.log.Warn("link silent; dropping it", "peer", p.name)
-		e.post(func() { e.detach(p) })
 	})
 	return PeerStatus{ID: h.MachineID, Name: h.Name}, nil
 }
@@ -207,8 +214,7 @@ func (e *Engine) readLoop(p *peer) {
 	for {
 		m, err := proto.Read(p.conn)
 		if err != nil {
-			p.close()
-			e.post(func() { e.detach(p) })
+			p.close() // detaches through onClose
 			return
 		}
 		e.received.Add(1)
@@ -248,6 +254,11 @@ func (e *Engine) attach(p *peer) bool {
 	if e.st.Settings != nil {
 		p.send(&proto.Msg{Type: proto.Settings, Settings: e.st.Settings})
 	}
+	gs := make([]proto.GroupRecord, 0, len(e.st.Groups))
+	for _, g := range e.st.Groups {
+		gs = append(gs, g)
+	}
+	p.send(&proto.Msg{Type: proto.Groups, Groups: gs})
 	recs := make([]proto.EntryRecord, 0, len(e.st.Entries))
 	for _, r := range e.st.Entries {
 		recs = append(recs, r)
@@ -300,6 +311,10 @@ func (e *Engine) handleMsg(p *peer, m *proto.Msg) {
 	case proto.Settings:
 		if m.Settings != nil {
 			e.applySettings(*m.Settings, p)
+		}
+	case proto.Groups:
+		for _, g := range m.Groups {
+			e.applyGroup(g, p)
 		}
 	case proto.Entries:
 		for _, r := range m.Entries {

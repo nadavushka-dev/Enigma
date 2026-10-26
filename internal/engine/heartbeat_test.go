@@ -98,3 +98,48 @@ func TestBusyLoopKeepsItsLinks(t *testing.T) {
 	}
 	eventually(t, "still linked", func() bool { return len(a.e.Status().Peers) == 1 && len(b.e.Status().Peers) == 1 })
 }
+
+// writeFails is a link end whose writes fail after cut while reads hang,
+// as when the peer closed its end but our read is stuck in the network.
+type writeFails struct {
+	net.Conn
+	mu  sync.Mutex
+	cut bool
+}
+
+func (w *writeFails) dead() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.cut }
+
+func (w *writeFails) Read(p []byte) (int, error) {
+	n, err := w.Conn.Read(p)
+	if w.dead() {
+		select {}
+	}
+	return n, err
+}
+
+func (w *writeFails) Write(p []byte) (int, error) {
+	if w.dead() {
+		return 0, io.ErrClosedPipe
+	}
+	return w.Conn.Write(p)
+}
+
+// Regression: a write error closed the peer without detaching it, so when
+// the read was stuck too the link stayed "up" forever (the heartbeat had
+// exited with the peer). Whatever closes a peer must drop the link.
+func TestWriteFailureDropsTheLinkEvenWhenReadsHang(t *testing.T) {
+	fast := func(o *Options) { o.Heartbeat = 50 * time.Millisecond }
+	a, b := newMachine(t, "a", fast), newMachine(t, "b", fast)
+	c1, c2 := net.Pipe()
+	wa := &writeFails{Conn: c1}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); a.e.Connect(wa, true) }()
+	go func() { defer wg.Done(); b.e.Connect(c2, false) }()
+	wg.Wait()
+	eventually(t, "linked", func() bool { return len(a.e.Status().Peers) == 1 })
+	wa.mu.Lock()
+	wa.cut = true
+	wa.mu.Unlock()
+	eventually(t, "a drops the link after its write failed", func() bool { return len(a.e.Status().Peers) == 0 })
+}
