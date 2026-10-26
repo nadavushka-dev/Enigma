@@ -41,6 +41,8 @@ Enigma is a small daemon on each machine. You pick files and folders under
   restore from for 30 days.
 - **One version everywhere:** upgrade one machine and it upgrades the rest
   over the same links.
+- **Groups:** share some files with all your machines and others with just
+  a few. A machine outside a group never even sees those paths.
 
 > **Beta.** Enigma is in daily use, but young. Your files are safe from it
 > (deletes go to a trash, conflicts keep both versions), yet expect rough
@@ -74,12 +76,33 @@ enigma status
 binary over ssh, joins it to the fleet, starts its daemon and checks which
 machines it can reach. Every step prints the exact command it runs.
 
+## Groups
+
+Every file you add goes to the group `main`, which every machine is in.
+For files that only some machines should have, make a group:
+
+```sh
+enigma group create pair laptop devbox   # a group of two
+enigma add --group pair ~/.ssh/config.d  # synced on laptop and devbox only
+enigma group add pair nas                # nas joins: it gets the files
+enigma group remove main nas             # nas leaves main: it keeps its files
+enigma entry move ~/.zshrc pair          # move an entry between groups
+enigma group merge pair main             # fold a group into another
+```
+
+A machine that is not in a group never receives its files, and never
+learns their names. Leaving a group stops syncing there; the files stay.
+`enigma group list` shows every group, its machines and how many entries
+it holds.
+
 ## The TUI
 
 Run `enigma` on its own for a live view. It shows your machines and the
-hosts in your ssh config, a browser over `~` with what's synced, and an
-activity feed. Add machines and files from there with `a`, and press
-`enter` on a conflict to compare the two versions side by side.
+hosts in your ssh config, your groups, a browser over `~` with what's
+synced, and an activity feed. Add machines and files from there with `a`,
+manage groups with `n`, `enter` and `M`, press `enter` on a conflict to
+compare the two versions side by side, `p` for what is wrong right now, and
+`L` to change the limits.
 
 <div align="center">
 <img src="demo/tui.gif" alt="the Enigma TUI: machines, files and the activity feed" width="900">
@@ -90,11 +113,13 @@ activity feed. Add machines and files from there with `a`, and press
 | Command | What it does |
 |---|---|
 | `enigma init [--name NAME]` | Start a fleet with this machine as its first member. |
-| `enigma machine add <ssh-alias>` | Add a machine. |
+| `enigma machine add <ssh-alias> [--group G]…` | Add a machine, to `main` or to the groups given. |
 | `enigma machine list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | Manage the machines in the fleet. |
-| `enigma add <path> [--ignore GLOB]…` | Sync a file or folder on every machine. |
+| `enigma add <path> [--group G] [--ignore GLOB]…` | Sync a file or folder on the machines of a group (default `main`). |
 | `enigma remove <path>` | Stop syncing it. The files stay everywhere. |
-| `enigma list` · `status` | What's synced, and the state of each link. |
+| `enigma list` · `status` | What's synced, and the state of each link. Status starts with what is wrong right now. |
+| `enigma group list` · `create <name> [machine]…` · `delete` · `rename` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into>` | Groups: which machines sync which entries. |
+| `enigma entry move <path> <group>` | Move a synced file or folder to another group. |
 | `enigma limits [--file-size SIZE] [--files N]` | Show the fleet's limits, or change them on every machine. |
 | `enigma conflicts [--local]` | Conflict copies on every machine. |
 | `enigma trash list` · `restore <id>` · `empty` | Files removed here by a synced delete. |
@@ -127,6 +152,25 @@ only machines you control, the same ones you would give ssh access to.
 
 Enigma is not Git. It has no history to browse and no branches. It keeps
 the last versions only to merge with.
+
+## When something is off
+
+- `enigma status` starts with the standing problems: a link that is down
+  and why, a machine that cannot be upgraded, an entry missing locally or
+  over its limit, a conflict copy from the last hour. Each comes with the
+  command that fixes it. The TUI shows the same on its notice line, and `p`
+  lists them.
+- `enigma doctor` asks every machine over ssh and prints the connectivity
+  matrix, versions and service state. It exits non-zero on problems.
+- The daemon log is `~/.local/share/enigma/enigma.log` (rotated at 10 MB);
+  a background daemon's stderr goes to `daemon.out` next to it. On macOS
+  with `XDG_DATA_HOME` unset the folder is the same.
+- Nothing is ever lost silently: an overwritten first add is in
+  `~/.local/share/enigma/backups/`, a synced delete in the trash
+  (`enigma trash list`), the other side of a conflict next to the file.
+- Found a bug? Open an issue at
+  <https://github.com/nadavushka-dev/enigma/issues> with the output of
+  `enigma doctor` and the relevant lines of the log.
 
 ## How it works
 

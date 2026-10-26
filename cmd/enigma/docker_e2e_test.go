@@ -23,15 +23,31 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
-const (
-	image   = "enigma-e2e:latest"
-	network = "enigma-e2e-net"
-)
+const image = "enigma-e2e:latest"
 
 type box struct {
 	t    *testing.T
 	name string
 	port string // published sshd port on 127.0.0.1
+	bin  string // the enigma binary this box runs after an upgrade ("" : enigma on PATH)
+}
+
+// enigma runs an enigma command with the box's current binary.
+func (b *box) enigma(args string) string {
+	b.t.Helper()
+	bin := b.bin
+	if bin == "" {
+		bin = "enigma"
+	}
+	return b.sh(bin + " " + args)
+}
+
+func (b *box) tryEnigma(args string) (string, error) {
+	bin := b.bin
+	if bin == "" {
+		bin = "enigma"
+	}
+	return b.try(bin + " " + args)
 }
 
 func docker(t *testing.T, args ...string) string {
@@ -102,42 +118,54 @@ func eventuallyLong(t *testing.T, what string, d time.Duration, cond func() bool
 	}
 }
 
-func TestDocker_ThreeContainers(t *testing.T) {
+func needDocker(t *testing.T) {
+	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not installed")
 	}
 	if _, err := dockerTry("info"); err != nil {
 		t.Skip("docker not running")
 	}
-	root, _ := filepath.EvalSymlinks(t.TempDir())
+}
 
-	// Linux binaries for the containers' architecture: the fleet starts on
-	// "old", then c1 moves to "new" and the others must follow (SPEC §11).
-	oldV, newV := "v0.0.0-dev.20261020100000.aaaaaaa", "v0.0.0-dev.20261020110000.bbbbbbb"
-	build := func(version string) string {
-		out := filepath.Join(root, version, "enigma")
-		cmd := exec.Command("go", "build", "-ldflags", "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version="+version, "-o", out, ".")
-		cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
-		if b, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("cross build: %v\n%s", err, b)
-		}
-		return out
-	}
-	oldBin, newBin := build(oldV), build(newV)
-	keys := filepath.Join(root, "keys")
+// sshKeys makes a key pair the boxes share, in dir.
+func sshKeys(t *testing.T, dir string) string {
+	t.Helper()
+	keys := filepath.Join(dir, "keys")
 	os.MkdirAll(keys, 0o755)
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", filepath.Join(keys, "id_ed25519")).CombinedOutput(); err != nil {
 		t.Fatalf("ssh-keygen: %v\n%s", err, out)
 	}
 	pub, _ := os.ReadFile(filepath.Join(keys, "id_ed25519.pub"))
 	os.WriteFile(filepath.Join(keys, "authorized_keys"), pub, 0o644)
+	return keys
+}
 
+// linuxBuild cross-compiles the package in dir for the containers.
+func linuxBuild(t *testing.T, dir, version, out string) string {
+	t.Helper()
+	cmd := exec.Command("go", "build", "-ldflags", "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version="+version, "-o", out, "./cmd/enigma")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cross build in %s: %v\n%s", dir, err, b)
+	}
+	return out
+}
+
+// startBoxes runs three containers c1, c2, c3 with oldBin as `enigma` and
+// newBin at /opt/new/enigma. With split, c3 is on a second network that
+// only c2 also joins, so c1 cannot reach c3.
+func startBoxes(t *testing.T, prefix, keys, oldBin, newBin string, split bool) []*box {
+	t.Helper()
 	if _, err := dockerTry("image", "inspect", image); err != nil {
 		docker(t, "build", "-q", "-t", image, "../../e2e/docker")
 	}
-	// Two networks: c3 shares only the second with c2, so c1 cannot reach
-	// c3 at all (D1 is assumed, not guaranteed).
-	nets := []string{network, network + "-2"}
+	net1 := prefix + "net"
+	nets := []string{net1}
+	if split {
+		nets = append(nets, net1+"-2")
+	}
 	for _, n := range nets {
 		dockerTry("network", "rm", n)
 		docker(t, "network", "create", n)
@@ -156,10 +184,10 @@ func TestDocker_ThreeContainers(t *testing.T) {
 		}
 	})
 	for _, name := range []string{"c1", "c2", "c3"} {
-		cname := "enigma-e2e-" + name
+		cname := prefix + name
 		dockerTry("rm", "-f", cname)
-		net := network
-		if name == "c3" {
+		net := net1
+		if split && name == "c3" {
 			net = nets[1]
 		}
 		docker(t, "run", "-d", "--name", cname, "--hostname", name, "--network", net, "--network-alias", name,
@@ -168,8 +196,35 @@ func TestDocker_ThreeContainers(t *testing.T) {
 		port := docker(t, "port", cname, "22/tcp")
 		boxes = append(boxes, &box{t: t, name: cname, port: port[strings.LastIndex(port, ":")+1:]})
 	}
+	if split {
+		docker(t, "network", "connect", "--alias", "c2", nets[1], boxes[1].name)
+	}
+	return boxes
+}
+
+func TestDocker_ThreeContainers(t *testing.T) {
+	needDocker(t)
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+
+	// Linux binaries for the containers' architecture: the fleet starts on
+	// "old", then c1 moves to "new" and the others must follow (SPEC §11).
+	oldV, newV := "v0.0.0-dev.20261020100000.aaaaaaa", "v0.0.0-dev.20261020110000.bbbbbbb"
+	build := func(version string) string {
+		out := filepath.Join(root, version, "enigma")
+		cmd := exec.Command("go", "build", "-ldflags", "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version="+version, "-o", out, ".")
+		cmd.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0")
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("cross build: %v\n%s", err, b)
+		}
+		return out
+	}
+	oldBin, newBin := build(oldV), build(newV)
+	keys := sshKeys(t, root)
+
+	// Two networks: c3 shares only the second with c2, so c1 cannot reach
+	// c3 at all (D1 is assumed, not guaranteed).
+	boxes := startBoxes(t, "enigma-e2e-", keys, oldBin, newBin, true)
 	c1, c2, c3 := boxes[0], boxes[1], boxes[2]
-	docker(t, "network", "connect", "--alias", "c2", nets[1], c2.name)
 
 	// The fleet: c1 first, c1 adds c2, c2 adds c3 (c1 cannot reach c3).
 	c1.sh("enigma init --name c1")
@@ -229,13 +284,13 @@ func TestDocker_ThreeContainers(t *testing.T) {
 
 	// 4. A real network cut: c1 leaves the network, c2 edits meanwhile,
 	//    c1 returns and catches up.
-	docker(t, "network", "disconnect", network, c1.name)
+	docker(t, "network", "disconnect", "enigma-e2e-net", c1.name)
 	c2.sh("printf '# edited while c1 was cut off' > ~/.claude/CLAUDE.md")
 	time.Sleep(5 * time.Second)
 	if c1.read(".claude/CLAUDE.md") == "# edited while c1 was cut off" {
 		t.Fatal("c1 got the edit during the cut: the cut is not real")
 	}
-	docker(t, "network", "connect", "--alias", "c1", network, c1.name)
+	docker(t, "network", "connect", "--alias", "c1", "enigma-e2e-net", c1.name)
 	everyone("converges after the cut", 120*time.Second, "# edited while c1 was cut off")
 
 	// 5. Concurrent edits to different lines merge over real links, with
@@ -290,7 +345,7 @@ func TestDocker_ThreeContainers(t *testing.T) {
 	if os.Getenv("ENIGMA_E2E_LONG") == "" {
 		return
 	}
-	docker(t, "network", "disconnect", network, c1.name)
+	docker(t, "network", "disconnect", "enigma-e2e-net", c1.name)
 	eventuallyLong(t, "c2 notices the dead link", 120*time.Second, func() bool {
 		for _, p := range c2.status().Peers {
 			if p.Name == "c1" {
@@ -300,7 +355,7 @@ func TestDocker_ThreeContainers(t *testing.T) {
 		return false
 	})
 	c2.sh("printf '# after the link died' > ~/.claude/CLAUDE.md")
-	docker(t, "network", "connect", "--alias", "c1", network, c1.name)
+	docker(t, "network", "connect", "--alias", "c1", "enigma-e2e-net", c1.name)
 	everyone("converges after redial", 180*time.Second, "# after the link died")
 }
 
@@ -375,4 +430,100 @@ func joinMac(t *testing.T, root, keys, oldV, newV string, c1, c2 *box) *host {
 	eventuallyLong(t, "mac links to c1 and c2", 60*time.Second, func() bool { return mac.connectedTo("c1") && mac.connectedTo("c2") })
 	eventuallyLong(t, "c1 knows the mac", 30*time.Second, func() bool { return strings.Contains(c1.sh("enigma machine list"), "mac") })
 	return mac
+}
+
+// TestDocker_UpgradeFromV020AndGroups: a fleet on the real v0.2.0 release
+// upgrades over its links to this build, every machine and entry lands in
+// main (SPEC §9), and groups then scope what each container holds.
+func TestDocker_UpgradeFromV020AndGroups(t *testing.T) {
+	needDocker(t)
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	src := filepath.Join(root, "v0.2.0-src")
+	os.MkdirAll(src, 0o755)
+	archive := exec.Command("sh", "-c", "git -C ../.. archive v0.2.0 | tar -x -C "+src)
+	if out, err := archive.CombinedOutput(); err != nil {
+		t.Fatalf("git archive v0.2.0: %v\n%s", err, out)
+	}
+	oldBin := linuxBuild(t, src, "v0.2.0", filepath.Join(root, "old", "enigma"))
+	const newV = "v0.3.0-rc.1"
+	newBin := linuxBuild(t, "../..", newV, filepath.Join(root, "new", "enigma"))
+	keys := sshKeys(t, root)
+	boxes := startBoxes(t, "enigma-e2e-up-", keys, oldBin, newBin, false)
+	c1, c2, c3 := boxes[0], boxes[1], boxes[2]
+	same := func(got, want string) bool { return strings.TrimSpace(got) == strings.TrimSpace(want) }
+	everyone := func(what string, want string) {
+		t.Helper()
+		for _, b := range boxes {
+			eventuallyLong(t, b.name+" "+what, 60*time.Second, func() bool { return same(b.read(".claude/CLAUDE.md"), want) })
+		}
+	}
+
+	// A v0.2.0 fleet with one entry.
+	c1.sh("enigma init --name c1")
+	c1.startDaemon()
+	c1.sh("enigma machine add c2")
+	c1.sh("enigma machine add c3")
+	c1.sh("mkdir -p ~/.claude && printf '# from v0.2.0' > ~/.claude/CLAUDE.md")
+	c1.sh("enigma add ~/.claude/CLAUDE.md")
+	everyone("has the file on v0.2.0", "# from v0.2.0")
+	for _, b := range boxes {
+		if v := b.status().Version; v != "v0.2.0" {
+			t.Fatalf("%s runs %q, want v0.2.0", b.name, v)
+		}
+	}
+
+	// c1 moves to this build; the others follow over their links.
+	c1.stopDaemon()
+	c1.sh("/opt/new/enigma service install")
+	for _, b := range boxes {
+		eventuallyLong(t, b.name+" runs "+newV, 120*time.Second, func() bool { return b.status().Version == newV })
+	}
+	// The mounted `enigma` is read-only v0.2.0: c1 now runs /opt/new, the
+	// others the binary machine add installed, swapped by the upgrade.
+	c1.bin = "/opt/new/enigma"
+	c2.bin, c3.bin = "~/.local/bin/enigma", "~/.local/bin/enigma"
+	for _, b := range boxes {
+		out := b.enigma("group list")
+		for _, want := range []string{"main", "c1", "c2", "c3"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("%s after the upgrade, group list missing %q:\n%s", b.name, want, out)
+			}
+		}
+		if out := b.enigma("list"); !strings.Contains(out, "CLAUDE.md") || !strings.Contains(out, "main") {
+			t.Fatalf("%s after the upgrade, the entry is not in main:\n%s", b.name, out)
+		}
+	}
+	c3.sh("printf '# edited after the upgrade' > ~/.claude/CLAUDE.md")
+	everyone("syncs after the upgrade", "# edited after the upgrade")
+
+	// A group of two: its entry never reaches c3.
+	c1.enigma("group create pair c1 c2")
+	c1.sh("mkdir -p ~/secret && printf 'only c1 and c2' > ~/secret/x.md")
+	c1.enigma("add --group pair ~/secret")
+	eventuallyLong(t, "c2 has the pair entry", 60*time.Second, func() bool { return same(c2.read("secret/x.md"), "only c1 and c2") })
+	time.Sleep(3 * time.Second)
+	if c3.read("secret/x.md") != "<missing>" {
+		t.Fatal("c3 received a pair file")
+	}
+	if out := c3.enigma("list"); strings.Contains(out, "secret") {
+		t.Fatalf("c3 lists the pair entry:\n%s", out)
+	}
+	if out, err := c3.tryEnigma("add --group pair ~/.claude"); err == nil || !strings.Contains(out, "not a member") {
+		t.Fatalf("c3 added to pair: %v\n%s", err, out)
+	}
+
+	// Merged into main, it reaches c3 too.
+	out := c1.enigma("group merge pair main --yes")
+	if !strings.Contains(out, "c3 gains ~/secret") || !strings.Contains(out, "merged pair into main") {
+		t.Fatalf("merge:\n%s", out)
+	}
+	eventuallyLong(t, "c3 has the merged entry", 60*time.Second, func() bool { return same(c3.read("secret/x.md"), "only c1 and c2") })
+	eventuallyLong(t, "pair is gone everywhere", 60*time.Second, func() bool {
+		for _, b := range boxes {
+			if strings.Contains(b.enigma("group list"), "pair") {
+				return false
+			}
+		}
+		return true
+	})
 }

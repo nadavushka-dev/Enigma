@@ -721,11 +721,14 @@ Machines, Groups or Files pane when there is one.
 6. **Polish:** notifications, fuzzy search (§13.4), end-to-end tests.
    No code signing beyond Go's automatic ad-hoc signature: binaries arrive
    through curl and self-update, which macOS does not quarantine.
-7. **Groups and problems** (v0.3.0, `proto_version` bump): standing problems
-   and the TUI notice line (§13.5); the TUI prompt widget and limits editing;
-   the fleet rename; groups in fleet state, scoped replication, CLI (§9);
-   groups in the TUI (§13.2). Order: problems first, since they help debug
-   the rest.
+7. **Groups and problems** (v0.3.0): standing problems and the TUI notice
+   line (§13.5); the TUI prompt widget and limits editing; the fleet rename;
+   groups in fleet state, scoped replication, CLI (§9); groups in the TUI
+   (§13.2). Order: problems first, since they help debug the rest.
+   `proto_version` stays at 1: a v0.2 daemon checks the protocol number
+   before the Enigma version, so a bump would refuse the link instead of
+   taking the upgrade. The new records are additive, and two versions never
+   sync with each other anyway (§12), so nothing needs the bump.
 
 Each milestone ends with all tests passing and a review in tuicr.
 
