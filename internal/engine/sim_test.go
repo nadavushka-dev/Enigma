@@ -21,7 +21,9 @@ import (
 //   - no silent loss: every line Enigma saw and nobody knowingly replaced
 //     still exists somewhere (a file on any machine, a trash or a backup).
 //     Lines, not whole contents, so a clean merge counts as keeping both
-//     edits (SPEC §7 step 3).
+//     edits (SPEC §7 step 3);
+//   - scope (SPEC §9): the group "pair" = {a, b} syncs ~/pair; a and b
+//     converge on it and c never holds a file or an entry record for it.
 //
 // ENIGMA_SIM_SEEDS raises the number of seeds (CI). A failing seed is
 // printed; pin it in regressionSeeds so it is checked forever.
@@ -76,6 +78,18 @@ func simulate(t *testing.T, seed int64, steps int) {
 	s.userWrite(0, notes, "n0\nn1\nn2\nn3\nn4\nn5\n")
 	s.ms[0].add("sim")
 	s.linkAll()
+	for _, m := range s.ms {
+		eventually(t, m.name+" knows everyone", func() bool { return len(m.e.Machines()) == 3 })
+	}
+	pair, err := s.ms[0].e.CreateGroup("pair", []string{"id-a", "id-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairNames := []string{"pair/p1.md", "pair/p2.md"}
+	s.userWrite(0, pairNames[0], "pair-initial")
+	if err := s.ms[0].e.Add(s.ms[0].path("pair"), nil, pair); err != nil {
+		t.Fatal(err)
+	}
 	// Line edits of a multi-line file make mergeable conflicts. They draw
 	// from their own stream so pinned seeds keep their other operations.
 	lineRng := rand.New(rand.NewSource(seed ^ 0x5eed))
@@ -99,6 +113,10 @@ func simulate(t *testing.T, seed int64, steps int) {
 			m := lineRng.Intn(len(s.ms))
 			s.userEditLine(m, notes, lineRng.Intn(6), fmt.Sprintf("%s-line-%d-%d", s.ms[m].name, seed, step))
 		}
+		if lineRng.Intn(4) == 0 { // a or b edits a pair file
+			m := lineRng.Intn(2)
+			s.userWrite(m, pairNames[lineRng.Intn(len(pairNames))], fmt.Sprintf("%s-pair-%d-%d", s.ms[m].name, seed, step))
+		}
 		if rng.Intn(3) == 0 {
 			time.Sleep(time.Duration(rng.Intn(20)) * time.Millisecond)
 		}
@@ -107,6 +125,28 @@ func simulate(t *testing.T, seed int64, steps int) {
 	s.linkAll()
 	s.converge(seed)
 	s.checkNoLoss(seed)
+	s.checkScope(seed)
+}
+
+// checkScope: a and b agree on ~/pair, and c never saw it (SPEC §9).
+func (s *sim) checkScope(seed int64) {
+	a, b, c := s.ms[0], s.ms[1], s.ms[2]
+	if snapshotOf(a, "pair") != snapshotOf(b, "pair") || snapshotOf(a, "pair") == "" {
+		s.t.Errorf("seed %d: a and b differ on pair:\n%s\n--\n%s", seed, snapshotOf(a, "pair"), snapshotOf(b, "pair"))
+	}
+	if _, err := os.Stat(c.path("pair")); err == nil {
+		s.t.Errorf("seed %d: c holds ~/pair", seed)
+	}
+	for _, r := range c.e.Entries() {
+		if r.Path == "pair" {
+			s.t.Errorf("seed %d: c has the pair entry record", seed)
+		}
+	}
+	for _, ev := range c.e.Events(0) {
+		if strings.HasPrefix(ev.Path, "pair") {
+			s.t.Errorf("seed %d: c's activity mentions pair: %+v", seed, ev)
+		}
+	}
 }
 
 func (s *sim) logf(format string, args ...any) {
@@ -231,9 +271,11 @@ func (s *sim) linkAll() {
 }
 
 // snapshot lists every file under ~/sim as "path=content".
-func snapshot(m *machine) string {
+func snapshot(m *machine) string { return snapshotOf(m, "sim") }
+
+func snapshotOf(m *machine, dir string) string {
 	var lines []string
-	root := m.path("sim")
+	root := m.path(dir)
 	filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
 		if err == nil && !fi.IsDir() {
 			rel, _ := filepath.Rel(root, p)
@@ -261,12 +303,15 @@ func (s *sim) converge(seed int64) {
 			m.e.Rescan()
 		}
 		time.Sleep(60 * time.Millisecond)
-		a := snapshot(s.ms[0])
+		a := snapshot(s.ms[0]) + "\n--pair--\n" + snapshotOf(s.ms[0], "pair")
 		same := a == last
 		for _, m := range s.ms[1:] {
-			if snapshot(m) != a {
+			if snapshot(m) != snapshot(s.ms[0]) {
 				same = false
 			}
+		}
+		if snapshotOf(s.ms[1], "pair") != snapshotOf(s.ms[0], "pair") {
+			same = false
 		}
 		last = a
 		if same {
@@ -280,7 +325,7 @@ func (s *sim) converge(seed int64) {
 func (s *sim) checkNoLoss(seed int64) {
 	have := map[string]bool{}
 	for _, m := range s.ms {
-		for _, dir := range []string{m.path("sim"), filepath.Join(m.data, "trash"), filepath.Join(m.data, "backups")} {
+		for _, dir := range []string{m.path("sim"), m.path("pair"), filepath.Join(m.data, "trash"), filepath.Join(m.data, "backups")} {
 			filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
 				if err == nil && !fi.IsDir() {
 					b, _ := os.ReadFile(p)

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/nadavushka-dev/enigma/internal/proto"
+	"github.com/nadavushka-dev/enigma/internal/version"
 )
 
 // Groups (SPEC §9): a group is a named set of entries and the machines that
@@ -85,6 +86,11 @@ func (e *Engine) applyGroup(r proto.GroupRecord, from *peer) {
 		e.event(EvGroup, "", by, "group "+old.Name+" renamed to "+r.Name)
 	case !r.Removed && had && strings.Join(e.members(old), ",") != strings.Join(e.members(r), ","):
 		e.event(EvGroup, "", by, "group "+r.Name+" members: "+e.memberNames(e.members(r)))
+	}
+	// Membership decides what each link carries: tell every peer what it
+	// shares with this machine now (new members get the entries).
+	for _, p := range e.peers {
+		e.sendScope(p)
 	}
 }
 
@@ -304,4 +310,67 @@ func newGroupID() string {
 	var b [8]byte
 	rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// ---- scope (SPEC §9) -------------------------------------------------------------
+
+// shares reports whether entry r travels over the link to peer: both this
+// machine and the peer are members of r's group. Loop only.
+func (e *Engine) shares(r proto.EntryRecord, peer string) bool {
+	g, ok := e.st.Groups[r.Group]
+	if !ok || g.Removed {
+		return false
+	}
+	return e.inGroup(g, e.o.MachineID) && e.inGroup(g, peer)
+}
+
+// sharesPath is shares for the entry covering rel; false when none does.
+func (e *Engine) sharesPath(rel string, peer string) bool {
+	_, r, ok := e.entryFor(rel)
+	return ok && e.shares(r, peer)
+}
+
+// announce sends a new current version of rel to every peer in scope
+// except skip (may be nil).
+func (e *Engine) announce(rel string, v version.Version, skip *peer) {
+	m := &proto.Msg{Type: proto.Announce, Path: rel, Version: &v}
+	for _, p := range e.peers {
+		if p != skip && e.sharesPath(rel, p.id) {
+			p.send(m)
+		}
+	}
+}
+
+// sendScope sends p the entry records it shares with this machine and a
+// summary of their files (SPEC §6.5): on link-up, and again whenever a
+// group changes, since p may now be in scope for more. Both are
+// idempotent on the receiving side.
+func (e *Engine) sendScope(p *peer) {
+	recs := make([]proto.EntryRecord, 0, len(e.st.Entries))
+	inScope := map[string]bool{}
+	for path, r := range e.st.Entries {
+		if e.shares(r, p.id) {
+			recs = append(recs, r)
+			inScope[path] = true
+		}
+	}
+	p.send(&proto.Msg{Type: proto.Entries, Entries: recs})
+	chunk := map[string]version.Version{}
+	flush := func() {
+		if len(chunk) > 0 {
+			p.send(&proto.Msg{Type: proto.Summary, Summary: chunk})
+			chunk = map[string]version.Version{}
+		}
+	}
+	for path, fs := range e.st.Files {
+		if entry, _, ok := e.entryFor(path); !ok || !inScope[entry] {
+			continue
+		}
+		chunk[path] = fs.V
+		if len(chunk) >= summaryChunk {
+			flush()
+		}
+	}
+	flush()
+	p.send(&proto.Msg{Type: proto.SummaryDone})
 }

@@ -85,6 +85,9 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 	if r.Group == "" {
 		r.Group = proto.MainGroup
 	}
+	if from != nil && !e.shares(r, from.id) {
+		return // not ours to know (SPEC §9), or a peer with a stale view
+	}
 	old, had := e.st.Entries[r.Path]
 	if had && !r.Newer(old) {
 		return
@@ -94,7 +97,11 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 	}
 	e.st.Entries[r.Path] = r
 	e.dirty = true
-	e.broadcast(&proto.Msg{Type: proto.Entries, Entries: []proto.EntryRecord{r}}, from)
+	for _, p := range e.peers {
+		if p != from && e.shares(r, p.id) {
+			p.send(&proto.Msg{Type: proto.Entries, Entries: []proto.EntryRecord{r}})
+		}
+	}
 
 	wasActive := had && !old.Removed
 	by := ""
@@ -408,7 +415,7 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 		e.log.Debug("local delete", "path", rel, "v", fmtVersion(&v))
 		e.event(EvDeleted, rel, "", "")
 		e.setCurrent(rel, v, false)
-		e.broadcast(&proto.Msg{Type: proto.Announce, Path: rel, Version: &v}, nil)
+		e.announce(rel, v, nil)
 		if room != nil {
 			*room++
 		}
@@ -457,7 +464,7 @@ func (e *Engine) newLocalVersion(rel string, info fsx.Info, origin version.Origi
 		e.keep(data)
 	}
 	e.setCurrent(rel, v, true)
-	e.broadcast(&proto.Msg{Type: proto.Announce, Path: rel, Version: &v}, nil)
+	e.announce(rel, v, nil)
 }
 
 // bump advances this machine's counter in vec. The counter is global, so a
@@ -633,7 +640,7 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		if v.Hash != in.Hash || version.Compare(v.Vector, in.Vector) != version.Equal {
 			skip = nil
 		}
-		e.broadcast(&proto.Msg{Type: proto.Announce, Path: rel, Version: &v}, skip)
+		e.announce(rel, v, skip)
 	}
 	abs := e.abs(rel)
 	switch d.Action {
@@ -771,8 +778,7 @@ func (e *Engine) writeCopy(c Copy, data []byte) {
 	if entry, _, ok := e.entryFor(c.Path); ok && !e.ignored(entry, c.Path) {
 		if cur := e.current(c.Path); cur == nil || version.Compare(c.Version.Vector, cur.Vector) == version.After {
 			e.setCurrent(c.Path, c.Version, true)
-			v := c.Version
-			e.broadcast(&proto.Msg{Type: proto.Announce, Path: c.Path, Version: &v}, nil)
+			e.announce(c.Path, c.Version, nil)
 		}
 	}
 }

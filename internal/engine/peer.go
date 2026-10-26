@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/proto"
-	"github.com/nadavushka-dev/enigma/internal/version"
 )
 
 const handshakeTimeout = 10 * time.Second
@@ -259,26 +258,7 @@ func (e *Engine) attach(p *peer) bool {
 		gs = append(gs, g)
 	}
 	p.send(&proto.Msg{Type: proto.Groups, Groups: gs})
-	recs := make([]proto.EntryRecord, 0, len(e.st.Entries))
-	for _, r := range e.st.Entries {
-		recs = append(recs, r)
-	}
-	p.send(&proto.Msg{Type: proto.Entries, Entries: recs})
-	chunk := map[string]version.Version{}
-	flush := func() {
-		if len(chunk) > 0 {
-			p.send(&proto.Msg{Type: proto.Summary, Summary: chunk})
-			chunk = map[string]version.Version{}
-		}
-	}
-	for path, fs := range e.st.Files {
-		chunk[path] = fs.V
-		if len(chunk) >= summaryChunk {
-			flush()
-		}
-	}
-	flush()
-	p.send(&proto.Msg{Type: proto.SummaryDone})
+	e.sendScope(p)
 	return true
 }
 
@@ -322,17 +302,21 @@ func (e *Engine) handleMsg(p *peer, m *proto.Msg) {
 		}
 	case proto.Summary:
 		for path, v := range m.Summary {
-			e.onAnnounce(p, path, v)
+			if e.sharesPath(path, p.id) {
+				e.onAnnounce(p, path, v)
+			}
 		}
 	case proto.SummaryDone:
 	case proto.Announce:
-		if m.Version != nil {
+		if m.Version != nil && e.sharesPath(m.Path, p.id) {
 			e.onAnnounce(p, m.Path, *m.Version)
 		}
 	case proto.Fetch:
-		e.onFetch(p, m.Path)
+		if e.sharesPath(m.Path, p.id) {
+			e.onFetch(p, m.Path)
+		}
 	case proto.File:
-		if m.Version != nil {
+		if m.Version != nil && e.sharesPath(m.Path, p.id) {
 			e.onFile(p, m.Path, *m.Version, m.Ancestry, m.Content)
 		}
 	default:
