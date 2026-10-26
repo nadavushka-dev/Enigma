@@ -534,12 +534,13 @@ a notice line (§13.5), and the key hints.
   `x` on a member removes it, after a confirmation (`u` also uninstalls).
   Adding asks which groups the machine joins (default `main`). `enter` on a
   member lists its groups; `a`/`x` there add it to or remove it from one.
-- **Groups:** every group with its members and entry count. The cursor is
-  the **selected group**, marked `▸` whether or not the pane has focus: it
-  is where the Files pane adds and moves entries, and the Files title says
-  so (`Files ~/ · adding to pair`). It starts on `main` and follows the
-  group by ID across refreshes; a deleted selection falls back to `main`.
-  The selection never filters the Files pane. `n` creates a group (prompts
+- **Groups:** every group with its members and entry count. The cursor
+  browses; `a` makes the group under it the **selected group**, marked `▸`
+  whether or not the pane has focus: it is where the Files pane adds and
+  moves entries, and the Files title says so (`Files ~/ · adding to pair`).
+  It starts on `main`, survives refreshes, and falls back to `main` when
+  its group is deleted. The selection never filters the Files pane. `n`
+  creates a group (prompts
   for the name and members), `r` renames, `x` deletes (refused with a
   notice while it has entries), `enter` opens the member list where `a`/`x`
   add and remove machines, `M` merges it into another group after showing

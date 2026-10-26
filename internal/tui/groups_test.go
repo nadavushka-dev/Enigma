@@ -129,9 +129,9 @@ func TestFilesRowsShowTheGroupAndFrozenEntries(t *testing.T) {
 	}
 }
 
-// The Groups pane cursor is the selected group: adds and moves go there,
-// no typed name (SPEC §13.2).
-func TestGroupsCursorIsTheSelectedGroupShownInBothPanes(t *testing.T) {
+// The Groups pane cursor browses; `a` makes the group under it the selected
+// group, where adds and moves go (SPEC §13.2).
+func TestGroupsAChoosesTheSelectedGroupShownInBothPanes(t *testing.T) {
 	f := groupsFake(t)
 	m := groupsModel(t, f)
 	viewHas(t, m, "Files ~/ · adding to main")
@@ -139,22 +139,31 @@ func TestGroupsCursorIsTheSelectedGroupShownInBothPanes(t *testing.T) {
 	if !strings.Contains(gv, "▸ main") || strings.Contains(gv, "▸ pair") {
 		t.Fatalf("main should carry the marker:\n%s", gv)
 	}
-	drive(t, m, key("j"))
+	drive(t, m, key("j")) // browsing alone changes nothing
+	viewHas(t, m, "Files ~/ · adding to main")
+	drive(t, m, key("a"))
 	viewHas(t, m, "Files ~/ · adding to pair")
+	if l := noticeLine(m); !strings.Contains(l, "adding to pair") {
+		t.Fatalf("notice %q", l)
+	}
 	gv = m.panes[paneGroups].View(m.s, 50, 10, false)
 	if !strings.Contains(gv, "▸ pair") || strings.Contains(gv, "▸ main") {
 		t.Fatalf("pair should carry the marker:\n%s", gv)
 	}
-	// the selection survives a status refresh that reorders nothing
+	drive(t, m, key("k")) // the cursor leaves, the selection stays
+	viewHas(t, m, "adding to pair")
 	drive(t, m, StatusMsg{Status: f.status, Machines: f.machines, Groups: f.groups})
 	viewHas(t, m, "adding to pair")
+	// the selected group vanishes: back to main
+	drive(t, m, StatusMsg{Status: f.status, Machines: f.machines, Groups: f.groups[:1]})
+	viewHas(t, m, "adding to main")
 }
 
 func TestFilesAddGoesToTheSelectedGroupWithoutAPrompt(t *testing.T) {
 	f := groupsFake(t)
 	f.write(t, "new/x.md", "x")
 	m := groupsModel(t, f)
-	drive(t, m, key("j"), key("tab")) // select pair, focus Files
+	drive(t, m, key("j"), key("a"), key("tab")) // select pair, focus Files
 	drive(t, m, key("G"), key("k"))
 	n := m.panes[paneFiles].(*filesPane).current()
 	if n == nil || n.rel != "new" {
@@ -191,7 +200,7 @@ func TestFilesMoveGoesToTheSelectedGroup(t *testing.T) {
 		t.Fatalf("notice %q", l)
 	}
 	// an entry already in the selected group: a notice, no call
-	drive(t, m, key("shift+tab"), key("j"), key("tab"), key("m"))
+	drive(t, m, key("shift+tab"), key("j"), key("a"), key("tab"), key("m"))
 	if c := f.Calls(); len(c) != 1 {
 		t.Fatalf("calls %v", c)
 	}
