@@ -568,6 +568,9 @@ a notice line (§13.5), and the key hints.
   prompt (bubbles `textinput`), with `esc` to cancel. Lists of machines or
   groups are picked with `space`. A group is never typed where a typo could
   go wrong: adds and moves use the selected group.
+- **Confirmations** wrap their question and can carry a list (the entries a
+  group delete stops syncing), one item per line, scrolled with `j`/`k`
+  when it does not fit, with "n more" markers at either end.
 - Keys: `tab`/`shift+tab` move focus; `j`/`k`, `g`/`G`, `ctrl+d`/`ctrl+u`;
   `l`/`enter` opens a folder, `h` closes it; `/` search; `p` problems;
   `L` limits; `?` help; `q` quits.

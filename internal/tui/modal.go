@@ -18,7 +18,11 @@ type modal interface {
 
 // ---- confirm ---------------------------------------------------------------------
 
-type confirmModal struct{ q OpenConfirm }
+type confirmModal struct {
+	q   OpenConfirm
+	off int // first visible item
+	fit int // items that fit, from the last view
+}
 
 func (c *confirmModal) key(k tea.KeyMsg) (tea.Cmd, bool) {
 	switch k.String() {
@@ -26,6 +30,14 @@ func (c *confirmModal) key(k tea.KeyMsg) (tea.Cmd, bool) {
 		return c.q.Yes, true
 	case "n", "N", "esc", "q":
 		return nil, true
+	case "j", "down":
+		c.off = min(c.off+1, c.maxOff())
+	case "k", "up":
+		c.off = max(0, c.off-1)
+	case "g":
+		c.off = 0
+	case "G":
+		c.off = c.maxOff()
 	}
 	if c.q.AltKey != "" && k.String() == c.q.AltKey {
 		return c.q.Alt, true
@@ -33,12 +45,38 @@ func (c *confirmModal) key(k tea.KeyMsg) (tea.Cmd, bool) {
 	return nil, false
 }
 
-func (c *confirmModal) view(width, _ int) string {
+func (c *confirmModal) maxOff() int { return max(0, len(c.q.Items)-max(1, c.fit)) }
+
+func (c *confirmModal) view(width, height int) string {
 	keys := StyleAccent.Render("y") + " yes  " + StyleAccent.Render("n") + " no"
 	if c.q.AltKey != "" {
 		keys += "  " + StyleAccent.Render(c.q.AltKey) + " " + c.q.AltLabel
 	}
-	return lipgloss.NewStyle().Width(width-6).Render(c.q.Question) + "\n\n" + keys // Width wraps a long question
+	w := max(10, width-6)
+	q := lipgloss.NewStyle().Width(w).Render(c.q.Question) // Width wraps a long question
+	if len(c.q.Items) == 0 {
+		return q + "\n\n" + keys
+	}
+	// rows for the list: the dialog minus border, question, blank lines and keys
+	c.fit = max(1, height-2-strings.Count(q, "\n")-1-4)
+	c.off = min(c.off, c.maxOff())
+	end := min(len(c.q.Items), c.off+c.fit)
+	var b strings.Builder
+	b.WriteString(q + "\n\n")
+	if c.off > 0 {
+		b.WriteString(StyleDim.Render(fmt.Sprintf("  ↑ %d more", c.off)) + "\n")
+	}
+	for _, it := range c.q.Items[c.off:end] {
+		b.WriteString("  " + fit(it, w-2) + "\n")
+	}
+	if end < len(c.q.Items) {
+		b.WriteString(StyleDim.Render(fmt.Sprintf("  ↓ %d more", len(c.q.Items)-end)) + "\n")
+	}
+	if len(c.q.Items) > c.fit {
+		keys += "  " + StyleAccent.Render("j/k") + " scroll"
+	}
+	b.WriteString("\n" + keys)
+	return b.String()
 }
 
 // ---- progress --------------------------------------------------------------------

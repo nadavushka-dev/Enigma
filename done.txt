@@ -14,3 +14,64 @@ x 2026-10-20 2026-10-20 M1 commit by feature, each commit green +m1
 x 2026-10-20 2026-10-20 M1 spec: update conflict name format in §7; note single-file copies are local +m1
 x 2026-10-20 2026-10-20 M1 run 200 sim seeds under -race +m1
 x 2026-10-20 2026-10-20 M1 sim oracle: user read+write must be atomic vs engine (seed 1001 flake was the oracle, not a loss) +m1
+x 2026-10-20 2026-10-20 M2 config: paths (XDG, ENIGMA_HOME, short socket), identity, peers file +m2
+x 2026-10-20 2026-10-20 M2 engine: one link per pair (keep link dialed by lower machine ID) +m2
+x 2026-10-20 2026-10-20 M2 link: ssh argv, process conn w/ stderr, bridge relay +m2
+x 2026-10-20 2026-10-20 M2 daemon: sockets, API, dial loop w/ backoff, reconnect +m2
+x 2026-10-20 2026-10-20 M2 cli: init, join, peers, add, remove, list, status, daemon, bridge +m2
+x 2026-10-20 2026-10-20 M2 local multi-machine e2e via fake ssh (no docker) +m2
+x 2026-10-20 2026-10-20 M2 service: launchd + systemd user unit, install/uninstall +m2
+x 2026-10-20 2026-10-20 M2 docker e2e: 3 containers w/ sshd + this Mac +m2
+x 2026-10-20 2026-10-20 M2 spec: two sockets (§10), M2 init/join stopgap (§11) +m2
+x 2026-10-20 2026-10-20 M2 RESUME HERE: next is service install (launchd + systemd), then docker e2e +m2
+x 2026-10-20 2026-10-20 M2 daemon log rotation at 10 MB (SPEC §10) +m2
+x 2026-10-21 2026-10-20 END macOS pass: real service install on this Mac (ASK USER first, touches ~/Library/LaunchAgents) + Mac in docker e2e +macos
+x 2026-10-20 2026-10-20 M3 docker e2e: Linux containers only for now (Mac member deferred to the macOS pass) +m3
+x 2026-10-20 2026-10-20 M3 history store: content by hash, per-file version ancestry, retention 20/30d/200MB +m3
+x 2026-10-20 2026-10-20 M3 diff3: line diff + three-way merge, text detection +m3
+x 2026-10-20 2026-10-20 M3 engine: merge concurrent text edits on a common base, fallback to conflict copy +m3
+x 2026-10-20 2026-10-20 M3 trash: purge after 30 days, trash list/restore/empty CLI +m3
+x 2026-10-20 2026-10-20 M3 conflicts CLI: enigma conflicts +m3
+x 2026-10-20 2026-10-20 M4 enigma conflicts across the group (ask peers for single-file entry copies) +m4
+x 2026-10-20 2026-10-20 M4 version: build version (semver / dev commit time), enigma version, ordering +m4
+x 2026-10-20 2026-10-20 M4 engine: machine records in group state (LWW), handshake carries version+platform, refuses removed +m4
+x 2026-10-20 2026-10-20 M4 upgrade over the link: newer sends binary, older verifies, swaps, re-execs; no sync on mismatch +m4
+x 2026-10-20 2026-10-20 M4 sshconfig: hosts from ~/.ssh/config (+Include), ssh -G target capture +m4
+x 2026-10-20 2026-10-20 M4 daemon: dial members from records, target resolution (override, alias, ssh://), local alias overrides +m4
+x 2026-10-20 2026-10-20 M4 service: linger on Linux, background fallback without systemd user session +m4
+x 2026-10-20 2026-10-20 M4 cli: machine add/list/remove/rename/alias, join --stdin, leave; drop peers.json stopgap +m4
+x 2026-10-20 2026-10-20 M4 doctor: connectivity matrix over ssh, version/socket/service checks +m4
+x 2026-10-20 2026-10-20 M4 make dist: binaries for all platforms into <data>/bin +m4
+x 2026-10-20 2026-10-20 M4 e2e: local + docker rewritten on machine add; one-way network; upgrade scenario +m4
+x 2026-10-20 2026-10-20 M4 releases: goreleaser (darwin/linux x amd64/arm64, tar.gz + checksums.txt), release workflow on v* tags; NO push/tag without asking +m4
+x 2026-10-20 2026-10-20 M4 install.sh: curl|sh installer like sasash (asset pick, sha256 check, ~/.local/bin, PATH hint), tested with file:// releases +m4
+x 2026-10-20 2026-10-20 M4 enigma update: latest release in place (sha256, atomic swap, restart daemon -> group follows) +m4
+x 2026-10-20 2026-10-20 M4 machine add step 2: download release asset for other platforms (checksum-verified) +m4
+x 2026-10-21 2026-10-20 END architecture/ dir: how Enigma works, explained with d2 diagrams (topology, sync flow, versions/conflicts/merge, machine add, upgrades, storage) +docs
+x 2026-10-20 2026-10-20 M5 spec: TUI layout (two columns + activity strip), event feed, keys +m5
+x 2026-10-20 2026-10-20 M5 engine: activity events ring (changes, merges, conflicts, links, upgrades, errors) + daemon GET /events long-poll +m5
+x 2026-10-20 2026-10-20 M5 machine add as a reusable step runner (CLI and TUI share it) +m5
+x 2026-10-20 2026-10-20 M5 tui: machines pane (members + ssh config hosts, a add with live steps, x remove) (delegated: herdr agent tui-machines, worktree ../enigma-wt/machines, branch tui-machines) +m5
+x 2026-10-20 2026-10-20 M5 tui: files pane (lazy tree of ~, synced marks, dim ignored/oversized/symlinks, a add, x remove) (delegated: herdr agent tui-files, worktree ../enigma-wt/files, branch tui-files) +m5
+x 2026-10-20 2026-10-20 M5 tui: activity pane + side-by-side conflict view, help overlay, bare `enigma` opens the TUI (delegated: herdr agent tui-activity, worktree ../enigma-wt/activity, branch tui-activity) +m5
+x 2026-10-21 2026-10-20 M5 tuicr: user reviews all of M5 in tuicr (agreed: lead reviews delegate branches, one tuicr pass at the end) +m5
+x 2026-10-21 2026-10-21 M5 fixer: Machines detail line wraps (tuicr QUESTION, option a) +m5
+x 2026-10-22 2026-10-21 BUG heavy add/rescan hashes on the engine loop: up to 2000 files near 10 MB stall pings and links drop as silent (design talk first: touches the single-loop rule) +bug +m6 (done: per-link pings a6b9c7c, stat cache 331a580; first-add hashing off the loop left until measured)
+x 2026-10-22 2026-10-21 M6 notifications (SPEC 12.3): conflict copy, vanished entry root, failed merge write; osascript / notify-send, 1 per path per 10 min, off in config.toml +m6
+x 2026-10-22 2026-10-21 M6 add LICENSE (ask which: MIT suggested) +m6 human answer: MIT it is
+x 2026-10-22 2026-10-21 M6 tui: Files pane says 'holds synced' for a folder containing a synced entry; reword (e.g. 'contains synced') +m6
+x 2026-10-22 2026-10-21 M6 fuzzy search: internal/fuzzy matcher + home index (SPEC 12.2) +m6
+x 2026-10-22 2026-10-21 M6 tui: Files pane / filter, tree scope and ~ scope (tab), enter jumps in the tree (SPEC 12.2) +m6
+x 2026-10-22 2026-10-21 M6 cli: enigma add with no path picks via fzf when installed (SPEC 12.1) +m6
+x 2026-10-22 2026-10-22 M6 limits: group setting (enigma limits), ceilings 64MB/20k, folder growth past the file limit skips new files with a clear error, receiver refuses oversized files +m6
+x 2026-10-26 2026-10-26 M7 spec review: groups (D19, §9), problems (D20, §13.5), fleet rename, TUI parity (D21); user signs off before code +m7
+x 2026-10-26 2026-10-26 M7 problems: internal/problems standing set derived from state, GET /problems, enigma status prints it first, doctor exits non-zero (§13.5) +m7
+x 2026-10-26 2026-10-26 M7 tui: notice line (problems count, action results, failed actions in red) + p problems modal with hints and jump-to-row (§13.5) +m7
+x 2026-10-26 2026-10-26 M7 tui: one-line prompt widget (bubbles textinput) + multi-pick list; L edits limits (§13.2) +m7
+x 2026-10-26 2026-10-26 M7 fleet rename: group_id->fleet_id, internal/group->internal/fleet, docs and CLI text; mechanical commit, proto bump with M7 +m7
+x 2026-10-26 2026-10-26 M7 groups state: GroupRecord + EntryRecord.group, main created at init and on upgrade from v0.2, LWW merge, tombstones (§9) +m7
+x 2026-10-26 2026-10-26 M7 groups scope: entry records/announce/fetch/summary only over links where both ends are members; non-members never see paths; sim test invariant per group (§9) +m7
+x 2026-10-26 2026-10-26 M7 groups enter/leave scope: first-add on join, remove-like on leave, frozen versions re-enter via §7 (§9) +m7
+x 2026-10-26 2026-10-26 M7 groups cli: group list/create/delete/rename/add/remove/merge (plan + --add-members), entry move, add --group, machine add --group, --json (§13.1) +m7
+x 2026-10-26 2026-10-26 M7 tui groups: Groups pane (n r x enter M), Files shows group + a asks group + m move, Machines enter shows groups (§13.2) +m7
+x 2026-10-26 2026-10-26 M7 e2e: 3 containers, main + pair group, non-member never gets pair paths, merge pair into main, upgrade from v0.2 keeps everything in main +m7

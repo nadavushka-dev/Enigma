@@ -63,7 +63,7 @@ func TestGroupsDeleteSaysWhatStopsSyncingAndConfirms(t *testing.T) {
 	drive(t, m, key("x"))
 	viewHas(t, m, "main cannot be deleted")
 	drive(t, m, key("j"), key("x"))
-	viewHas(t, m, "Delete group pair?", "1 synced entry", "devbox, mac", "~/secret/", "stop syncing", "keeps its files", "merge")
+	viewHas(t, m, "Delete group pair?", "1 synced entry", "devbox, mac", "~/secret/", "stop syncing", "keeps its", "merge")
 	drive(t, m, key("n"))
 	if c := f.Calls(); len(c) != 0 {
 		t.Fatalf("calls %v", c)

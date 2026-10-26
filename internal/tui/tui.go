@@ -93,6 +93,7 @@ type RefreshMsg struct{}
 // runs AltCmd (e.g. "u" = remove and uninstall).
 type OpenConfirm struct {
 	Question         string
+	Items            []string // listed under the question, one per line, scrollable
 	Yes              tea.Cmd
 	AltKey, AltLabel string
 	Alt              tea.Cmd

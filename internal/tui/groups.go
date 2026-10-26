@@ -210,12 +210,12 @@ func (p *groupsPane) delete(s *Shared) tea.Cmd {
 	sort.Strings(paths)
 	q := "Delete group " + g.Name + "?"
 	if len(paths) > 0 {
-		q += fmt.Sprintf(" It has %s on %s: %s. They stop syncing; every machine keeps its files as they are. To keep syncing them everywhere, merge %s into another group instead (M).",
-			engine.Plural(len(paths), "synced entry", "synced entries"), strings.Join(g.MemberNames, ", "), strings.Join(paths, ", "), g.Name)
+		q += fmt.Sprintf(" Its %s on %s stop syncing; every machine keeps its files as they are. To keep syncing them everywhere, merge %s into another group instead (M).",
+			engine.Plural(len(paths), "synced entry", "synced entries"), strings.Join(g.MemberNames, ", "), g.Name)
 	}
 	b := s.Backend
 	return func() tea.Msg {
-		return OpenConfirm{Question: q, Yes: func() tea.Msg {
+		return OpenConfirm{Question: q, Items: paths, Yes: func() tea.Msg {
 			if _, err := b.GroupOp(daemon.GroupRequest{Action: "delete", ID: g.ID}); err != nil {
 				return ShowError{Err: err}
 			}
