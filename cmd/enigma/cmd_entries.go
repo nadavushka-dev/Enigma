@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/fuzzy"
+	"github.com/nadavushka-dev/enigma/internal/problems"
 )
 
 func init() {
@@ -215,6 +217,15 @@ func cmdStatus(c *ctx, args []string) error {
 		return enc.Encode(st)
 	}
 	fmt.Fprintf(c.stdout, "machine %s (group %s, enigma %s)\n\n", st.Machine, short(st.Group), st.Version)
+	if len(st.Problems) > 0 {
+		tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "PROBLEMS\tSINCE\tHINT")
+		for _, p := range st.Problems {
+			fmt.Fprintf(tw, "%s %s\t%s\t%s\n", problemMark(p), p.Message, since(p.Since), p.Hint)
+		}
+		tw.Flush()
+		fmt.Fprintln(c.stdout)
+	}
 	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "PEER\tLINK\tDETAIL")
 	if len(st.Peers) == 0 {
@@ -286,4 +297,26 @@ func tilde(abs string) string {
 		return "~/" + filepath.ToSlash(r)
 	}
 	return abs
+}
+
+// problemMark is "!" for an error, "~" for a warning (SPEC §13.5).
+func problemMark(p problems.Problem) string {
+	if p.Severity == problems.Error {
+		return "!"
+	}
+	return "~"
+}
+
+// since is a problem's age for a human: "just now", "3m", "2h", "1d".
+func since(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }

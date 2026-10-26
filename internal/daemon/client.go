@@ -12,6 +12,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/problems"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
@@ -34,6 +35,12 @@ func NewClient(p config.Paths) *Client {
 func (c *Client) Status() (StatusReport, error) {
 	var r StatusReport
 	return r, c.do(http.MethodGet, "/status", nil, &r)
+}
+
+// Problems returns the standing problems (SPEC §13.5), errors first.
+func (c *Client) Problems() ([]problems.Problem, error) {
+	var ps []problems.Problem
+	return ps, c.do(http.MethodGet, "/problems", nil, &ps)
 }
 
 func (c *Client) Add(abs string, ignore []string) error {

@@ -236,6 +236,11 @@ type statusJSON struct {
 	Entries []struct {
 		Path string `json:"path"`
 	} `json:"entries"`
+	Problems []struct {
+		Key      string `json:"key"`
+		Severity string `json:"severity"`
+		Message  string `json:"message"`
+	} `json:"problems"`
 }
 
 func (h *host) status() statusJSON {
@@ -734,5 +739,53 @@ func TestE2E_AddWithoutAPathNeedsFzfAndATerminal(t *testing.T) {
 	a.must("init", "--name", "a")
 	if out, code := a.run("add"); code == 0 || !strings.Contains(out, "give a path, or install fzf to pick one") {
 		t.Fatalf("add without a path in a pipe: %d %s", code, out)
+	}
+}
+
+func TestE2E_D20_StatusAndDoctorShowStandingProblemsFirst(t *testing.T) {
+	w := newWorld(t)
+	a, b, c := w.host("a"), w.host("b"), w.host("c")
+	a.must("init", "--name", "a")
+	a.startDaemon()
+	a.add(b)
+	c.blockFrom(a) // a cannot ssh to c; b can
+	b.add(c)
+	eventuallyT(t, "b linked to c", func() bool { return b.connectedTo("c") })
+	eventuallyT(t, "a's status reports the problem", func() bool {
+		for _, p := range a.status().Problems {
+			if p.Key == "link:c" && p.Severity == "error" {
+				return true
+			}
+		}
+		return false
+	})
+
+	out := a.must("status")
+	i, j := strings.Index(out, "PROBLEMS"), strings.Index(out, "PEER\t")
+	if j < 0 {
+		j = strings.Index(out, "PEER ")
+	}
+	if i < 0 || j < 0 || i > j {
+		t.Fatalf("problems must come before the peers:\n%s", out)
+	}
+	for _, want := range []string{"c link down", "refused", "enigma doctor"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status missing %q:\n%s", want, out)
+		}
+	}
+
+	text, code := a.run("doctor")
+	if code == 0 || !strings.Contains(text, "problem: c link down") {
+		t.Fatalf("doctor (exit %d) must list the standing problem:\n%s", code, text)
+	}
+	var rep struct {
+		Problems []string `json:"problems"`
+	}
+	jsonOut, _ := a.run("doctor", "--json")
+	if err := json.NewDecoder(strings.NewReader(jsonOut)).Decode(&rep); err != nil {
+		t.Fatalf("doctor --json: %v\n%s", err, jsonOut)
+	}
+	if len(rep.Problems) == 0 || !strings.HasPrefix(rep.Problems[0], "c link down") {
+		t.Fatalf("doctor --json problems: %q", rep.Problems)
 	}
 }

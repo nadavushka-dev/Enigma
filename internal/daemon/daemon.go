@@ -26,6 +26,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/link"
+	"github.com/nadavushka-dev/enigma/internal/problems"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/release"
 	"github.com/nadavushka-dev/enigma/internal/sshconfig"
@@ -75,6 +76,7 @@ type daemon struct {
 
 	mu      sync.Mutex
 	peers   map[string]*peerState // by machine ID
+	tracker problems.Tracker      // standing problems (SPEC §13.5); under mu
 	ctx     context.Context
 	stop    context.CancelFunc
 	restart bool
@@ -425,6 +427,7 @@ type StatusReport struct {
 	Files     int                  `json:"files"`
 	Conflicts []string             `json:"conflicts,omitempty"`
 	Limits    engine.Limits        `json:"limits"`
+	Problems  []problems.Problem   `json:"problems"` // standing problems (SPEC §13.5), errors first
 }
 
 func (d *daemon) status() StatusReport {
@@ -452,7 +455,24 @@ func (d *daemon) status() StatusReport {
 		r.Peers = append(r.Peers, PeerReport{Name: lp.Name, ID: lp.ID, Connected: true})
 	}
 	sort.Slice(r.Peers, func(i, j int) bool { return r.Peers[i].Name < r.Peers[j].Name })
+	r.Problems = d.problems(r)
 	return r
+}
+
+// problems derives the standing problems from a status report (SPEC
+// §13.5), keeping each problem's Since while it stands.
+func (d *daemon) problems(r StatusReport) []problems.Problem {
+	in := problems.Input{Entries: r.Entries, Limits: r.Limits, Events: d.eng.Events(0)}
+	for _, p := range r.Peers {
+		in.Peers = append(in.Peers, problems.Peer{Name: p.Name, Dials: p.Target != "", Connected: p.Connected, LastError: p.LastError})
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ps := d.tracker.Update(in, time.Now())
+	if ps == nil {
+		ps = []problems.Problem{}
+	}
+	return ps
 }
 
 type pathRequest struct {
@@ -477,6 +497,9 @@ func (d *daemon) api() http.Handler {
 	}
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, d.status(), nil)
+	})
+	mux.HandleFunc("GET /problems", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, d.status().Problems, nil)
 	})
 	mux.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest

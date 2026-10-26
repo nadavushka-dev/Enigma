@@ -14,6 +14,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/daemon"
 	"github.com/nadavushka-dev/enigma/internal/group"
+	"github.com/nadavushka-dev/enigma/internal/problems"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/service"
 )
@@ -35,6 +36,7 @@ type doctorReport struct {
 	Checks   []string        `json:"checks"`
 	Machines []doctorMachine `json:"machines"`
 	Problems []string        `json:"problems"`
+	Warnings []string        `json:"warnings,omitempty"` // standing warnings; they do not fail the check
 }
 
 func cmdDoctor(c *ctx, args []string) error {
@@ -63,6 +65,19 @@ func cmdDoctor(c *ctx, args []string) error {
 		return finishDoctor(c, rep, *asJSON)
 	}
 	rep.Checks = append(rep.Checks, "daemon running (enigma "+st.Version+")")
+	// The daemon's standing problems (SPEC §13.5) come first: errors fail
+	// the check, warnings are only shown.
+	for _, p := range st.Problems {
+		msg := p.Message
+		if p.Hint != "" {
+			msg += " (" + p.Hint + ")"
+		}
+		if p.Severity == problems.Error {
+			rep.Problems = append(rep.Problems, msg)
+		} else {
+			rep.Warnings = append(rep.Warnings, msg)
+		}
+	}
 	ms, err := group.Members(cl)
 	if err != nil {
 		return err
@@ -180,6 +195,9 @@ func finishDoctor(c *ctx, rep doctorReport, asJSON bool) error {
 		}
 		for _, ch := range rep.Checks {
 			fmt.Fprintln(c.stdout, "ok:", ch)
+		}
+		for _, pr := range rep.Warnings {
+			fmt.Fprintln(c.stdout, "warning:", pr)
 		}
 		for _, pr := range rep.Problems {
 			fmt.Fprintln(c.stdout, "problem:", pr)

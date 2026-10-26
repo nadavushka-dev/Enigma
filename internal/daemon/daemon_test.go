@@ -15,6 +15,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/config"
 	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/problems"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
@@ -519,5 +520,34 @@ func TestEventsLongPoll(t *testing.T) {
 		}
 	case <-time.After(8 * time.Second):
 		t.Fatal("long poll did not return on a new event")
+	}
+}
+
+func TestD20_ProblemsInStatusAndOnTheirOwnRoute(t *testing.T) {
+	_, _, b := pair(t)
+	b.client().SetMachine(proto.MachineRecord{ID: config.NewID(), Name: "ghost", Target: "ghost"})
+	var since time.Time
+	eventually(t, "ghost problem in status", func() bool {
+		st, err := b.client().Status()
+		if err != nil {
+			return false
+		}
+		for _, p := range st.Problems {
+			if p.Key == "link:ghost" && p.Severity == problems.Error && strings.Contains(p.Message, "Could not resolve") {
+				since = p.Since
+				return true
+			}
+		}
+		return false
+	})
+	if since.IsZero() {
+		t.Fatal("since not set")
+	}
+	ps, err := b.client().Problems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ps) != 1 || ps[0].Key != "link:ghost" || !ps[0].Since.Equal(since) {
+		t.Fatalf("GET /problems: %+v (since %v)", ps, since)
 	}
 }
