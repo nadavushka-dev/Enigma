@@ -862,14 +862,30 @@ func TestE2E_D19_GroupsCLI(t *testing.T) {
 	// Rename, move, delete.
 	a.must("group", "rename", "pair", "duo")
 	eventuallyT(t, "c sees duo", func() bool { out, _ := c.run("list"); return strings.Contains(out, "duo") })
-	if out, code := a.run("group", "delete", "duo"); code == 0 || !strings.Contains(out, "still has 1 entry") {
-		t.Fatalf("delete with entries: %d %s", code, out)
+	// Deleting a group with entries needs --yes outside a terminal, and
+	// says what stops syncing; the files stay.
+	if out, code := a.run("group", "delete", "duo"); code == 0 || !strings.Contains(out, "--yes") {
+		t.Fatalf("delete with entries without --yes: %d %s", code, out)
 	}
 	out = a.must("entry", "move", "~/secret", "main")
 	if !strings.Contains(out, "moved ~/secret to main") {
 		t.Fatalf("entry move: %s", out)
 	}
 	eventuallyT(t, "b is live again", func() bool { return b.read("secret/x.md") == "x" })
+	a.must("group", "create", "solo", "a", "c")
+	a.write("solo/s.md", "s")
+	a.must("add", "--group", "solo", "~/solo")
+	eventuallyT(t, "c has solo", func() bool { return c.read("solo/s.md") == "s" })
+	out = a.must("group", "delete", "solo", "--yes")
+	for _, want := range []string{"1 synced entry", "~/solo/", "stop syncing", "keeps its files", "merge", "deleted group solo"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("delete output missing %q:\n%s", want, out)
+		}
+	}
+	eventuallyT(t, "c no longer syncs solo", func() bool { out, _ := c.run("list"); return !strings.Contains(out, "solo") })
+	if a.read("solo/s.md") != "s" || c.read("solo/s.md") != "s" {
+		t.Fatal("the files must stay after the group is deleted")
+	}
 	a.must("group", "delete", "duo")
 	eventuallyT(t, "duo is gone everywhere", func() bool { out, _ := c.run("group", "list"); return !strings.Contains(out, "duo") })
 	if out, code := a.run("group", "delete", "main"); code == 0 || !strings.Contains(out, "main cannot be deleted") {

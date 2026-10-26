@@ -57,20 +57,27 @@ func TestGroupsCreateAsksNameThenMembers(t *testing.T) {
 	}
 }
 
-func TestGroupsDeleteConfirmsAndShowsTheDaemonsRefusal(t *testing.T) {
+func TestGroupsDeleteSaysWhatStopsSyncingAndConfirms(t *testing.T) {
 	f := groupsFake(t)
 	m := groupsModel(t, f)
 	drive(t, m, key("x"))
 	viewHas(t, m, "main cannot be deleted")
 	drive(t, m, key("j"), key("x"))
-	viewHas(t, m, "Delete group pair?")
-	f.opErr = errors.New("group pair still has 1 entry; move or remove them first")
-	drive(t, m, key("y"))
-	viewHas(t, m, "still has 1 entry")
+	viewHas(t, m, "Delete group pair?", "1 synced entry", "devbox, mac", "~/secret/", "stop syncing", "keeps its files", "merge")
+	drive(t, m, key("n"))
+	if c := f.Calls(); len(c) != 0 {
+		t.Fatalf("calls %v", c)
+	}
+	f.opErr = errors.New("daemon says no")
+	drive(t, m, key("x"), key("y"))
+	viewHas(t, m, "daemon says no")
 	f.opErr = nil
 	drive(t, m, key("x"), key("y"))
 	if c := f.Calls(); len(c) != 2 || c[1] != "group delete g-pair" {
 		t.Fatalf("calls %v", c)
+	}
+	if l := noticeLine(m); !strings.Contains(l, "deleted group pair, 1 entry no longer synced") {
+		t.Fatalf("notice %q", l)
 	}
 }
 

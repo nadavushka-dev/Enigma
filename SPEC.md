@@ -341,8 +341,12 @@ machinery (§6, §7) is unchanged.
   gain or lose which entries) and asks. A member of `pair` that is not in
   `main` would lose entries, so the merge is refused unless
   `--add-members` adds it to `main` first.
-- **Deleting a group** is refused while it has entries. Removed group
-  records are tombstones (§11).
+- **Deleting a group** (`enigma group delete pair`, `x` in the TUI) stops
+  syncing its entries, exactly as `enigma remove` on each: the files stay
+  where they are on every machine, including frozen copies. With entries,
+  the CLI and the TUI first list them and the members, say that they stop
+  syncing and that merging keeps them synced, and ask (`--yes` skips the
+  question). Removed group and entry records are tombstones (§11).
 - **Upgrade from v0.2.** The first daemon running this version creates
   `main` with every member and puts every existing entry in it, so a running
   fleet behaves exactly as before.
@@ -493,7 +497,7 @@ Every command takes `--json` for agents and scripts.
 |---|---|
 | `enigma init` | create the fleet on this machine, with the group `main` |
 | `enigma machine add <alias> [--group G]…` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §12) |
-| `enigma group list` · `create <name> [machine…]` · `delete <name>` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into> [--add-members]` | manage groups (§9) |
+| `enigma group list` · `create <name> [machine…]` · `delete <name> [--yes]` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into> [--add-members]` | manage groups (§9) |
 | `enigma entry move <path> <group>` | move an entry to another group (§9) |
 | `enigma add <path> [--group G] [--ignore GLOB]…` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4) |
 | `enigma limits [--file-size SIZE] [--files N]` | show the fleet's limits, or change them for every machine (§8); SIZE like `25MB` |
@@ -541,8 +545,8 @@ a notice line (§13.5), and the key hints.
   It starts on `main`, survives refreshes, and falls back to `main` when
   its group is deleted. The selection never filters the Files pane. `n`
   creates a group (prompts
-  for the name and members), `r` renames, `x` deletes (refused with a
-  notice while it has entries), `enter` opens the member list where `a`/`x`
+  for the name and members), `r` renames, `x` deletes (after a
+  confirmation that lists what stops syncing), `enter` opens the member list where `a`/`x`
   add and remove machines, `M` merges it into another group after showing
   the plan (§9). Membership changes ask for confirmation, since they start
   first adds or stop syncing.

@@ -187,6 +187,8 @@ func (p *groupsPane) rename(s *Shared) tea.Cmd {
 	}
 }
 
+// delete removes a group; its entries stop syncing and every machine
+// keeps its files, which the confirmation spells out (SPEC §9).
 func (p *groupsPane) delete(s *Shared) tea.Cmd {
 	g, ok := p.current(s)
 	if !ok {
@@ -195,11 +197,30 @@ func (p *groupsPane) delete(s *Shared) tea.Cmd {
 	if g.ID == proto.MainGroup {
 		return showErr(fmt.Errorf("main cannot be deleted"))
 	}
+	var paths []string
+	for _, e := range s.Status.Entries {
+		if e.Group == g.ID {
+			slash := ""
+			if e.Dir {
+				slash = "/"
+			}
+			paths = append(paths, "~/"+e.Path+slash)
+		}
+	}
+	sort.Strings(paths)
+	q := "Delete group " + g.Name + "?"
+	if len(paths) > 0 {
+		q += fmt.Sprintf(" It has %s on %s: %s. They stop syncing; every machine keeps its files as they are. To keep syncing them everywhere, merge %s into another group instead (M).",
+			engine.Plural(len(paths), "synced entry", "synced entries"), strings.Join(g.MemberNames, ", "), strings.Join(paths, ", "), g.Name)
+	}
 	b := s.Backend
 	return func() tea.Msg {
-		return OpenConfirm{Question: fmt.Sprintf("Delete group %s? Only an empty group can be deleted.", g.Name), Yes: func() tea.Msg {
+		return OpenConfirm{Question: q, Yes: func() tea.Msg {
 			if _, err := b.GroupOp(daemon.GroupRequest{Action: "delete", ID: g.ID}); err != nil {
 				return ShowError{Err: err}
+			}
+			if len(paths) > 0 {
+				return done("deleted group " + g.Name + ", " + engine.Plural(len(paths), "entry", "entries") + " no longer synced")
 			}
 			return done("deleted group " + g.Name)
 		}}

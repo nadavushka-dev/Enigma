@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/proto"
 )
@@ -107,24 +108,37 @@ func TestD19_MainCannotBeDeletedOrRenamedAndNamesAreChecked(t *testing.T) {
 	}
 }
 
-func TestD19_DeleteIsRefusedWhileAGroupHasEntriesAndTombstonesReplicate(t *testing.T) {
+// Deleting a group stops syncing its entries: the files stay on every
+// machine, the entries and the group become tombstones everywhere (SPEC §9).
+func TestD19_DeleteStopsSyncingTheGroupsEntriesAndKeepsTheFiles(t *testing.T) {
 	a, b := newMachine(t, "a"), newMachine(t, "b")
 	defer link(t, a, b)()
-	id, _ := a.e.CreateGroup("pair", []string{"id-a"})
+	eventually(t, "a knows b", func() bool { _, ok := a.machine("id-b"); return ok })
+	id, err := a.e.CreateGroup("pair", []string{"id-a", "id-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	a.write("p/x", "x")
 	if err := a.e.Add(a.path("p"), nil, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.e.DeleteGroup(id); err == nil || !strings.Contains(err.Error(), "1 entry") {
-		t.Fatalf("delete with entries: %v", err)
-	}
-	if err := a.e.Remove(a.path("p")); err != nil {
-		t.Fatal(err)
-	}
+	eventually(t, "b has the file", func() bool { return b.read("p/x") == "x" })
 	if err := a.e.DeleteGroup(id); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "b forgets pair", func() bool { _, ok := b.group(id); return !ok })
+	eventually(t, "b stops syncing p", func() bool { return len(b.e.Status().Entries) == 0 })
+	if len(a.e.Status().Entries) != 0 {
+		t.Fatal("a still syncs p")
+	}
+	if a.read("p/x") != "x" || b.read("p/x") != "x" {
+		t.Fatal("deleting a group must leave the files where they are")
+	}
+	b.write("p/x", "changed on b")
+	time.Sleep(100 * time.Millisecond)
+	if a.read("p/x") != "x" {
+		t.Fatal("p still syncs after its group was deleted")
+	}
 	if _, err := a.e.CreateGroup("pair", nil); err != nil {
 		t.Fatalf("the name is free again: %v", err)
 	}

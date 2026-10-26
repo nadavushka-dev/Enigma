@@ -86,6 +86,7 @@ enigma group create pair laptop devbox   # a group of two
 enigma add --group pair ~/.ssh/config.d  # synced on laptop and devbox only
 enigma group add pair nas                # nas joins: it gets the files
 enigma group remove main nas             # nas leaves main: it keeps its files
+enigma group delete pair                 # pair is gone; its entries stop syncing, every machine keeps its files
 enigma entry move ~/.zshrc pair          # move an entry between groups
 enigma group merge pair main             # fold a group into another
 ```

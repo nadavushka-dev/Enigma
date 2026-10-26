@@ -38,7 +38,7 @@ func (c *confirmModal) view(width, _ int) string {
 	if c.q.AltKey != "" {
 		keys += "  " + StyleAccent.Render(c.q.AltKey) + " " + c.q.AltLabel
 	}
-	return lipgloss.NewStyle().MaxWidth(width-6).Render(c.q.Question) + "\n\n" + keys
+	return lipgloss.NewStyle().Width(width-6).Render(c.q.Question) + "\n\n" + keys // Width wraps a long question
 }
 
 // ---- progress --------------------------------------------------------------------

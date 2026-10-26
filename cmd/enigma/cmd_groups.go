@@ -16,7 +16,7 @@ import (
 )
 
 func init() {
-	register(&command{name: "group", args: "list [--json] | create <name> [machine]... | delete <name> | rename <name> <new> | add <name> <machine>... | remove <name> <machine>... | merge <from> <into> [--yes] [--add-members]",
+	register(&command{name: "group", args: "list [--json] | create <name> [machine]... | delete <name> [--yes] | rename <name> <new> | add <name> <machine>... | remove <name> <machine>... | merge <from> <into> [--yes] [--add-members]",
 		summary: "groups: which machines sync which entries (SPEC §9)", run: cmdGroup})
 	register(&command{name: "entry", args: "move <path> <group>", summary: "move a synced file or folder to another group", run: cmdEntry})
 }
@@ -127,25 +127,71 @@ func groupCreate(c *ctx, args []string) error {
 	return nil
 }
 
+// groupDelete deletes a group; its entries stop syncing and every machine
+// keeps its files (SPEC §9). With entries it says so and asks, unless --yes.
 func groupDelete(c *ctx, args []string) error {
-	if len(args) != 1 {
+	fs := flags("group delete")
+	yes := fs.Bool("yes", false, "")
+	var pos []string
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		pos, args = append(pos, args[0]), args[1:]
+	}
+	if err := fs.Parse(args); err != nil || len(pos)+fs.NArg() != 1 {
 		return usageError{"group delete needs exactly one group name"}
 	}
+	pos = append(pos, fs.Args()...)
 	cl, err := client()
 	if err != nil {
 		return err
 	}
-	if args[0] == "main" {
+	if pos[0] == "main" {
 		return fmt.Errorf("main cannot be deleted")
 	}
-	g, err := groupNamed(cl, args[0])
+	g, err := groupNamed(cl, pos[0])
 	if err != nil {
 		return err
+	}
+	entries, err := cl.Entries()
+	if err != nil {
+		return err
+	}
+	var paths []string
+	for _, e := range entries {
+		if e.Group == g.ID {
+			slash := ""
+			if e.Dir {
+				slash = "/"
+			}
+			paths = append(paths, "~/"+e.Path+slash)
+		}
+	}
+	sort.Strings(paths)
+	if len(paths) > 0 {
+		fmt.Fprintf(c.stdout, "group %s has %s on %s:\n", g.Name, engine.Plural(len(paths), "synced entry", "synced entries"), strings.Join(g.MemberNames, ", "))
+		for _, p := range paths {
+			fmt.Fprintf(c.stdout, "  %s\n", p)
+		}
+		fmt.Fprintf(c.stdout, "deleting %s makes them stop syncing; every machine keeps its files as they are.\nto keep syncing them everywhere, merge instead: enigma group merge %s main\n", g.Name, g.Name)
+		if !*yes {
+			if !c.interactive() {
+				return fmt.Errorf("pass --yes to delete a group with entries without a terminal")
+			}
+			fmt.Fprint(c.stdout, "delete? [y/N] ")
+			line, _ := bufio.NewReader(c.stdin).ReadString('\n')
+			if l := strings.ToLower(strings.TrimSpace(line)); l != "y" && l != "yes" {
+				fmt.Fprintln(c.stdout, "nothing changed")
+				return nil
+			}
+		}
 	}
 	if _, err := cl.Group(daemon.GroupRequest{Action: "delete", ID: g.ID}); err != nil {
 		return err
 	}
-	fmt.Fprintf(c.stdout, "deleted group %s on every machine\n", g.Name)
+	if len(paths) > 0 {
+		fmt.Fprintf(c.stdout, "deleted group %s on every machine; %s no longer synced\n", g.Name, engine.Plural(len(paths), "entry", "entries"))
+	} else {
+		fmt.Fprintf(c.stdout, "deleted group %s on every machine\n", g.Name)
+	}
 	return nil
 }
 
@@ -279,7 +325,7 @@ func groupMerge(c *ctx, args []string) error {
 		return fmt.Errorf("%s would stop syncing; pass --add-members to add %s to %s first", strings.Join(losers, ", "), strings.Join(losers, ", "), into.Name)
 	}
 	if !*yes {
-		if !isTerminal(os.Stdin) {
+		if !c.interactive() {
 			return fmt.Errorf("pass --yes to merge without a terminal")
 		}
 		fmt.Fprint(c.stdout, "merge? [y/N] ")
@@ -349,4 +395,10 @@ func cmdEntry(c *ctx, args []string) error {
 	}
 	fmt.Fprintf(c.stdout, "moved %s to %s\n", tilde(abs), args[2])
 	return nil
+}
+
+// interactive reports whether questions can be asked: stdin is a terminal.
+func (c *ctx) interactive() bool {
+	f, ok := c.stdin.(*os.File)
+	return ok && isTerminal(f)
 }

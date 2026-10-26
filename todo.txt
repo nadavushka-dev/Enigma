@@ -61,3 +61,4 @@ x 2026-10-26 2026-10-26 M7 groups cli: group list/create/delete/rename/add/remov
 x 2026-10-26 2026-10-26 M7 tui groups: Groups pane (n r x enter M), Files shows group + a asks group + m move, Machines enter shows groups (§13.2) +m7
 x 2026-10-26 2026-10-26 M7 e2e: 3 containers, main + pair group, non-member never gets pair paths, merge pair into main, upgrade from v0.2 keeps everything in main +m7
 2026-10-26 M7 release v0.3.0 (proto bump); NO push/tag without asking +m7
+2026-10-26 M7 wrap-up: CLI parity with the TUI group selection, README (TUI section, commands table) and re-record demo/sync.gif + demo/tui.gif with groups (demo/record.sh, vhs + Docker) +m7

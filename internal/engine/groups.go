@@ -220,15 +220,14 @@ func (e *Engine) DeleteGroup(id string) error {
 			ferr = err
 			return
 		}
-		n := 0
+		// Its entries stop syncing (as Remove does): the files stay where
+		// they are on every machine (SPEC §9).
 		for _, r := range e.st.Entries {
 			if !r.Removed && r.Group == id {
-				n++
+				e.st.Lamport++
+				r.Clock, r.By, r.Removed = e.st.Lamport, e.o.MachineID, true
+				e.applyEntry(r, nil)
 			}
-		}
-		if n > 0 {
-			ferr = fmt.Errorf("group %s still has %s; move or remove them first", g.Name, plural(n, "entry", "entries"))
-			return
 		}
 		e.st.Lamport++
 		g.Clock, g.By, g.Removed = e.st.Lamport, e.o.MachineID, true
@@ -308,7 +307,8 @@ func (e *Engine) GroupMembers(id string, add, remove []string) error {
 	return ferr
 }
 
-func plural(n int, one, many string) string {
+// Plural is "1 one" or "n many".
+func Plural(n int, one, many string) string {
 	if n == 1 {
 		return "1 " + one
 	}
