@@ -34,6 +34,7 @@ type fake struct {
 	steps    []string // what AddMachine/RemoveMachine print
 	opErr    error
 	index    *fuzzy.Index
+	groups   []engine.GroupInfo
 }
 
 func newFake(t *testing.T) *fake {
@@ -66,8 +67,43 @@ func (f *fake) Machines() ([]proto.MachineRecord, error) {
 }
 
 func (f *fake) Hosts() ([]string, error) { return f.hosts, nil }
-func (f *fake) Add(abs string) error     { f.call("add " + abs); return f.opErr }
-func (f *fake) Remove(abs string) error  { f.call("remove " + abs); return f.opErr }
+func (f *fake) Add(abs string, group string) error {
+	if group == "" {
+		f.call("add " + abs)
+	} else {
+		f.call("add " + abs + " " + group)
+	}
+	return f.opErr
+}
+
+func (f *fake) MoveEntry(abs string, group string) error {
+	f.call("move " + abs + " " + group)
+	return f.opErr
+}
+
+func (f *fake) Groups() ([]engine.GroupInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.groups == nil {
+		return []engine.GroupInfo{{GroupRecord: proto.GroupRecord{ID: "main", Name: "main", All: true, Members: []string{"id-mac"}}, MemberNames: []string{"mac"}}}, nil
+	}
+	return f.groups, nil
+}
+
+func (f *fake) GroupOp(req daemon.GroupRequest) (string, error) {
+	switch req.Action {
+	case "create":
+		f.call(fmt.Sprintf("group create %s add=%v", req.Name, req.Add))
+	case "delete":
+		f.call("group delete " + req.ID)
+	case "rename":
+		f.call("group rename " + req.ID + " " + req.Name)
+	case "members":
+		f.call(fmt.Sprintf("group members %s add=%v remove=%v", req.ID, req.Add, req.Remove))
+	}
+	return "new-id", f.opErr
+}
+func (f *fake) Remove(abs string) error { f.call("remove " + abs); return f.opErr }
 
 func (f *fake) SetLimits(l engine.Limits) (engine.Limits, error) {
 	f.call(fmt.Sprintf("set-limits %d %d", l.MaxFileSize, l.MaxFiles))
@@ -85,8 +121,12 @@ func (f *fake) SetLimits(l engine.Limits) (engine.Limits, error) {
 	return f.status.Limits, nil
 }
 
-func (f *fake) AddMachine(ctx context.Context, alias string, out io.Writer) error {
-	f.call("add-machine " + alias)
+func (f *fake) AddMachine(ctx context.Context, alias string, groups []string, out io.Writer) error {
+	if groups == nil {
+		f.call("add-machine " + alias)
+	} else {
+		f.call(fmt.Sprintf("add-machine %s groups=%v", alias, groups))
+	}
 	for _, s := range f.steps {
 		fmt.Fprintln(out, s)
 	}

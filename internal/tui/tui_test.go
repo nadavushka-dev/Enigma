@@ -13,7 +13,7 @@ import (
 
 func TestLayoutShowsThreePanesAndFooter(t *testing.T) {
 	m := started(t, newFake(t))
-	viewHas(t, m, "Machines", "Files", "Activity", "tab", "quit")
+	viewHas(t, m, "Machines", "Groups", "Files", "Activity", "tab", "quit")
 	lines := strings.Split(m.View(), "\n")
 	if len(lines) != 30 {
 		t.Fatalf("%d lines, want the terminal's 30", len(lines))
@@ -27,14 +27,14 @@ func TestLayoutShowsThreePanesAndFooter(t *testing.T) {
 
 func TestTabMovesFocus(t *testing.T) {
 	m := started(t, newFake(t))
-	for _, want := range []int{1, 2, 0} {
+	for _, want := range []int{1, 2, 3, 0} {
 		drive(t, m, key("tab"))
 		if m.focus != want {
 			t.Fatalf("focus %d, want %d", m.focus, want)
 		}
 	}
 	drive(t, m, key("shift+tab"))
-	if m.focus != 2 {
+	if m.focus != 3 {
 		t.Fatalf("shift+tab: focus %d", m.focus)
 	}
 }
@@ -148,13 +148,13 @@ func TestBatchedRunesAreSeparateKeys(t *testing.T) {
 	f.write(t, "b/x", "1")
 	f.write(t, "c/x", "1")
 	m := started(t, f)
-	drive(t, m, key("tab"), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jj")})
-	if p := m.panes[1].(*filesPane); p.cursor != 2 {
+	drive(t, m, key("tab"), key("tab"), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jj")})
+	if p := m.panes[paneFiles].(*filesPane); p.cursor != 2 {
 		t.Fatalf("cursor %d after \"jj\", want 2", p.cursor)
 	}
 	// A paste stays one message (it is text, not keys).
 	drive(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("kk"), Paste: true})
-	if p := m.panes[1].(*filesPane); p.cursor != 2 {
+	if p := m.panes[paneFiles].(*filesPane); p.cursor != 2 {
 		t.Fatalf("a paste moved the cursor to %d", p.cursor)
 	}
 }

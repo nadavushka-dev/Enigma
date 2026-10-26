@@ -11,6 +11,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/nadavushka-dev/enigma/internal/daemon"
+	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
 // hostsMsg is the ssh aliases from Backend.Hosts().
@@ -154,6 +156,8 @@ func (p *machinesPane) key(k tea.KeyMsg, s *Shared) tea.Cmd {
 		return p.add(s)
 	case "x":
 		return p.remove(s)
+	case "enter":
+		return p.groups(s)
 	}
 	p.clamp()
 	return nil
@@ -168,9 +172,92 @@ func (p *machinesPane) add(s *Shared) tea.Cmd {
 		return showError(fmt.Errorf("%s is already in the fleet", r.name))
 	}
 	b := s.Backend
+	progress := func(groups []string) tea.Cmd {
+		return func() tea.Msg {
+			return OpenProgress{Title: "Adding " + r.name, Run: func(ctx context.Context, out io.Writer) error {
+				return b.AddMachine(ctx, r.name, groups, out)
+			}}
+		}
+	}
+	if len(s.Groups) <= 1 {
+		return progress(nil)
+	}
+	var items []PickItem
+	for _, g := range s.Groups {
+		items = append(items, PickItem{Label: g.Name, Checked: g.ID == proto.MainGroup})
+	}
 	return func() tea.Msg {
-		return OpenProgress{Title: "Adding " + r.name, Run: func(ctx context.Context, out io.Writer) error {
-			return b.AddMachine(ctx, r.name, out)
+		return OpenPick{Title: "Groups for " + r.name, Items: items, Submit: func(names []string) tea.Cmd {
+			if len(names) == 0 {
+				names = []string{"none"}
+			}
+			return progress(names)
+		}}
+	}
+}
+
+// groups edits which groups a member is in (SPEC §13.2).
+func (p *machinesPane) groups(s *Shared) tea.Cmd {
+	if p.cur >= len(p.rows) {
+		return nil
+	}
+	r := p.rows[p.cur]
+	if !r.member {
+		return nil
+	}
+	id := ""
+	for _, m := range s.Machines {
+		if m.Name == r.name {
+			id = m.ID
+		}
+	}
+	var items []PickItem
+	for _, g := range s.Groups {
+		items = append(items, PickItem{Label: g.Name, Checked: contains(g.Members, id)})
+	}
+	b := s.Backend
+	return func() tea.Msg {
+		return OpenPick{Title: "Groups of " + r.name, Items: items, Submit: func(names []string) tea.Cmd {
+			want := map[string]bool{}
+			for _, n := range names {
+				want[n] = true
+			}
+			type change struct {
+				g     engine.GroupInfo
+				joins bool
+			}
+			var changes []change
+			var plan []string
+			for _, g := range s.Groups {
+				in := contains(g.Members, id)
+				switch {
+				case want[g.Name] && !in:
+					changes = append(changes, change{g, true})
+					plan = append(plan, r.name+" joins "+g.Name)
+				case !want[g.Name] && in:
+					changes = append(changes, change{g, false})
+					plan = append(plan, r.name+" leaves "+g.Name)
+				}
+			}
+			if len(changes) == 0 {
+				return nil
+			}
+			return func() tea.Msg {
+				return OpenConfirm{Question: strings.Join(plan, ", ") + ". Apply?", Yes: func() tea.Msg {
+					for _, c := range changes {
+						req := daemon.GroupRequest{Action: "members", ID: c.g.ID}
+						if c.joins {
+							req.Add = []string{id}
+						} else {
+							req.Remove = []string{id}
+						}
+						if _, err := b.GroupOp(req); err != nil {
+							return ShowError{Err: err}
+						}
+					}
+					return done(strings.Join(plan, ", "))
+				}}
+			}
 		}}
 	}
 }

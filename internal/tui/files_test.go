@@ -17,11 +17,11 @@ import (
 func filesModel(t *testing.T, f *fake) *Model {
 	t.Helper()
 	m := started(t, f)
-	drive(t, m, key("tab"))
+	drive(t, m, key("tab"), key("tab"))
 	return m
 }
 
-func files(m *Model) *filesPane { return m.panes[1].(*filesPane) }
+func files(m *Model) *filesPane { return m.panes[paneFiles].(*filesPane) }
 
 // rows is the pane's visible rows as plain "<rel>" strings.
 func rows(m *Model) []string {

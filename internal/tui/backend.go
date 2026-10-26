@@ -23,10 +23,14 @@ type Backend interface {
 	Home() string
 	Status() (daemon.StatusReport, error)
 	Machines() ([]proto.MachineRecord, error)
-	Hosts() ([]string, error) // aliases in ~/.ssh/config
-	Add(abs string) error     // start syncing a file or folder
-	Remove(abs string) error  // stop syncing an entry
-	AddMachine(ctx context.Context, alias string, out io.Writer) error
+	Hosts() ([]string, error)           // aliases in ~/.ssh/config
+	Add(abs string, group string) error // start syncing a file or folder in a group (ID; "" is main)
+	Remove(abs string) error            // stop syncing an entry
+	MoveEntry(abs string, group string) error
+	Groups() ([]engine.GroupInfo, error)
+	GroupOp(req daemon.GroupRequest) (string, error) // one change to a group (SPEC §9)
+	// AddMachine installs and joins alias; groups as fleet.Add (nil: main).
+	AddMachine(ctx context.Context, alias string, groups []string, out io.Writer) error
 	RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error
 	Events(after uint64, wait time.Duration) ([]engine.Event, error)
 	ReadFile(rel string) ([]byte, error)            // a file under ~
@@ -56,12 +60,15 @@ func (l *Live) Home() string                                     { return l.home
 func (l *Live) Status() (daemon.StatusReport, error)             { return l.cl.Status() }
 func (l *Live) Machines() ([]proto.MachineRecord, error)         { return fleet.Members(l.cl) }
 func (l *Live) Hosts() ([]string, error)                         { return sshconfig.Hosts(l.home) }
-func (l *Live) Add(abs string) error                             { return l.cl.Add(abs, nil, "") }
+func (l *Live) Add(abs string, group string) error               { return l.cl.Add(abs, nil, group) }
+func (l *Live) MoveEntry(abs string, group string) error         { return l.cl.MoveEntry(abs, group) }
+func (l *Live) Groups() ([]engine.GroupInfo, error)              { return l.cl.Groups() }
+func (l *Live) GroupOp(req daemon.GroupRequest) (string, error)  { return l.cl.Group(req) }
 func (l *Live) Remove(abs string) error                          { return l.cl.Remove(abs) }
 func (l *Live) SetLimits(x engine.Limits) (engine.Limits, error) { return l.cl.SetLimits(x) }
 
-func (l *Live) AddMachine(ctx context.Context, alias string, out io.Writer) error {
-	return fleet.Add(ctx, l.cl, l.Paths, alias, "", nil, out)
+func (l *Live) AddMachine(ctx context.Context, alias string, groups []string, out io.Writer) error {
+	return fleet.Add(ctx, l.cl, l.Paths, alias, "", groups, out)
 }
 
 func (l *Live) RemoveMachine(ctx context.Context, name string, uninstall bool, out io.Writer) error {

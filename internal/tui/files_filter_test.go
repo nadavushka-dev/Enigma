@@ -81,7 +81,7 @@ func TestFilterTakesEveryKeyWhileOpen(t *testing.T) {
 		t.Fatalf("q and ? must type: filter %+v help %v", files(m).filter, m.help)
 	}
 	drive(t, m, key("tab"))
-	if m.focus != 1 {
+	if m.focus != paneFiles {
 		t.Fatal("tab switches the scope, not the focus")
 	}
 	_, cmd := m.Update(key("ctrl+c"))

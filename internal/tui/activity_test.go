@@ -115,7 +115,7 @@ func TestActivityFollowsNewUnlessMovedUp(t *testing.T) {
 	if strings.Contains(m.View(), "~/f1 ") {
 		t.Fatal("the view must follow the newest events")
 	}
-	drive(t, m, key("tab"), key("tab")) // focus Activity
+	drive(t, m, key("tab"), key("tab"), key("tab")) // focus Activity
 	drive(t, m, key("g"))
 	viewHas(t, m, "~/f1 ")
 	drive(t, m, EventsMsg{Events: []engine.Event{ev(21, engine.EvChanged, "f21", "", "")}})
@@ -193,7 +193,7 @@ func TestActivityEnterOnConflictOpensViewer(t *testing.T) {
 		ev(1, engine.EvChanged, "x", "", ""),
 		ev(2, engine.EvConflict, "notes/a (conflict).md", "", "notes/a.md"),
 	}})
-	drive(t, m, key("tab"), key("tab"), key("enter"))
+	drive(t, m, key("tab"), key("tab"), key("tab"), key("enter"))
 	vm, ok := m.modal.(*viewerModal)
 	if !ok {
 		t.Fatalf("modal %T, want the viewer", m.modal)
@@ -217,7 +217,7 @@ func TestActivityEnterOnVanishedCopyShowsError(t *testing.T) {
 	f.write(t, "notes/a.md", "one\n")
 	m := started(t, f)
 	drive(t, m, EventsMsg{Events: []engine.Event{ev(1, engine.EvConflict, "notes/a (conflict).md", "", "notes/a.md")}})
-	drive(t, m, key("tab"), key("tab"), key("enter"))
+	drive(t, m, key("tab"), key("tab"), key("tab"), key("enter"))
 	if m.modal != nil {
 		t.Fatal("no viewer for a missing copy")
 	}
@@ -228,7 +228,7 @@ func TestActivityEnterOnOtherLinesDoesNothing(t *testing.T) {
 	f := newFake(t)
 	m := started(t, f)
 	drive(t, m, EventsMsg{Events: []engine.Event{ev(1, engine.EvChanged, "x", "", "")}})
-	drive(t, m, key("tab"), key("tab"))
+	drive(t, m, key("tab"), key("tab"), key("tab"))
 	_, cmd := m.Update(key("enter"))
 	if cmd != nil || m.modal != nil {
 		t.Fatal("enter on a plain line must do nothing")

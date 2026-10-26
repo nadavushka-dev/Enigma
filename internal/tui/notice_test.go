@@ -79,7 +79,7 @@ func TestD20_ProblemsModalWithNothingToShow(t *testing.T) {
 func TestD20_EnterOnAProblemJumpsToItsRow(t *testing.T) {
 	_, m := withProblems(t)
 	drive(t, m, key("p"), key("enter")) // first problem: the laptop link
-	if m.modal != nil || m.focus != 0 {
+	if m.modal != nil || m.focus != paneMachines {
 		t.Fatalf("modal=%v focus=%d, want the Machines pane", m.modal, m.focus)
 	}
 	mp := m.panes[0].(*machinesPane)
@@ -87,10 +87,10 @@ func TestD20_EnterOnAProblemJumpsToItsRow(t *testing.T) {
 		t.Fatalf("cursor on %q", mp.rows[mp.cur].name)
 	}
 	drive(t, m, key("p"), key("j"), key("enter")) // second: the bin entry
-	if m.focus != 1 {
+	if m.focus != paneFiles {
 		t.Fatalf("focus %d, want the Files pane", m.focus)
 	}
-	fp := m.panes[1].(*filesPane)
+	fp := m.panes[paneFiles].(*filesPane)
 	if n := fp.current(); n == nil || n.rel != "bin" {
 		t.Fatalf("cursor on %v", n)
 	}

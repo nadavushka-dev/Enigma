@@ -13,6 +13,7 @@ import (
 
 	"github.com/nadavushka-dev/enigma/internal/engine"
 	"github.com/nadavushka-dev/enigma/internal/fsx"
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
 // filesPane is the Files pane (SPEC §12.2): a lazy tree rooted at ~.
@@ -51,7 +52,7 @@ func (p *filesPane) Help() []KeyHelp {
 	if p.filter != nil {
 		return []KeyHelp{{"type", "filter"}, {"tab", "scope"}, {"↑/↓", "move"}, {"enter", "jump"}, {"esc", "cancel"}}
 	}
-	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"x", "remove"}, {"/", "filter"}}
+	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"m", "move"}, {"x", "remove"}, {"/", "filter"}}
 }
 
 func (p *filesPane) MoreHelp() (string, []KeyHelp) {
@@ -250,6 +251,8 @@ func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		}
 	case "a":
 		return p.add(s, n)
+	case "m":
+		return p.move(s, n)
 	case "x":
 		return p.remove(s, n)
 	case "/":
@@ -267,11 +270,55 @@ func (p *filesPane) add(s *Shared, n *fileNode) tea.Cmd {
 	}
 	abs := filepath.Join(s.Backend.Home(), filepath.FromSlash(n.rel))
 	b := s.Backend
-	return func() tea.Msg {
-		if err := b.Add(abs); err != nil {
-			return ShowError{Err: err}
+	add := func(group string) tea.Cmd {
+		return func() tea.Msg {
+			if err := b.Add(abs, group); err != nil {
+				return ShowError{Err: err}
+			}
+			return RefreshMsg{}
 		}
-		return RefreshMsg{}
+	}
+	if len(s.Groups) <= 1 {
+		return add("")
+	}
+	return func() tea.Msg {
+		return OpenPrompt{Title: "Add ~/" + n.rel + " to group", Label: "group", Initial: "main", Submit: func(name string) tea.Cmd {
+			g, err := groupByName(s, name)
+			if err != nil {
+				return showErr(err)
+			}
+			if g.ID == proto.MainGroup {
+				return add("")
+			}
+			return add(g.ID)
+		}}
+	}
+}
+
+// move puts an entry in another group (SPEC §9).
+func (p *filesPane) move(s *Shared, n *fileNode) tea.Cmd {
+	if n == nil {
+		return nil
+	}
+	e := entryFor(s, n.rel)
+	if e == nil || e.Path != n.rel {
+		return showErr(fmt.Errorf("~/%s is not a synced entry", n.rel))
+	}
+	abs := filepath.Join(s.Backend.Home(), filepath.FromSlash(n.rel))
+	b := s.Backend
+	return func() tea.Msg {
+		return OpenPrompt{Title: "Move ~/" + n.rel + " to group", Label: "group", Initial: groupNameOf(s, e.Group), Submit: func(name string) tea.Cmd {
+			g, err := groupByName(s, name)
+			if err != nil {
+				return showErr(err)
+			}
+			return func() tea.Msg {
+				if err := b.MoveEntry(abs, g.ID); err != nil {
+					return ShowError{Err: err}
+				}
+				return done("moved ~/" + n.rel + " to " + g.Name)
+			}
+		}}
 	}
 }
 
@@ -324,8 +371,13 @@ func (p *filesPane) markRel(s *Shared, rel string, dir bool) string {
 		return ""
 	}
 	if e.Path == rel {
-		if e.Missing {
+		switch {
+		case e.Frozen:
+			return "frozen · " + groupNameOf(s, e.Group)
+		case e.Missing:
 			return "missing here"
+		case e.Group != "" && e.Group != proto.MainGroup:
+			return "synced · " + groupNameOf(s, e.Group)
 		}
 		return "synced"
 	}

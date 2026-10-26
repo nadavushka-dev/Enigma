@@ -30,13 +30,22 @@ type Shared struct {
 	Backend   Backend
 	Status    daemon.StatusReport
 	Machines  []proto.MachineRecord
-	StatusErr error // the daemon is unreachable
+	Groups    []engine.GroupInfo // main first (SPEC §9)
+	StatusErr error              // the daemon is unreachable
 }
+
+// Pane indexes.
+const (
+	paneMachines = iota
+	paneGroups
+	paneFiles
+	paneActivity
+)
 
 // KeyHelp is one key binding, for the footer and the help overlay.
 type KeyHelp struct{ Key, Does string }
 
-// pane is one of the three panes.
+// pane is one of the four panes.
 type pane interface {
 	Title() string
 	// Update gets key messages while focused, and every other message
@@ -64,6 +73,7 @@ type moreHelp interface {
 type StatusMsg struct {
 	Status   daemon.StatusReport
 	Machines []proto.MachineRecord
+	Groups   []engine.GroupInfo
 	Err      error
 }
 
@@ -128,7 +138,7 @@ type Model struct {
 // New builds the TUI over b.
 func New(b Backend) *Model {
 	s := &Shared{Backend: b}
-	return &Model{s: s, panes: []pane{newMachines(), newFiles(), newActivity()}}
+	return &Model{s: s, panes: []pane{newMachines(), newGroups(), newFiles(), newActivity()}}
 }
 
 // Run starts the TUI in the terminal.
@@ -149,7 +159,11 @@ func (m *Model) fetchStatus() tea.Cmd {
 			return StatusMsg{Err: err}
 		}
 		ms, err := b.Machines()
-		return StatusMsg{Status: st, Machines: ms, Err: err}
+		if err != nil {
+			return StatusMsg{Err: err}
+		}
+		gs, err := b.Groups()
+		return StatusMsg{Status: st, Machines: ms, Groups: gs, Err: err}
 	}
 }
 
@@ -177,7 +191,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case StatusMsg:
 		m.s.StatusErr = msg.Err
 		if msg.Err == nil {
-			m.s.Status, m.s.Machines = msg.Status, msg.Machines
+			m.s.Status, m.s.Machines, m.s.Groups = msg.Status, msg.Machines, msg.Groups
 		}
 		return m, tea.Batch(m.broadcast(msg), tea.Tick(statusEvery, func(time.Time) tea.Msg { return tickMsg{} }))
 	case tickMsg:
@@ -208,9 +222,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case JumpMsg:
 		switch {
 		case msg.Path != "":
-			m.focus = 1
+			m.focus = paneFiles
 		case msg.Peer != "":
-			m.focus = 0
+			m.focus = paneMachines
 		}
 		return m, m.broadcast(msg)
 	case OpenConfirm:
@@ -291,8 +305,8 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, m.panes[m.focus].Update(k, m.s)
 }
 
-// layout: Machines | Files on top, Activity below, then the notice line
-// (SPEC §13.5) and the key hints.
+// layout: Machines | Groups | Files on top, Activity below, then the
+// notice line (SPEC §13.5) and the key hints.
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "starting…"
@@ -308,14 +322,15 @@ func (m *Model) View() string {
 	}
 	actH := max(5, bodyH/4)
 	topH := bodyH - actH
-	leftW := max(26, m.width*35/100)
-	rightW := m.width - leftW
+	leftW := max(22, m.width*26/100)
+	midW := max(22, m.width*30/100)
+	rightW := m.width - leftW - midW
 	render := func(i, w, h int) string {
 		p := m.panes[i]
 		return box(p.Title(), p.View(m.s, w-2, h-2, i == m.focus), w, h, i == m.focus)
 	}
-	top := lipgloss.JoinHorizontal(lipgloss.Top, render(0, leftW, topH), render(1, rightW, topH))
-	screen := lipgloss.JoinVertical(lipgloss.Left, top, render(2, m.width, actH))
+	top := lipgloss.JoinHorizontal(lipgloss.Top, render(paneMachines, leftW, topH), render(paneGroups, midW, topH), render(paneFiles, rightW, topH))
+	screen := lipgloss.JoinVertical(lipgloss.Left, top, render(paneActivity, m.width, actH))
 	if banner != "" {
 		screen = banner + "\n" + screen
 	}
