@@ -282,14 +282,20 @@ func (p *groupsPane) merge(s *Shared) tea.Cmd {
 		return showErr(fmt.Errorf("main cannot be merged away"))
 	}
 	b := s.Backend
+	var others []PickItem
+	for _, g := range s.Groups {
+		if g.ID != from.ID {
+			others = append(others, PickItem{Label: g.Name})
+		}
+	}
 	return func() tea.Msg {
-		return OpenPrompt{Title: "Merge " + from.Name + " into", Label: "group", Submit: func(name string) tea.Cmd {
-			into, err := groupByName(s, name)
+		return OpenPick{Title: "Merge " + from.Name + " into", Single: true, Items: others, Submit: func(names []string) tea.Cmd {
+			if len(names) != 1 {
+				return nil
+			}
+			into, err := groupByName(s, names[0])
 			if err != nil {
 				return showErr(err)
-			}
-			if into.ID == from.ID {
-				return showErr(fmt.Errorf("a group cannot be merged into itself"))
 			}
 			machineName := map[string]string{}
 			for _, m := range s.Machines {

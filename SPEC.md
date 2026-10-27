@@ -566,8 +566,9 @@ a notice line (§13.5), and the key hints.
   copy side by side, differing lines marked.
 - **Prompts:** names and the limits (`L`, §8) are typed into a one-line
   prompt (bubbles `textinput`), with `esc` to cancel. Lists of machines or
-  groups are picked with `space`. A group is never typed where a typo could
-  go wrong: adds and moves use the selected group.
+  groups are picked with `space`; a single choice (the group to merge into)
+  is a list where `enter` picks the row. A group is never typed where a
+  typo could go wrong: adds and moves use the selected group.
 - **Confirmations** wrap their question and can carry a list (the entries a
   group delete stops syncing), one item per line, scrolled with `j`/`k`
   when it does not fit, with "n more" markers at either end.

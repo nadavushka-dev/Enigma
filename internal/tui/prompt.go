@@ -51,6 +51,7 @@ func (m *promptModal) view(width, _ int) string {
 type OpenPick struct {
 	Title  string
 	Items  []PickItem
+	Single bool // one choice: enter picks the row under the cursor, no boxes
 	Submit func(checked []string) tea.Cmd
 }
 
@@ -73,10 +74,16 @@ func (m *pickModal) key(k tea.KeyMsg) (tea.Cmd, bool) {
 	case "k", "up":
 		m.cur = max(0, m.cur-1)
 	case " ", "x":
-		if m.cur < len(m.p.Items) {
+		if m.cur < len(m.p.Items) && !m.p.Single {
 			m.p.Items[m.cur].Checked = !m.p.Items[m.cur].Checked
 		}
 	case "enter":
+		if m.p.Single {
+			if m.cur >= len(m.p.Items) {
+				return nil, true
+			}
+			return m.p.Submit([]string{m.p.Items[m.cur].Label}), true
+		}
 		var out []string
 		for _, it := range m.p.Items {
 			if it.Checked {
@@ -100,12 +107,19 @@ func (m *pickModal) view(width, height int) string {
 		if it.Checked {
 			box = "[x] "
 		}
+		if m.p.Single {
+			box = ""
+		}
 		line := fit(box+it.Label, w)
 		if i == m.cur {
 			line = StyleSelected.Render(line)
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + StyleDim.Render("space toggle  enter ok  esc cancel"))
+	hint := "space toggle  enter ok  esc cancel"
+	if m.p.Single {
+		hint = "enter choose  esc cancel"
+	}
+	b.WriteString("\n" + StyleDim.Render(hint))
 	return b.String()
 }

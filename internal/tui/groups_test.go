@@ -110,8 +110,10 @@ func TestGroupsMergeShowsThePlan(t *testing.T) {
 	f := groupsFake(t)
 	m := groupsModel(t, f)
 	drive(t, m, key("j"), key("M"))
-	viewHas(t, m, "Merge pair into")
-	typeText(t, m, "main")
+	viewHas(t, m, "Merge pair into", "main", "enter choose") // a list of the other groups, nothing typed
+	if v := m.View(); strings.Contains(v, "[ ]") || strings.Contains(v, "  pair") {
+		t.Fatalf("merge should offer the other groups as a single choice:\n%s", v)
+	}
 	drive(t, m, key("enter"))
 	viewHas(t, m, "laptop gains ~/secret", "nas gains ~/secret", "then pair is deleted")
 	drive(t, m, key("y"))

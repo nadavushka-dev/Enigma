@@ -105,3 +105,19 @@ func TestLimitsDaemonErrorReachesTheNoticeLine(t *testing.T) {
 		t.Fatalf("notice %q", l)
 	}
 }
+
+func TestPickSingleChoosesTheRowUnderTheCursor(t *testing.T) {
+	f := newFake(t)
+	m := started(t, f)
+	var got []string
+	drive(t, m, OpenPick{Title: "Pick one", Single: true, Items: []PickItem{{Label: "one"}, {Label: "two"}, {Label: "three"}},
+		Submit: func(names []string) tea.Cmd { got = names; return nil }})
+	viewHas(t, m, "Pick one", "one", "two", "enter choose")
+	drive(t, m, key("j"), key(" "), key("j"), key("enter")) // space does nothing here
+	if len(got) != 1 || got[0] != "three" {
+		t.Fatalf("got %v", got)
+	}
+	if m.modal != nil {
+		t.Fatal("enter should close the pick")
+	}
+}
