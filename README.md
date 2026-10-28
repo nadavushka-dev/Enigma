@@ -12,7 +12,7 @@ No server, no account, no open ports: if you can `ssh` to it, Enigma can sync it
 ![Platforms](https://img.shields.io/badge/macOS%20%7C%20Linux-amd64%20%7C%20arm64-555)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-<img src="demo/sync.gif" alt="enigma init, machine add devbox, add ~/.claude, an edit on devbox arriving on the mac" width="900">
+<img src="demo/sync.gif" alt="enigma init, machine add devbox, add ~/.claude, an edit on devbox arriving on the mac, then a group that nas never hears of" width="900">
 
 </div>
 
@@ -93,20 +93,26 @@ enigma group merge pair main             # fold a group into another
 
 A machine that is not in a group never receives its files, and never
 learns their names. Leaving a group stops syncing there; the files stay.
-`enigma group list` shows every group, its machines and how many entries
-it holds.
+Deleting a group stops syncing its entries everywhere, and the files stay
+too; `delete` and `merge` first show what changes and ask. `enigma group
+list` shows every group, its machines and how many entries it holds. All
+of it is in the TUI as well.
 
 ## The TUI
 
 Run `enigma` on its own for a live view. It shows your machines and the
 hosts in your ssh config, your groups, a browser over `~` with what's
-synced, and an activity feed. Add machines and files from there with `a`,
-manage groups with `n`, `enter` and `M`, press `enter` on a conflict to
-compare the two versions side by side, `p` for what is wrong right now, and
-`L` to change the limits.
+synced, and an activity feed. Add machines and files from there with `a`.
+In Groups, `a` picks the group that new files go to (the Files title says
+which), `n` makes one, `enter` edits its machines, `M` merges it into
+another and `x` deletes it after listing what stops syncing. In Files, `m`
+moves an entry to the picked group. Press `enter` on a conflict to compare
+the two versions side by side, `p` for what is wrong right now, and `L` to
+change the limits. Nothing is typed where a typo could do harm: groups are
+always picked from a list.
 
 <div align="center">
-<img src="demo/tui.gif" alt="the Enigma TUI: machines, files and the activity feed" width="900">
+<img src="demo/tui.gif" alt="the Enigma TUI: machines, groups, files and the activity feed" width="900">
 </div>
 
 ## Commands
@@ -119,7 +125,7 @@ compare the two versions side by side, `p` for what is wrong right now, and
 | `enigma add <path> [--group G] [--ignore GLOB]…` | Sync a file or folder on the machines of a group (default `main`). |
 | `enigma remove <path>` | Stop syncing it. The files stay everywhere. |
 | `enigma list` · `status` | What's synced, and the state of each link. Status starts with what is wrong right now. |
-| `enigma group list` · `create <name> [machine]…` · `delete` · `rename` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into>` | Groups: which machines sync which entries. |
+| `enigma group list` · `create <name> [machine]…` · `delete <name>` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into>` | Groups: which machines sync which entries. Delete and merge show what changes and ask (`--yes` to skip). |
 | `enigma entry move <path> <group>` | Move a synced file or folder to another group. |
 | `enigma limits [--file-size SIZE] [--files N]` | Show the fleet's limits, or change them on every machine. |
 | `enigma conflicts [--local]` | Conflict copies on every machine. |

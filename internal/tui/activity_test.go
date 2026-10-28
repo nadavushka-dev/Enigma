@@ -265,3 +265,16 @@ func eqBools(a, b []bool) bool {
 func itoa(i int) string { return strconv.Itoa(i) }
 
 var _ tea.Msg = EventsMsg{}
+
+func TestGroupEventsReadAsSentences(t *testing.T) {
+	cases := map[engine.Event]string{
+		{Kind: engine.EvGroup, Detail: "group pair created", Peer: "devbox"}:                  "◇ group pair created (devbox)",
+		{Kind: engine.EvGroup, Detail: "group pair members: devbox, mac"}:                     "◇ group pair members: devbox, mac",
+		{Kind: engine.EvEntryMoved, Path: "work", Detail: "moved to group pair", Peer: "mac"}: "↪ ~/work moved to group pair (mac)",
+	}
+	for ev, want := range cases {
+		if got := formatEvent(ev); !strings.HasSuffix(got, want) {
+			t.Errorf("%v:\n got %q\nwant suffix %q", ev.Kind, got, want)
+		}
+	}
+}

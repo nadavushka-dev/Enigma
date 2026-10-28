@@ -203,6 +203,16 @@ func formatEvent(ev engine.Event) string {
 		if ev.Peer != "" {
 			text += " (from " + ev.Peer + ")"
 		}
+	case engine.EvGroup:
+		text = "◇ " + ev.Detail
+		if ev.Peer != "" {
+			text += " (" + ev.Peer + ")"
+		}
+	case engine.EvEntryMoved:
+		text = "↪ " + home(ev.Path) + " " + ev.Detail
+		if ev.Peer != "" {
+			text += " (" + ev.Peer + ")"
+		}
 	case engine.EvError:
 		text = ev.Path + ": " + ev.Detail
 		style = StyleBad.Render
