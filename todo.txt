@@ -1,3 +1,3 @@
 x 2026-10-26 2026-10-21 M6 founder machine has no ssh target: other members cannot dial it without enigma machine alias (design talk) +m6
 (B) 2026-10-26 M7 release v0.3.0 (proto bump); NO push/tag without asking +m7
-(A) 2026-10-26 M7 wrap-up: CLI parity with the TUI group selection, README (TUI section, commands table) and re-record demo/sync.gif + demo/tui.gif with groups (demo/record.sh, vhs + Docker) +m7
+x 2026-10-28 2026-10-26 M7 wrap-up: CLI parity with the TUI group selection, README (TUI section, commands table) and re-record demo/sync.gif + demo/tui.gif with groups (demo/record.sh, vhs + Docker) +m7
