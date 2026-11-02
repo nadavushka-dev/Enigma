@@ -51,6 +51,19 @@ func usage(w io.Writer) {
 		c := commands[n]
 		fmt.Fprintf(w, "  enigma %-34s %s\n", strings.TrimSpace(n+" "+c.args), c.summary)
 	}
+	fmt.Fprintln(w, "\n  enigma <command> -h        help for one command")
+	fmt.Fprintln(w, "  enigma -v, --version       print the version")
+}
+
+// commandUsage is `enigma <command> -h`: one command, its flags and what it does.
+func commandUsage(w io.Writer, c *command) {
+	fmt.Fprintf(w, "usage: enigma %s %s\n", c.name, c.args)
+	fmt.Fprintf(w, "\n%s\n", c.summary)
+	fmt.Fprintln(w, "\nrun `enigma -h` for every command")
+}
+
+func printVersion(c *ctx) {
+	fmt.Fprintln(c.stdout, "enigma", buildinfo.Version, buildinfo.Platform())
 }
 
 func main() {
@@ -61,7 +74,28 @@ func run(args []string, c *ctx) int {
 	if len(args) == 0 && c.stdout == os.Stdout && isTerminal(os.Stdout) && isTerminal(os.Stdin) {
 		args = []string{"tui"} // SPEC §12.1: bare enigma in a terminal
 	}
-	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+	if len(args) == 0 {
+		usage(c.stdout)
+		return 0
+	}
+	switch args[0] {
+	case "-v", "--version":
+		if len(args) != 1 {
+			fmt.Fprintln(c.stderr, "enigma: --version takes no arguments")
+			return 2
+		}
+		printVersion(c)
+		return 0
+	case "-h", "--help":
+		usage(c.stdout)
+		return 0
+	case "help":
+		if len(args) > 1 {
+			if cmd, ok := commands[args[1]]; ok {
+				commandUsage(c.stdout, cmd)
+				return 0
+			}
+		}
 		usage(c.stdout)
 		return 0
 	}
@@ -70,6 +104,18 @@ func run(args []string, c *ctx) int {
 		fmt.Fprintf(c.stderr, "enigma: unknown command %q\n\n", args[0])
 		usage(c.stderr)
 		return 2
+	}
+	// `enigma add -h`, `enigma machine add -h`, and even `enigma add --group g -h`
+	// show the command's help instead of parsing flags. `--` ends the scan, so
+	// a path literally named -h still works: enigma add -- -h.
+	for _, a := range args[1:] {
+		if a == "--" {
+			break
+		}
+		if a == "-h" || a == "--help" {
+			commandUsage(c.stdout, cmd)
+			return 0
+		}
 	}
 	if err := cmd.run(c, args[1:]); err != nil {
 		fmt.Fprintln(c.stderr, "enigma:", err)
@@ -85,7 +131,7 @@ func run(args []string, c *ctx) int {
 
 func init() {
 	register(&command{name: "version", summary: "print the version", run: func(c *ctx, _ []string) error {
-		fmt.Fprintln(c.stdout, "enigma", buildinfo.Version, buildinfo.Platform())
+		printVersion(c)
 		return nil
 	}})
 }

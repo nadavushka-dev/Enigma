@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/version"
 )
 
@@ -31,6 +32,7 @@ type Copy struct {
 	Path         string          // relative to ~
 	FromIncoming bool            // content comes from the incoming version, else from local disk
 	Version      version.Version // the copy's version, identical on every machine
+	FirstAdd     bool            // made by a first add (D22): no desktop notification
 }
 
 type Decision struct {
@@ -53,17 +55,22 @@ type Merged struct {
 // deterministic: two machines deciding about the same pair of versions reach
 // the same Result and Copy, so a conflict is resolved once (SPEC §7).
 func Decide(p string, cur *version.Version, in version.Version, haveContent bool) Decision {
-	return decide(p, cur, in, haveContent, nil)
+	return DecidePolicy(p, cur, in, haveContent, proto.FirstAddKeepBoth)
+}
+
+// DecidePolicy is Decide with the entry's first-add policy (SPEC §10, D22).
+func DecidePolicy(p string, cur *version.Version, in version.Version, haveContent bool, policy proto.FirstAddPolicy) Decision {
+	return decide(p, cur, in, haveContent, policy, nil)
 }
 
 // DecideMerged is Decide with the incoming content at hand and a clean merge
 // of it with the local content (SPEC §7 step 3). The merge is used only where
 // the fallback would otherwise make a conflict copy.
 func DecideMerged(p string, cur *version.Version, in version.Version, m Merged) Decision {
-	return decide(p, cur, in, true, &m)
+	return decide(p, cur, in, true, proto.FirstAddKeepBoth, &m)
 }
 
-func decide(p string, cur *version.Version, in version.Version, haveContent bool, merged *Merged) Decision {
+func decide(p string, cur *version.Version, in version.Version, haveContent bool, policy proto.FirstAddPolicy, merged *Merged) Decision {
 	need := func(d Decision) Decision {
 		if !haveContent {
 			return Decision{Action: Fetch}
@@ -116,10 +123,24 @@ func decide(p string, cur *version.Version, in version.Version, haveContent bool
 		return Decision{Action: Record, Result: resolved(*cur)}
 	case cur.IsDeleted():
 		return need(Decision{Action: Apply, Result: resolved(in)})
-	case in.Origin == version.Seed && cur.Origin == version.Preexisting: // D7
-		return need(Decision{Action: Apply, Result: resolved(in), Backup: true})
+	case in.Origin == version.Seed && cur.Origin == version.Preexisting: // D7, D22
+		if policy == proto.FirstAddReplace {
+			return need(Decision{Action: Apply, Result: resolved(in), Backup: true})
+		}
+		cv := resolved(*cur)
+		cv.Origin = version.Edit
+		return need(Decision{Action: Apply, Result: resolved(in), Backup: true,
+			Copy: &Copy{Path: ConflictName(p, cur.ByName, cur.Mtime, cur.Hash),
+				FromIncoming: false, Version: cv, FirstAdd: true}})
 	case cur.Origin == version.Seed && in.Origin == version.Preexisting:
-		return Decision{Action: Record, Result: resolved(*cur)}
+		if policy == proto.FirstAddReplace {
+			return Decision{Action: Record, Result: resolved(*cur)}
+		}
+		cv := resolved(in)
+		cv.Origin = version.Edit
+		return need(Decision{Action: Record, Result: resolved(*cur),
+			Copy: &Copy{Path: ConflictName(p, in.ByName, in.Mtime, in.Hash),
+				FromIncoming: true, Version: cv, FirstAdd: true}})
 	}
 
 	if !haveContent {

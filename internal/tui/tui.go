@@ -99,6 +99,16 @@ type OpenConfirm struct {
 	Alt              tea.Cmd
 }
 
+// OpenAdopt asks how to resolve a first add whose path exists on another
+// machine (SPEC §10, D22). The modal chooses keep-both or mine-wins per
+// differing file.
+type OpenAdopt struct {
+	Path, Rel string
+	Group     string
+	GroupName string
+	Report    engine.AdoptionReport
+}
+
 // OpenProgress runs a long operation and shows its output live.
 type OpenProgress struct {
 	Title string
@@ -239,6 +249,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case OpenPick:
 		m.modal = &pickModal{p: msg}
+		return m, nil
+	case OpenAdopt:
+		adopt := msg
+		m.modal = newAdoptModal(adopt, func(policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) tea.Cmd {
+			b := m.s.Backend
+			return func() tea.Msg {
+				if err := b.AddWithPolicy(adopt.Path, adopt.Group, policy, policies); err != nil {
+					return ShowError{Err: err}
+				}
+				return done("added ~/" + adopt.Rel + " to " + adopt.GroupName)
+			}
+		})
 		return m, nil
 	case OpenProgress:
 		pm, cmd := startProgress(msg)

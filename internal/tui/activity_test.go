@@ -56,6 +56,7 @@ func TestActivityFormatsEachKind(t *testing.T) {
 		{ev(13, "weird", "p", "", "d"), "15:04:05 weird p d"},
 		{ev(14, engine.EvLimits, "", "", "25 MB per file, 2,000 files per folder"), "15:04:05 limits: 25 MB per file, 2,000 files per folder"},
 		{ev(15, engine.EvLimits, "", "devbox", "25 MB per file, 2,000 files per folder"), "15:04:05 limits: 25 MB per file, 2,000 files per folder (from devbox)"},
+		{ev(16, engine.EvKeptBoth, "notes/a (conflict).md", "", "notes/a.md"), "15:04:05 ✓ kept both: ~/notes/a.md (copy ~/notes/a (conflict).md)"},
 	}
 	for _, c := range cases {
 		if got := plain(formatEvent(c.ev)); got != c.want {
@@ -70,6 +71,7 @@ func TestActivityStylesByKind(t *testing.T) {
 		style lipgloss.Style
 	}{
 		{ev(1, engine.EvConflict, "c", "", "o"), StyleWarn},
+		{ev(5, engine.EvKeptBoth, "c", "", "o"), StyleOK},
 		{ev(2, engine.EvLinkUp, "", "devbox", ""), StyleOK},
 		{ev(3, engine.EvLinkDown, "", "devbox", ""), StyleDim},
 		{ev(4, engine.EvError, "p", "", "d"), StyleBad},

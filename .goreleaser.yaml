@@ -39,6 +39,8 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - SPEC.md
+      - skills/enigma/SKILL.md
+      - skills/enigma/references/*
 
 checksum:
   name_template: checksums.txt

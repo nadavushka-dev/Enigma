@@ -106,10 +106,14 @@ synced, and an activity feed. Add machines and files from there with `a`.
 In Groups, `a` picks the group that new files go to (the Files title says
 which), `n` makes one, `enter` edits its machines, `M` merges it into
 another and `x` deletes it after listing what stops syncing. In Files, `m`
-moves an entry to the picked group. Press `enter` on a conflict to compare
-the two versions side by side, `p` for what is wrong right now, and `L` to
-change the limits. Nothing is typed where a typo could do harm: groups are
-always picked from a list.
+moves an entry to the picked group. Adding a path that already exists
+elsewhere shows the same first-add report as the CLI and asks what to do:
+keep both, this machine wins, or cancel. A folder can take that choice
+for every differing file, or be decided file by file from a list. Press
+`enter` on a conflict to compare the two versions side by side, `p` for
+what is wrong right now, and `L` to change the limits. Nothing is typed
+where a typo could do harm: groups are always picked from a list, and a
+list always selects — `enter` opens the choice.
 
 <div align="center">
 <img src="demo/tui.gif" alt="the Enigma TUI: machines, groups, files and the activity feed" width="900">
@@ -122,7 +126,7 @@ always picked from a list.
 | `enigma init [--name NAME]` | Start a fleet with this machine as its first member. |
 | `enigma machine add <ssh-alias> [--group G]…` | Add a machine, to `main` or to the groups given. |
 | `enigma machine list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | Manage the machines in the fleet. |
-| `enigma add <path> [--group G] [--ignore GLOB]…` | Sync a file or folder on the machines of a group (default `main`). |
+| `enigma add <path> [--group G] [--ignore GLOB]… [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` | Sync a file or folder on the machines of a group (default `main`). If another machine already has the path, it shows where and asks: keep both (the other copy becomes a conflict copy), this machine wins (the other copy is backed up and replaced), or cancel. `--dry-run` shows the report, `--json` is for scripts. |
 | `enigma remove <path>` | Stop syncing it. The files stay everywhere. |
 | `enigma list` · `status` | What's synced, and the state of each link. Status starts with what is wrong right now. |
 | `enigma group list` · `create <name> [machine]…` · `delete <name>` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into>` | Groups: which machines sync which entries. Delete and merge show what changes and ask (`--yes` to skip). |
@@ -135,7 +139,18 @@ always picked from a list.
 | `enigma update [--check]` | Move to the latest release. The fleet follows. |
 | `enigma tui`, or plain `enigma` | The terminal UI. |
 
-Every command takes `--json`, for scripts and agents.
+Most commands take `--json`, for scripts and agents (`enigma list` is
+human-only; use `enigma status --json` for entries). `enigma -h` lists every
+command, `enigma <command> -h` explains one, and `enigma -v` prints the
+version.
+
+## Agents
+
+[`skills/enigma`](skills/enigma/SKILL.md) is an Agent Skill for using the
+CLI safely: the first-add preview and its choices, diagnosis with
+`status`/`doctor`/`conflicts`, groups, and the destructive actions that need
+confirmation. Copy it to `~/.claude/skills/enigma/` for Claude Code, or point
+another agent at the same files. It ships in the release tarball.
 
 ## What it syncs, and what it doesn't
 
@@ -149,9 +164,13 @@ Every command takes `--json`, for scripts and agents.
   shows the new files left out until there is room.
 - **Always ignored:** `.git/`, `node_modules/`, `.DS_Store`, editor swap
   files. Add your own with `--ignore`.
-- **When you add a folder** that already exists on another machine, the
-  other machine backs up its copy first. Files that exist only on the other
-  machine are kept and spread to everyone.
+- **When you add a path that already exists on another machine**, Enigma
+  shows where it is and whether it differs, then asks. The default keeps
+  both: your version stays at the path and the other machine's copy becomes
+  a visible `.conflict-` file. "This machine wins" replaces it after a
+  local backup. Files that exist only on the other machine are kept and
+  spread to everyone. The choice is remembered on the entry, so machines
+  that were offline follow it when they reconnect.
 
 **Every member is trusted.** Machines upgrade each other over their links,
 so a member can run a new Enigma binary on any machine it links to. Add

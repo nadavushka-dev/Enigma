@@ -23,9 +23,11 @@ type Backend interface {
 	Home() string
 	Status() (daemon.StatusReport, error)
 	Machines() ([]proto.MachineRecord, error)
-	Hosts() ([]string, error)           // aliases in ~/.ssh/config
-	Add(abs string, group string) error // start syncing a file or folder in a group (ID; "" is main)
-	Remove(abs string) error            // stop syncing an entry
+	Hosts() ([]string, error)                                        // aliases in ~/.ssh/config
+	Preview(abs string, group string) (engine.AdoptionReport, error) // first-add report (D22)
+	Add(abs string, group string) error                              // start syncing a file or folder in a group (ID; "" is main)
+	AddWithPolicy(abs string, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error
+	Remove(abs string) error // stop syncing an entry
 	MoveEntry(abs string, group string) error
 	Groups() ([]engine.GroupInfo, error)
 	GroupOp(req daemon.GroupRequest) (string, error) // one change to a group (SPEC §9)
@@ -56,11 +58,17 @@ func NewLive(p config.Paths) (*Live, error) {
 	return &Live{Paths: p, home: home, cl: daemon.NewClient(p)}, nil
 }
 
-func (l *Live) Home() string                                     { return l.home }
-func (l *Live) Status() (daemon.StatusReport, error)             { return l.cl.Status() }
-func (l *Live) Machines() ([]proto.MachineRecord, error)         { return fleet.Members(l.cl) }
-func (l *Live) Hosts() ([]string, error)                         { return sshconfig.Hosts(l.home) }
-func (l *Live) Add(abs string, group string) error               { return l.cl.Add(abs, nil, group) }
+func (l *Live) Home() string                             { return l.home }
+func (l *Live) Status() (daemon.StatusReport, error)     { return l.cl.Status() }
+func (l *Live) Machines() ([]proto.MachineRecord, error) { return fleet.Members(l.cl) }
+func (l *Live) Hosts() ([]string, error)                 { return sshconfig.Hosts(l.home) }
+func (l *Live) Preview(abs, group string) (engine.AdoptionReport, error) {
+	return l.cl.Preview(abs, nil, group)
+}
+func (l *Live) Add(abs string, group string) error { return l.cl.Add(abs, nil, group) }
+func (l *Live) AddWithPolicy(abs, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error {
+	return l.cl.AddWithPolicy(abs, nil, group, policy, policies)
+}
 func (l *Live) MoveEntry(abs string, group string) error         { return l.cl.MoveEntry(abs, group) }
 func (l *Live) Groups() ([]engine.GroupInfo, error)              { return l.cl.Groups() }
 func (l *Live) GroupOp(req daemon.GroupRequest) (string, error)  { return l.cl.Group(req) }

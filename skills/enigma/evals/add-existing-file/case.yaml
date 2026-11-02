@@ -1,0 +1,7 @@
+schema_version: "1.1"
+name: add-existing-file
+expected_outcome: |
+  The agent previews ~/test.txt before adding it, sees that devbox has a
+  different copy, and adds it with keep-both (or asks before choosing
+  mine-wins). It does not silently replace the devbox copy, and it verifies
+  the result with enigma status --json.

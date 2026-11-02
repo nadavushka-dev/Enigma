@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
 // ---- harness ---------------------------------------------------------------
@@ -305,7 +307,7 @@ func TestD7_D13_FirstAddWinsAndPeerBacksUpItsCopy(t *testing.T) {
 	a.writeAged(".claude/CLAUDE.md", "adder version", time.Hour) // older, still wins
 	b.write(".claude/CLAUDE.md", "b's own version")
 	link(t, a, b)
-	a.add(".claude/CLAUDE.md")
+	addWithPolicy(t, a, ".claude/CLAUDE.md", proto.FirstAddReplace, nil)
 	eventually(t, "adder wins on b", hasFile(b, ".claude/CLAUDE.md", "adder version"))
 	if !backedUp(b, "b's own version") {
 		t.Fatal("b must back up its differing copy locally")

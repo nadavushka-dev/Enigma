@@ -103,6 +103,13 @@ type Engine struct {
 	settle   time.Duration
 	events   []Event // recent activity (SPEC §12.2)
 	evSeq    uint64
+
+	// First-add probes (SPEC §5, D22). The map is guarded by probeMu, not
+	// the engine loop: Preview waits off the loop while replies arrive.
+	probeMu  sync.Mutex
+	probes   map[string]*probeCollector
+	probeSeq atomic.Uint64
+	probeSem chan struct{}
 }
 
 func New(o Options) (*Engine, error) {
@@ -151,6 +158,7 @@ func New(o Options) (*Engine, error) {
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
+		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),
 	}
 	if e.st, err = loadState(e.statePath); err != nil {
 		return nil, fmt.Errorf("load state: %w", err)
@@ -266,11 +274,17 @@ func (e *Engine) Close() error {
 
 // ---- public API -------------------------------------------------------------
 
-// Add starts syncing the file or folder at abs (D6, D7).
-// Add starts syncing abs in group (SPEC §9; "" is main).
+// Add starts syncing abs in group (SPEC §9; "" is main) and keeps both
+// copies when it already exists elsewhere (D22).
 func (e *Engine) Add(abs string, ignore []string, group string) error {
+	return e.AddWithPolicy(abs, ignore, group, proto.FirstAddKeepBoth, nil)
+}
+
+// AddWithPolicy is Add with the user's first-add choice (D22): keep-both
+// or replace, and per-file choices for a folder.
+func (e *Engine) AddWithPolicy(abs string, ignore []string, group string, policy proto.FirstAddPolicy, byPath map[string]proto.FirstAddPolicy) error {
 	var err error
-	if derr := e.do(func() { err = e.addEntry(abs, ignore, group) }); derr != nil {
+	if derr := e.do(func() { err = e.addEntry(abs, ignore, group, policy, byPath) }); derr != nil {
 		return derr
 	}
 	return err

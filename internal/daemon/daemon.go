@@ -481,6 +481,22 @@ type pathRequest struct {
 	Group  string   `json:"group,omitempty"` // group ID (SPEC §9); empty: main
 }
 
+// PreviewRequest asks what the group has at a path before adding it (D22).
+type PreviewRequest struct {
+	Path   string   `json:"path"`
+	Ignore []string `json:"ignore,omitempty"`
+	Group  string   `json:"group,omitempty"`
+}
+
+// AddRequest adds an entry with the user's first-add choice (D22).
+type AddRequest struct {
+	Path     string                          `json:"path"`
+	Ignore   []string                        `json:"ignore,omitempty"`
+	Group    string                          `json:"group,omitempty"`
+	Policy   proto.FirstAddPolicy            `json:"policy,omitempty"`
+	Policies map[string]proto.FirstAddPolicy `json:"policies,omitempty"` // per file, relative to the entry
+}
+
 // GroupRequest is one change to a group (SPEC §9): create (Name, Add as
 // the members), delete (ID), rename (ID, Name) or members (ID, Add, Remove).
 type GroupRequest struct {
@@ -516,13 +532,22 @@ func (d *daemon) api() http.Handler {
 	mux.HandleFunc("GET /problems", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, d.status().Problems, nil)
 	})
-	mux.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
-		var req pathRequest
+	mux.HandleFunc("POST /preview", func(w http.ResponseWriter, r *http.Request) {
+		var req PreviewRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			reply(w, nil, err)
 			return
 		}
-		reply(w, struct{}{}, d.eng.Add(req.Path, req.Ignore, req.Group))
+		rep, err := d.eng.Preview(req.Path, req.Ignore, req.Group)
+		reply(w, rep, err)
+	})
+	mux.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
+		var req AddRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		reply(w, struct{}{}, d.eng.AddWithPolicy(req.Path, req.Ignore, req.Group, req.Policy, req.Policies))
 	})
 	mux.HandleFunc("POST /remove", func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest

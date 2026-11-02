@@ -35,6 +35,11 @@ type fake struct {
 	opErr    error
 	index    *fuzzy.Index
 	groups   []engine.GroupInfo
+
+	previewFn   func(abs, group string) (engine.AdoptionReport, error)
+	previews    []string
+	policyCalls []string
+	policyPaths []map[string]proto.FirstAddPolicy
 }
 
 func newFake(t *testing.T) *fake {
@@ -67,12 +72,36 @@ func (f *fake) Machines() ([]proto.MachineRecord, error) {
 }
 
 func (f *fake) Hosts() ([]string, error) { return f.hosts, nil }
+
+func (f *fake) Preview(abs, group string) (engine.AdoptionReport, error) {
+	f.mu.Lock()
+	f.previews = append(f.previews, abs+" "+group)
+	f.mu.Unlock()
+	if f.previewFn != nil {
+		return f.previewFn(abs, group)
+	}
+	return engine.AdoptionReport{Path: abs, Local: engine.ProbeMachine{Exists: true}}, nil
+}
+
 func (f *fake) Add(abs string, group string) error {
 	if group == "" {
 		f.call("add " + abs)
 	} else {
 		f.call("add " + abs + " " + group)
 	}
+	return f.opErr
+}
+
+func (f *fake) AddWithPolicy(abs string, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error {
+	if group == "" {
+		f.call("add " + abs)
+	} else {
+		f.call("add " + abs + " " + group)
+	}
+	f.mu.Lock()
+	f.policyCalls = append(f.policyCalls, string(policy))
+	f.policyPaths = append(f.policyPaths, policies)
+	f.mu.Unlock()
 	return f.opErr
 }
 

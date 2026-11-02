@@ -319,6 +319,10 @@ func (e *Engine) handleMsg(p *peer, m *proto.Msg) {
 		if m.Version != nil && e.sharesPath(m.Path, p.id) {
 			e.onFile(p, m.Path, *m.Version, m.Ancestry, m.Content)
 		}
+	case proto.Probe:
+		e.onProbe(p, m.Probe)
+	case proto.ProbeReply:
+		e.onProbeReply(p, m.ProbeReply)
 	default:
 		e.log.Warn("unknown message", "type", m.Type, "peer", p.name)
 	}

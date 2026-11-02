@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/nadavushka-dev/enigma/internal/version"
 )
@@ -37,6 +38,8 @@ const (
 	Ping        Type = "ping"         // heartbeat: a link silent for 3 intervals is dead
 	Settings    Type = "settings"     // fleet state: the fleet's limits (SPEC §8)
 	Groups      Type = "groups"       // fleet state: group records (SPEC §9)
+	Probe       Type = "probe"        // first add: what do you have at path? (SPEC §5, D22)
+	ProbeReply  Type = "probe_reply"  // first add: the answer (metadata only)
 )
 
 type HelloBody struct {
@@ -93,6 +96,20 @@ type UpgradeBody struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// FirstAddPolicy is how an entry resolves a differing copy that existed
+// before it started syncing (SPEC §10, D22).
+type FirstAddPolicy string
+
+const (
+	// FirstAddKeepBoth keeps the adding machine's version at the path and
+	// writes the other machine's differing version as a conflict copy.
+	// It is the default, including for records written before D22.
+	FirstAddKeepBoth FirstAddPolicy = "keep-both"
+	// FirstAddReplace backs up the other machine's differing version and
+	// writes the adding machine's version over it (D7's old behavior).
+	FirstAddReplace FirstAddPolicy = "replace"
+)
+
 // EntryRecord is one entry in the replicated fleet state (SPEC §6.4).
 // The record with the highest (Clock, By) wins.
 type EntryRecord struct {
@@ -103,6 +120,27 @@ type EntryRecord struct {
 	Clock   uint64   `json:"clock"`
 	By      string   `json:"by"`
 	Removed bool     `json:"removed,omitempty"`
+
+	// First-add policy (SPEC §10, D22). Empty means keep-both. ByPath
+	// overrides it for files inside a folder, keyed by the path relative
+	// to the entry root.
+	FirstAdd       FirstAddPolicy            `json:"first_add,omitempty"`
+	FirstAddByPath map[string]FirstAddPolicy `json:"first_add_by_path,omitempty"`
+}
+
+// FirstAddFor is the policy for rel, a tracked path at or under the entry.
+func (r EntryRecord) FirstAddFor(rel string) FirstAddPolicy {
+	p := r.FirstAdd
+	if r.Dir && r.FirstAddByPath != nil {
+		key := strings.TrimPrefix(rel, r.Path+"/")
+		if v, ok := r.FirstAddByPath[key]; ok {
+			p = v
+		}
+	}
+	if p == FirstAddReplace {
+		return FirstAddReplace
+	}
+	return FirstAddKeepBoth
 }
 
 // Newer reports whether r supersedes o.
@@ -113,17 +151,53 @@ func (r EntryRecord) Newer(o EntryRecord) bool {
 	return r.By > o.By
 }
 
+// ProbeBody asks a group member what it has at path (SPEC §5, D22).
+type ProbeBody struct {
+	ID     string   `json:"id"`
+	Path   string   `json:"path"`  // relative to ~
+	Group  string   `json:"group"` // group ID; both ends must be members
+	Ignore []string `json:"ignore,omitempty"`
+}
+
+// ProbeFile is one regular file in a probe answer, relative to the entry
+// root. Metadata only; content is never sent.
+type ProbeFile struct {
+	Path  string `json:"path"`
+	Hash  string `json:"hash"`
+	Size  int64  `json:"size"`
+	Mtime int64  `json:"mtime"`
+	Exec  bool   `json:"exec,omitempty"`
+}
+
+// ProbeReplyBody is one member's answer. Path is empty for a single-file
+// entry; for a folder it is relative to the folder.
+type ProbeReplyBody struct {
+	ID             string      `json:"id"`
+	Path           string      `json:"path"`
+	Group          string      `json:"group"`
+	Exists         bool        `json:"exists"`
+	Dir            bool        `json:"dir,omitempty"`
+	Files          []ProbeFile `json:"files,omitempty"`
+	Truncated      bool        `json:"truncated,omitempty"` // too many files to list
+	Error          string      `json:"error,omitempty"`
+	Entry          bool        `json:"entry,omitempty"`            // this machine already syncs the path
+	EntryGroup     string      `json:"entry_group,omitempty"`      // ... in this group (ID)
+	EntryGroupName string      `json:"entry_group_name,omitempty"` // ... and its display name
+}
+
 type Msg struct {
-	Type     Type                       `json:"type"`
-	Hello    *HelloBody                 `json:"hello,omitempty"`
-	Entries  []EntryRecord              `json:"entries,omitempty"`
-	Machines []MachineRecord            `json:"machines,omitempty"`
-	Settings *SettingsRecord            `json:"settings,omitempty"`
-	Groups   []GroupRecord              `json:"groups,omitempty"`
-	Upgrade  *UpgradeBody               `json:"upgrade,omitempty"`
-	Summary  map[string]version.Version `json:"summary,omitempty"`
-	Path     string                     `json:"path,omitempty"`
-	Version  *version.Version           `json:"version,omitempty"`
+	Type       Type                       `json:"type"`
+	Hello      *HelloBody                 `json:"hello,omitempty"`
+	Entries    []EntryRecord              `json:"entries,omitempty"`
+	Machines   []MachineRecord            `json:"machines,omitempty"`
+	Settings   *SettingsRecord            `json:"settings,omitempty"`
+	Groups     []GroupRecord              `json:"groups,omitempty"`
+	Upgrade    *UpgradeBody               `json:"upgrade,omitempty"`
+	Probe      *ProbeBody                 `json:"probe,omitempty"`
+	ProbeReply *ProbeReplyBody            `json:"probe_reply,omitempty"`
+	Summary    map[string]version.Version `json:"summary,omitempty"`
+	Path       string                     `json:"path,omitempty"`
+	Version    *version.Version           `json:"version,omitempty"`
 	// Ancestry of Version (File only), for picking a merge base (SPEC §7).
 	Ancestry []version.Node `json:"ancestry,omitempty"`
 	HasBody  bool           `json:"body,omitempty"`

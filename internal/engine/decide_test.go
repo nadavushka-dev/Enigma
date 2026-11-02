@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nadavushka-dev/enigma/internal/fsx"
+	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/version"
 )
 
@@ -166,20 +168,82 @@ func TestD7_SeedBeatsPreexistingWithBackup(t *testing.T) {
 	pre.Origin = version.Preexisting
 
 	// On the machine with the preexisting copy: fetch, back up, apply.
-	mustAction(t, Decide("f", &pre, seed, false), Fetch)
-	d := Decide("f", &pre, seed, true)
+	mustAction(t, DecidePolicy("f", &pre, seed, false, proto.FirstAddReplace), Fetch)
+	d := DecidePolicy("f", &pre, seed, true, proto.FirstAddReplace)
 	mustAction(t, d, Apply)
 	if !d.Backup || d.Copy != nil {
 		t.Fatalf("want local backup and no conflict copy: %+v", d)
 	}
 	// On the adding machine: keep, no fetch needed, no backup there.
-	d2 := Decide("f", &seed, pre, false)
+	d2 := DecidePolicy("f", &seed, pre, false, proto.FirstAddReplace)
 	mustAction(t, d2, Record)
 	if d2.Backup || d2.Copy != nil || d2.Result.Hash != "adder" {
 		t.Fatalf("adder side: %+v", d2)
 	}
 	if version.Compare(d.Result.Vector, d2.Result.Vector) != version.Equal {
 		t.Fatal("sides disagree on the resolved vector")
+	}
+}
+
+func TestD22_KeepBothIsTheDefaultAndKeepsThePreexistingCopy(t *testing.T) {
+	seed := ver("adder", V{"x": 1}, "x", 1)
+	seed.Origin = version.Seed
+	pre := ver("mine", V{"b": 1}, "b", 2)
+	pre.Origin = version.Preexisting
+
+	mustAction(t, Decide("f", &pre, seed, false), Fetch)
+	d := Decide("f", &pre, seed, true)
+	mustAction(t, d, Apply)
+	if d.Result.Hash != "adder" {
+		t.Fatalf("the adder must own the path: %+v", d.Result)
+	}
+	if !d.Backup {
+		t.Fatal("the losing copy must also be backed up as a safety net")
+	}
+	if d.Copy == nil || d.Copy.FromIncoming {
+		t.Fatalf("want a local copy of the preexisting content: %+v", d.Copy)
+	}
+	if d.Copy.Version.Hash != "mine" || d.Copy.Version.Origin != version.Edit {
+		t.Fatalf("copy version: %+v", d.Copy.Version)
+	}
+	if version.Compare(d.Copy.Version.Vector, version.Vector{"x": 1, "b": 1}) != version.Equal {
+		t.Fatalf("copy vector: %v", d.Copy.Version.Vector)
+	}
+	if d.Copy.Path == "f" || !strings.Contains(d.Copy.Path, ".conflict-b-name-") {
+		t.Fatalf("copy path: %q", d.Copy.Path)
+	}
+}
+
+func TestD22_KeepBothOnTheAddingMachineAlsoKeepsTheCopy(t *testing.T) {
+	seed := ver("adder", V{"x": 1}, "x", 1)
+	seed.Origin = version.Seed
+	pre := ver("mine", V{"b": 1}, "b", 2)
+	pre.Origin = version.Preexisting
+
+	// The adding machine needs the preexisting content to write the copy.
+	mustAction(t, Decide("f", &seed, pre, false), Fetch)
+	d := Decide("f", &seed, pre, true)
+	mustAction(t, d, Record)
+	if d.Copy == nil || !d.Copy.FromIncoming {
+		t.Fatalf("want a copy made from the incoming content: %+v", d.Copy)
+	}
+	if d.Copy.Version.Hash != "mine" || d.Copy.Path == "f" {
+		t.Fatalf("copy: %+v", d.Copy)
+	}
+}
+
+func TestD22_ReplacePolicyKeepsTheOldBackupOnlyBehavior(t *testing.T) {
+	seed := ver("adder", V{"x": 1}, "x", 1)
+	seed.Origin = version.Seed
+	pre := ver("mine", V{"b": 1}, "b", 2)
+	pre.Origin = version.Preexisting
+	d := DecidePolicy("f", &pre, seed, true, proto.FirstAddReplace)
+	if d.Copy != nil || !d.Backup || d.Result.Hash != "adder" {
+		t.Fatalf("want replace with backup only: %+v", d)
+	}
+	d2 := DecidePolicy("f", &seed, pre, true, proto.FirstAddReplace)
+	if d2.Copy != nil || d2.Backup || d2.Result.Hash != "adder" {
+		t.Fatalf("adder side must just record: %+v", d2)
 	}
 }
 
@@ -191,9 +255,9 @@ func TestD7_ResolvedSeedOverPreexistingStillBacksUp(t *testing.T) {
 	seed.Origin = version.Seed
 	pre := ver("mine", V{"b": 1}, "b", 2)
 	pre.Origin = version.Preexisting
-	resolved := Decide("f", &seed, pre, false).Result // what the adder announces
+	resolved := DecidePolicy("f", &seed, pre, false, proto.FirstAddReplace).Result // what the adder announces
 
-	d := Decide("f", &pre, resolved, true)
+	d := DecidePolicy("f", &pre, resolved, true, proto.FirstAddReplace)
 	mustAction(t, d, Apply)
 	if !d.Backup {
 		t.Fatal("preexisting content replaced without a backup")

@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: remove-group
+expected_outcome: |
+  The agent reads the group and its entries, shows what will stop syncing,
+  asks before deleting, and explains that the files stay on every machine.
+  It does not pass --yes before the user confirms.

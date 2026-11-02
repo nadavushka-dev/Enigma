@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: diagnose-missing-file
+expected_outcome: |
+  The agent reads enigma status --json, surfaces the standing problems and
+  the nas link state, checks with enigma doctor --json (or conflicts) and
+  explains the cause without editing state or changing the fleet.

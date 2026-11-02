@@ -8,13 +8,36 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/nadavushka-dev/enigma/internal/engine"
+	"github.com/nadavushka-dev/enigma/internal/proto"
 )
 
-type fakeAdder struct{ adds []string }
+type fakeAdder struct {
+	adds       []string
+	policies   []string
+	preview    func(abs string) engine.AdoptionReport
+	previewErr error
+}
 
 func (f *fakeAdder) Add(abs string, ignore []string, group string) error {
+	return f.AddWithPolicy(abs, ignore, group, proto.FirstAddKeepBoth, nil)
+}
+
+func (f *fakeAdder) AddWithPolicy(abs string, ignore []string, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error {
 	f.adds = append(f.adds, abs+" "+strings.Join(ignore, ","))
+	f.policies = append(f.policies, string(policy))
 	return nil
+}
+
+func (f *fakeAdder) Preview(abs string, ignore []string, group string) (engine.AdoptionReport, error) {
+	if f.previewErr != nil {
+		return engine.AdoptionReport{}, f.previewErr
+	}
+	if f.preview != nil {
+		return f.preview(abs), nil
+	}
+	return engine.AdoptionReport{Path: abs, Local: engine.ProbeMachine{Exists: true}}, nil
 }
 
 // pickWorld fakes the terminal, fzf and the daemon around `enigma add`.
@@ -27,9 +50,12 @@ func pickWorld(t *testing.T, terminal, fzf bool, picks []string) (*fakeAdder, *[
 	os.WriteFile(filepath.Join(home, ".enigma", "state.json"), []byte("{}"), 0o644)
 	var fed []string
 	fa := &fakeAdder{}
-	oldT, oldF, oldR, oldA := pickerIsTerminal, haveFzf, runFzf, entryAdder
-	t.Cleanup(func() { pickerIsTerminal, haveFzf, runFzf, entryAdder = oldT, oldF, oldR, oldA })
+	oldT, oldF, oldR, oldA, oldP := pickerIsTerminal, haveFzf, runFzf, entryAdder, addPromptIsTerminal
+	t.Cleanup(func() {
+		pickerIsTerminal, haveFzf, runFzf, entryAdder, addPromptIsTerminal = oldT, oldF, oldR, oldA, oldP
+	})
 	pickerIsTerminal = func() bool { return terminal }
+	addPromptIsTerminal = func(*ctx) bool { return terminal }
 	haveFzf = func() bool { return fzf }
 	runFzf = func(lines []string) ([]string, error) { fed = lines; return picks, nil }
 	entryAdder = func() (adder, error) { return fa, nil }
@@ -37,8 +63,12 @@ func pickWorld(t *testing.T, terminal, fzf bool, picks []string) (*fakeAdder, *[
 }
 
 func runAdd(args ...string) (string, int) {
+	return runAddInput("", args...)
+}
+
+func runAddInput(in string, args ...string) (string, int) {
 	var out bytes.Buffer
-	code := run(append([]string{"add"}, args...), &ctx{stdout: &out, stderr: &out})
+	code := run(append([]string{"add"}, args...), &ctx{stdout: &out, stderr: &out, stdin: strings.NewReader(in)})
 	return out.String(), code
 }
 

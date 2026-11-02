@@ -90,7 +90,7 @@ func (p *activityPane) key(k tea.KeyMsg, s *Shared) tea.Cmd {
 
 // open shows a conflict's original and copy side by side.
 func (p *activityPane) open(ev engine.Event, s *Shared) tea.Cmd {
-	if ev.Kind != engine.EvConflict {
+	if ev.Kind != engine.EvConflict && ev.Kind != engine.EvKeptBoth {
 		return nil
 	}
 	b, orig, copyPath := s.Backend, ev.Detail, ev.Path
@@ -186,6 +186,9 @@ func formatEvent(ev engine.Event) string {
 	case engine.EvConflict:
 		text = "! conflict: " + home(ev.Detail) + " (copy " + home(ev.Path) + ")"
 		style = StyleWarn.Render
+	case engine.EvKeptBoth:
+		text = "✓ kept both: " + home(ev.Detail) + " (copy " + home(ev.Path) + ")"
+		style = StyleOK.Render
 	case engine.EvEntryAdded:
 		text = "+ " + home(ev.Path) + " synced"
 	case engine.EvEntryRemoved:

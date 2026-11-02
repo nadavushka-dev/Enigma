@@ -46,12 +46,34 @@ func TestRoundTripAllTypes(t *testing.T) {
 		{Type: File, Path: ".claude/CLAUDE.md", Version: &v, Ancestry: []version.Node{{Hash: "h", Parents: []string{"p"}}, {Hash: "p"}}, Content: []byte("# rules\x00binary-safe")},
 		{Type: Summary, Summary: map[string]version.Version{"x": v}},
 		{Type: SummaryDone},
+		{Type: Probe, Probe: &ProbeBody{ID: "p1", Path: "notes", Group: MainGroup, Ignore: []string{"*.log"}}},
+		{Type: ProbeReply, ProbeReply: &ProbeReplyBody{ID: "p1", Path: "notes", Group: MainGroup, Exists: true, Dir: true,
+			Files: []ProbeFile{{Path: "a.md", Hash: "h", Size: 3, Mtime: 42, Exec: true}}, Entry: true, EntryGroup: MainGroup, EntryGroupName: "main"}},
+		{Type: Entries, Entries: []EntryRecord{{Path: "d", Dir: true, FirstAdd: FirstAddReplace,
+			FirstAddByPath: map[string]FirstAddPolicy{"a.md": FirstAddKeepBoth}}}},
 	}
 	got := roundTrip(t, msgs...)
 	for i := range msgs {
 		if !reflect.DeepEqual(got[i], msgs[i]) {
 			t.Errorf("msg %d:\n got %+v\nwant %+v", i, got[i], msgs[i])
 		}
+	}
+}
+
+func TestEntryRecordFirstAddFor(t *testing.T) {
+	r := EntryRecord{Path: "d", Dir: true, FirstAdd: FirstAddKeepBoth,
+		FirstAddByPath: map[string]FirstAddPolicy{"a.md": FirstAddReplace}}
+	if got := r.FirstAddFor("d/a.md"); got != FirstAddReplace {
+		t.Fatalf("per-file: %q", got)
+	}
+	if got := r.FirstAddFor("d/b.md"); got != FirstAddKeepBoth {
+		t.Fatalf("default: %q", got)
+	}
+	if got := (EntryRecord{}).FirstAddFor("d/a.md"); got != FirstAddKeepBoth {
+		t.Fatalf("empty record must default to keep-both: %q", got)
+	}
+	if got := (EntryRecord{Path: "f", FirstAdd: FirstAddReplace}).FirstAddFor("f"); got != FirstAddReplace {
+		t.Fatalf("file entry: %q", got)
 	}
 }
 

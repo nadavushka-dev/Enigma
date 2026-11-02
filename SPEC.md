@@ -34,13 +34,13 @@ machines, in real time, over ssh.
 | D4 | Conflicts | Edits to different lines are merged automatically. Overlapping edits: the newer edit wins in place, and the other is kept as a conflict copy that syncs like any file. Binary files skip the merge. |
 | D5 | Machines | One fleet containing all your machines, picked from your ssh config. No per-file machine lists and no exclusions (superseded by D19: groups). |
 | D6 | What syncs | Files and folders, at the same path relative to `~` on every machine. Created on machines that don't have it yet, including parent folders. |
-| D7 | First add | The machine where you add a file or folder wins. Machines that already have a different copy back it up first. |
+| D7 | First add | The user chooses at add time (D22). By default the machine where you add wins, and a differing copy on another machine is kept as a visible conflict copy. The user may instead choose "this machine wins", which replaces the other copy after backing it up (D13). |
 | D8 | Deletes | Spread to all machines. Each machine first moves its copy to a local trash, kept 30 days. An edit beats a concurrent delete. |
 | D9 | Setup | Adding a machine installs Enigma on it over ssh (binary + background service) and shows each step. |
 | D10 | Interface | A CLI for everything (scriptable, usable by agents) plus a TUI for picking machines and files and watching status. |
 | D11 | Alerts | `enigma status` and the TUI show everything. Conflicts also raise a desktop notification. |
 | D12 | Dev tools | tuxedo, tuicr and herdr are for our development workflow only, never part of Enigma. |
-| D13 | Backups | First-add backups are stored locally on the machine that made them, never next to the file. |
+| D13 | Backups | First-add backups are stored locally on the machine that made them, never next to the file. They are used when the user chooses "this machine wins". |
 | D14 | Folder first add | Files that exist only on another machine are kept and spread to everyone. Files that differ follow D7. |
 | D15 | Symlinks | Skipped and listed in status. |
 | D16 | Paths | Only paths under `~`. |
@@ -49,6 +49,7 @@ machines, in real time, over ssh.
 | D19 | Groups | A group is a named set of entries with a member list. Every entry is in exactly one group; a machine syncs an entry only if it is a member of its group, and never sees the paths of groups it is not in. `enigma init` creates `main`; new machines and new entries go to `main` unless told otherwise. A path can be in one group only; entries move between groups, and groups merge. |
 | D20 | Problems | The daemon keeps a list of standing problems (what is wrong right now, with a hint), shown by `enigma status`, `doctor` and a notice line in the TUI, until each is resolved. |
 | D21 | TUI parity | Everything the CLI can do, the TUI can do. |
+| D22 | First-add preview | Before creating an entry, the adding machine asks every member of the target group what it has at that path and shows the user which machines have it, whether it differs, and which are offline. If anything differs the user chooses: keep both (default; differing copies become visible conflict copies), this machine wins (differing copies are replaced and backed up), or cancel. For a folder the TUI chooses per differing file. A non-interactive add with a difference and no `--on-existing` cancels. The choice travels in the entry record, so machines that were offline follow it when they reconnect. |
 
 ## 3. Vocabulary
 
@@ -125,6 +126,13 @@ machines, in real time, over ssh.
   A different fleet or a removed machine closes the link with a clear
   error, shown in status. A different Enigma version turns the link into
   an upgrade (§12).
+- **First-add probe:** `PROBE {id, path, group, ignore}` and
+  `PROBE_REPLY {id, path, group, exists, dir, files [{path, hash, size,
+  mtime, exec}], truncated}` are read-only and never change state. A probe,
+  like an entry, travels only between members of its group (§9). The
+  adding machine sends one to each connected member and waits a few
+  seconds; members that do not answer are shown as unknown. The reply is
+  metadata only, never content.
 
 ## 6. Sync model
 
@@ -176,6 +184,11 @@ The machine list, the groups, the entries and fleet settings form the
 **fleet state**, replicated to every machine. Machine, group and settings
 records go to every member; an entry record goes only to the members of its
 group (§9).
+- An entry record also carries its first-add policy: `first_add` (empty or
+  `keep-both`; `replace` for "this machine wins") and `first_add_by_path`
+  for per-file choices inside a folder. The policy applies only while the
+  file's current version is the first-add seed; after a real edit, normal
+  conflict rules apply (§7).
 - Each record (a machine, a group, an entry) carries a Lamport timestamp and the ID of
   the machine that last changed it. The highest timestamp wins, with the
   machine ID as tie-break. Removed records stay behind as markers ("tombstones").
@@ -254,6 +267,17 @@ When two versions are concurrent (neither vector is newer):
      only on the machines that resolved the conflict.
    - A desktop notification is raised on the machine that wrote the copy.
 
+**First-add copies.** A first add follows the same rules when the user
+chose keep-both (D22): the adding machine's version wins at the path, and
+a differing version on another machine is written as a sibling copy with
+the name of step 4. Inside a folder entry that copy syncs like any file;
+for a single-file entry it stays on the machines that saw it. The copy's
+version is an ordinary version (`Origin` edit), so it never starts another
+first add. When the user chose "this machine wins", the differing version
+goes to the local backup instead (D13) and no copy is written. A
+first-add copy does not need a common ancestor; the two files are not
+merged.
+
 **Text detection:** valid UTF-8 and no NUL bytes in the first 8 KB.
 
 **Determinism.** Both machines usually detect the same conflict at the same
@@ -326,8 +350,9 @@ machinery (§6, §7) is unchanged.
   of G.
 - **Entering scope.** When a machine becomes a member of a group (`group
   add`, `machine add --group`, an entry moved into its group) it runs the
-  first-add rules (§10, D7, D13, D14) for every entry it did not sync
-  before: a differing local copy is backed up, extras in a folder are kept
+  first-add rules (§10, D7, D22, D13, D14) for every entry it did not sync
+  before: a differing local copy is kept as a conflict copy (or backed up
+  and replaced when the entry says `replace`), extras in a folder are kept
   and spread.
 - **Leaving scope** (`group remove`, an entry moved to a group it is not in)
   is `enigma remove` for that machine alone: syncing stops, files stay, the
@@ -353,14 +378,32 @@ machinery (§6, §7) is unchanged.
 
 ## 10. Adding, removing and the trash
 
-**Adding an entry** (D7), with `enigma add ~/.claude/skills` on machine X
-(into `main`, or the group given with `--group`, §9):
-1. X records the entry in fleet state and makes version `{X:1}` of every
-   file under it.
-2. Every other member of the group, on receiving the entry, compares its own files at
-   that path. If a file exists with different content, the machine backs
-   up its copy locally (D13), then writes X's version.
-3. Files that exist only on the other machine, inside the folder, are kept
+**Adding an entry** (D7, D22), with `enigma add ~/.claude/skills` on
+machine X (into `main`, or the group given with `--group`, §9):
+1. X asks the connected members of the group for their copy of the path
+   (the read-only probe of §5) and shows the user what each has: same,
+   different, only there, or offline. Non-members are never asked and
+   never see the path (§9).
+2. If nothing differs, X goes straight to step 3. If something differs,
+   the user chooses:
+   - **keep both** (default): X's version stays at the path; every other
+     machine's differing version becomes a sibling conflict copy. Inside a
+     folder entry the copy syncs like any file; for a single-file entry it
+     stays on the machines that saw it (§7).
+   - **this machine wins**: every other machine backs up its differing
+     copy locally (D13), then writes X's version. No conflict copies.
+   - **cancel**: nothing is created.
+   For a folder, the TUI chooses per differing file; `--on-existing`
+   makes the same choice non-interactively. An add that finds a
+   difference with no flag and no terminal cancels with an error naming
+   the flag.
+3. X records the entry (with the chosen policy) in fleet state and makes
+   version `{X:1}` of every file under it.
+4. Every other member of the group, on receiving the entry, compares its
+   own files at that path. If a file exists with different content, it
+   applies the policy from step 2: keep the local copy as a conflict copy,
+   or back it up and replace it.
+5. Files that exist only on the other machine, inside the folder, are kept
    and become new versions there, so they spread to every machine (D14).
    The folder ends up as X's files plus everyone else's extras.
 
@@ -491,7 +534,13 @@ version.
 ## 13. Interface
 
 ### 13.1 CLI
-Every command takes `--json` for agents and scripts.
+Most commands take `--json` for agents and scripts; `enigma list` is
+human-only, and `enigma status --json` carries the entries for scripts.
+`enigma -h` / `--help` lists every command, `enigma <command> -h` explains
+one, and `enigma -v` / `--version` prints the version.
+
+An Agent Skill for the safe first-add flow, diagnosis and destructive-action
+rules lives in `skills/enigma/` and ships in the release tarball.
 
 | Command | Does |
 |---|---|
@@ -499,7 +548,7 @@ Every command takes `--json` for agents and scripts.
 | `enigma machine add <alias> [--group G]…` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §12) |
 | `enigma group list` · `create <name> [machine…]` · `delete <name> [--yes]` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into> [--add-members]` | manage groups (§9) |
 | `enigma entry move <path> <group>` | move an entry to another group (§9) |
-| `enigma add <path> [--group G] [--ignore GLOB]…` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4) |
+| `enigma add <path> [--group G] [--ignore GLOB]… [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4); `--dry-run` prints the first-add preview without adding; a difference with no flag and no terminal cancels (D22) |
 | `enigma limits [--file-size SIZE] [--files N]` | show the fleet's limits, or change them for every machine (§8); SIZE like `25MB` |
 | `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers |
 | `enigma conflicts [--local]` | list conflict copies across the fleet (asks every member over ssh), with the machines that hold each |
@@ -554,9 +603,17 @@ a notice line (§13.5), and the key hints.
   are marked, and so is a folder that contains one (`contains synced`);
   ignored, oversized and non-regular items are dimmed, and files kept out
   by the folder limit are marked `over limit` (§8). Each synced row shows
-  its group. `a` adds the selected file or folder to the selected group,
-  `m` moves an entry there (a notice when it is already there), each with a
-  notice naming the group, so a wrong target is seen at once and undone by
+  its group. `a` adds the selected file or folder to the selected group.
+  It first shows the first-add preview (D22): the machines that have the
+  path, whether they differ, and the offline ones. If nothing differs it
+  adds at once; otherwise a dialog asks what to do: keep both
+  (recommended), this machine wins, or cancel. For a folder it can apply
+  that choice to every differing file or open a per-file list; `enter` on
+  a file opens a small keep-both / this-machine-wins menu, `K`/`M` set all
+  in that list, `A` applies, `esc` goes back. Lists always select and
+  `enter` always chooses; nothing toggles in place. `m` moves an
+  entry there (a notice when it is already there), each with a notice
+  naming the group, so a wrong target is seen at once and undone by
   selecting the other group and pressing `m`. No group is ever typed. `x`
   stops syncing an entry (after a confirmation). `/` filters it with fuzzy
   search (§13.4).

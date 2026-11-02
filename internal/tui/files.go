@@ -277,11 +277,35 @@ func (p *filesPane) add(s *Shared, n *fileNode) tea.Cmd {
 	abs := filepath.Join(s.Backend.Home(), filepath.FromSlash(n.rel))
 	b := s.Backend
 	g := targetGroup(s)
+	gid := s.Target // "" is main, as the daemon expects
 	return func() tea.Msg {
-		if err := b.Add(abs, s.Target); err != nil {
+		rep, err := b.Preview(abs, gid)
+		if err != nil {
 			return ShowError{Err: err}
 		}
-		return done("added ~/" + n.rel + " to " + g)
+		if name, group, ok := rep.SyncedElsewhere(); ok {
+			return ShowError{Err: fmt.Errorf("~/%s is already synced on %s in group %s", n.rel, name, group)}
+		}
+		if why := rep.Blocked(); why != "" {
+			return ShowError{Err: fmt.Errorf("cannot add ~/%s: %s", n.rel, why)}
+		}
+		if rep.NeedsDecision() {
+			return OpenAdopt{Path: abs, Rel: n.rel, Group: gid, GroupName: g, Report: rep}
+		}
+		if err := b.Add(abs, gid); err != nil {
+			return ShowError{Err: err}
+		}
+		msg := "added ~/" + n.rel + " to " + g
+		var same []string
+		for _, pm := range rep.Machines {
+			if !pm.Local && pm.Exists {
+				same = append(same, pm.Name)
+			}
+		}
+		if len(same) > 0 {
+			msg += " (already the same on " + strings.Join(same, ", ") + ")"
+		}
+		return done(msg)
 	}
 }
 

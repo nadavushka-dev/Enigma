@@ -43,9 +43,21 @@ func (c *Client) Problems() ([]problems.Problem, error) {
 	return ps, c.do(http.MethodGet, "/problems", nil, &ps)
 }
 
-// Add starts syncing abs in group (a group ID; "" is main).
+// Preview reports what the members of group have at abs (SPEC §10, D22).
+func (c *Client) Preview(abs string, ignore []string, group string) (engine.AdoptionReport, error) {
+	var rep engine.AdoptionReport
+	return rep, c.do(http.MethodPost, "/preview", PreviewRequest{Path: abs, Ignore: ignore, Group: group}, &rep)
+}
+
+// Add starts syncing abs in group (a group ID; "" is main), keeping both
+// copies when it already exists elsewhere (D22).
 func (c *Client) Add(abs string, ignore []string, group string) error {
-	return c.do(http.MethodPost, "/add", pathRequest{Path: abs, Ignore: ignore, Group: group}, nil)
+	return c.AddWithPolicy(abs, ignore, group, proto.FirstAddKeepBoth, nil)
+}
+
+// AddWithPolicy is Add with the user's first-add choice (D22).
+func (c *Client) AddWithPolicy(abs string, ignore []string, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error {
+	return c.do(http.MethodPost, "/add", AddRequest{Path: abs, Ignore: ignore, Group: group, Policy: policy, Policies: policies}, nil)
 }
 
 // MoveEntry puts the entry at abs in another group (a group ID).

@@ -26,7 +26,7 @@ var afterDecide atomic.Pointer[func(machine, rel string, act Action)]
 
 // ---- entries (fleet state, SPEC §6.4) ----------------------------------------
 
-func (e *Engine) addEntry(abs string, ignore []string, group string) error {
+func (e *Engine) addEntry(abs string, ignore []string, group string, policy proto.FirstAddPolicy, byPath map[string]proto.FirstAddPolicy) error {
 	rel, ok := e.rel(abs)
 	if !ok {
 		return fmt.Errorf("%s: only paths inside your home folder can be synced", abs)
@@ -75,9 +75,45 @@ func (e *Engine) addEntry(abs string, ignore []string, group string) error {
 			return fmt.Errorf("%s has more than %s files, the limit for a folder (Enigma is not for whole projects; raise it with enigma limits --files N)", abs, FormatCount(lim.MaxFiles))
 		}
 	}
+	policy, byPath, err = checkFirstAddPolicy(dir, policy, byPath)
+	if err != nil {
+		return err
+	}
 	e.st.Lamport++
-	e.applyEntry(proto.EntryRecord{Path: rel, Dir: dir, Ignore: ignore, Group: group, Clock: e.st.Lamport, By: e.o.MachineID}, nil)
+	rec := proto.EntryRecord{Path: rel, Dir: dir, Ignore: ignore, Group: group, Clock: e.st.Lamport, By: e.o.MachineID,
+		FirstAdd: policy, FirstAddByPath: byPath}
+	e.applyEntry(rec, nil)
 	return nil
+}
+
+// checkFirstAddPolicy validates and normalizes the first-add choice (D22).
+func checkFirstAddPolicy(dir bool, policy proto.FirstAddPolicy, byPath map[string]proto.FirstAddPolicy) (proto.FirstAddPolicy, map[string]proto.FirstAddPolicy, error) {
+	switch policy {
+	case "", proto.FirstAddKeepBoth:
+		policy = proto.FirstAddKeepBoth
+	case proto.FirstAddReplace:
+	default:
+		return "", nil, fmt.Errorf("unknown first-add choice %q (keep-both, mine-wins or cancel)", policy)
+	}
+	if len(byPath) == 0 {
+		return policy, nil, nil
+	}
+	if !dir {
+		return "", nil, fmt.Errorf("per-file first-add choices need a folder")
+	}
+	out := make(map[string]proto.FirstAddPolicy, len(byPath))
+	for rel, p := range byPath {
+		if rel == "" || path.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasSuffix(rel, "/") {
+			return "", nil, fmt.Errorf("bad first-add path %q", rel)
+		}
+		switch p {
+		case proto.FirstAddKeepBoth, proto.FirstAddReplace:
+			out[rel] = p
+		default:
+			return "", nil, fmt.Errorf("unknown first-add choice %q for %s", p, rel)
+		}
+	}
+	return policy, out, nil
 }
 
 // applyEntry merges a record (local when from is nil) into fleet state.
@@ -597,6 +633,14 @@ func (e *Engine) current(rel string) *version.Version {
 
 // ---- remote changes (SPEC §6.3, §7) --------------------------------------------
 
+// firstAddPolicy is the entry's choice for rel (D22); loop only.
+func (e *Engine) firstAddPolicy(entry, rel string) proto.FirstAddPolicy {
+	if r, ok := e.st.Entries[entry]; ok {
+		return r.FirstAddFor(rel)
+	}
+	return proto.FirstAddKeepBoth
+}
+
 // accept reports the entry covering rel if remote changes to it may apply.
 func (e *Engine) accept(rel string) (string, bool) {
 	entry, _, ok := e.entryFor(rel)
@@ -612,7 +656,7 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 		return
 	}
 	e.refreshFile(entry, rel, nil)
-	d := Decide(rel, e.current(rel), in, false)
+	d := DecidePolicy(rel, e.current(rel), in, false, e.firstAddPolicy(entry, rel))
 	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
 		e.log.Error("apply", "path", rel, "err", err)
 		e.event(EvError, rel, p.name, err.Error())
@@ -668,7 +712,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
 		e.refreshFile(entry, rel, nil)
 		cur := e.current(rel)
-		d := Decide(rel, cur, in, true)
+		d := DecidePolicy(rel, cur, in, true, e.firstAddPolicy(entry, rel))
 		if m, ok := e.tryMerge(rel, cur, in, anc, content); ok {
 			d = DecideMerged(rel, cur, in, m)
 		}
@@ -863,8 +907,14 @@ func (e *Engine) writeCopy(c Copy, data []byte) {
 	if cc, ok := ParseConflictName(c.Path); ok {
 		orig = cc.Original
 	}
-	e.event(EvConflict, c.Path, "", orig)
-	e.notify(orig, "conflict on ~/"+orig+"; the other version is kept as ~/"+c.Path)
+	if c.FirstAdd {
+		// A first add can differ in many files: show it in Activity, but do
+		// not flood the standing problems or the desktop notifications.
+		e.event(EvKeptBoth, c.Path, "", orig)
+	} else {
+		e.event(EvConflict, c.Path, "", orig)
+		e.notify(orig, "conflict on ~/"+orig+"; the other version is kept as ~/"+c.Path)
+	}
 	if entry, _, ok := e.entryFor(c.Path); ok && !e.ignored(entry, c.Path) {
 		if cur := e.current(c.Path); cur == nil || version.Compare(c.Version.Vector, cur.Vector) == version.After {
 			e.setCurrent(c.Path, c.Version, true)
