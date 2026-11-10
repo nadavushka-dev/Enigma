@@ -209,7 +209,9 @@ group (§9).
 When a link comes up, the two machines exchange a summary
 `{path: (hash, vector)}` of all tracked files. Each side then treats every
 difference as an announcement (§6.3). Fleet state is exchanged first, so new
-entries are known before files are compared.
+entries are known before files are compared. A peer this machine has no
+record of yet (added while it was away) is in none of its groups at
+link-up; it gets the entries and summary as soon as its record arrives.
 
 **Changes made while the daemon was not running** are found by the startup
 rescan, which compares disk against the stored current versions:

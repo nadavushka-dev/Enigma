@@ -22,7 +22,8 @@ var ErrUpgrade = errors.New("version mismatch")
 
 // applyMachine merges a record (local when from is nil) into fleet state.
 func (e *Engine) applyMachine(r proto.MachineRecord, from *peer) {
-	if old, had := e.st.Machines[r.ID]; had && !r.Newer(old) {
+	old, had := e.st.Machines[r.ID]
+	if had && !r.Newer(old) {
 		return
 	}
 	if r.Clock > e.st.Lamport {
@@ -36,6 +37,10 @@ func (e *Engine) applyMachine(r proto.MachineRecord, from *peer) {
 			e.log.Info("machine removed from the fleet; dropping its link", "peer", p.name)
 			p.close()
 		}
+	} else if p := e.peers[r.ID]; p != nil && (!had || old.Removed) {
+		// A linked peer this machine did not know: the catch-up on link-up
+		// sent it nothing, since it was in no group here yet (§6.5, §9).
+		e.sendScope(p)
 	}
 	select {
 	case e.machinesChanged <- struct{}{}:
