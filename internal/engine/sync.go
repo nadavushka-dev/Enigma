@@ -26,7 +26,8 @@ var afterDecide atomic.Pointer[func(machine, rel string, act Action)]
 
 // ---- entries (fleet state, SPEC §6.4) ----------------------------------------
 
-func (e *Engine) addEntry(abs string, ignore []string, group string, policy proto.FirstAddPolicy, byPath map[string]proto.FirstAddPolicy) error {
+func (e *Engine) addEntry(abs string, o AddOptions) error {
+	ignore, group, policy, byPath := o.Ignore, o.Group, o.Policy, o.ByPath
 	rel, ok := e.rel(abs)
 	if !ok {
 		return fmt.Errorf("%s: only paths inside your home folder can be synced", abs)
@@ -65,9 +66,12 @@ func (e *Engine) addEntry(abs string, ignore []string, group string, policy prot
 		}
 	}
 	dir := info.Kind == fsx.Dir
+	if o.Links && !dir {
+		return fmt.Errorf("%s is a file; link replication is for folders", abs)
+	}
 	if dir {
 		lim := e.lim()
-		n, err := fsx.CountFiles(abs, fsx.NewMatcher(ignore), lim.MaxFileSize, lim.MaxFiles)
+		n, err := fsx.CountSynced(abs, fsx.NewMatcher(ignore), lim.MaxFileSize, lim.MaxFiles, o.Links)
 		if err != nil {
 			return err
 		}
@@ -81,7 +85,7 @@ func (e *Engine) addEntry(abs string, ignore []string, group string, policy prot
 	}
 	e.st.Lamport++
 	rec := proto.EntryRecord{Path: rel, Dir: dir, Ignore: ignore, Group: group, Clock: e.st.Lamport, By: e.o.MachineID,
-		FirstAdd: policy, FirstAddByPath: byPath}
+		FirstAdd: policy, FirstAddByPath: byPath, Links: o.Links}
 	e.applyEntry(rec, nil)
 	return nil
 }
@@ -133,6 +137,8 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 	}
 	e.st.Entries[r.Path] = r
 	e.dirty = true
+	// Links elsewhere may lead into this entry (D23).
+	defer e.relinkOthers(r.Path)
 	// Peers in the entry's group get it; so do peers that shared its old
 	// group, so a moved entry freezes where it no longer belongs. A peer
 	// that newly shares it also gets the entry's current versions, as it
@@ -278,6 +284,7 @@ func (e *Engine) unwatch(path string) {
 	delete(e.skipped, path)
 	delete(e.overLimit, path)
 	delete(e.missing, path)
+	e.clearLinkNotes(path, false)
 }
 
 // forget drops an entry's versions and stamps (it was removed).
@@ -347,6 +354,25 @@ func (e *Engine) scanEntry(path string, r proto.EntryRecord, hash bool) map[stri
 		for _, f := range res.Skipped {
 			skipped[path+"/"+f] = true
 		}
+		e.clearLinkNotes(path, true)
+		if r.Links {
+			for _, f := range res.Links {
+				rel := path + "/" + f
+				info, err := fsx.Stat(e.abs(rel))
+				if err != nil || !info.Link {
+					continue
+				}
+				li, stored, reason := e.linkInfo(path, rel, info)
+				if reason != "" {
+					e.noteLink(path, rel, stored, LinkSkipped, reason)
+					continue
+				}
+				delete(skipped, rel)
+				if hash {
+					out[rel] = li
+				}
+			}
+		}
 	} else {
 		info, _ := fsx.Stat(e.abs(path))
 		if hash {
@@ -408,6 +434,10 @@ func (e *Engine) refreshUnder(entry, rel string) {
 	seen := map[string]bool{}
 	if info, _ := fsx.Stat(e.abs(rel)); info.Kind == fsx.Dir {
 		files, _ := fsx.ListFiles(e.abs(rel), fsx.NewMatcher(nil))
+		if e.linksOn(entry) {
+			links, _ := fsx.ListLinks(e.abs(rel), fsx.NewMatcher(nil))
+			files = append(files, links...)
+		}
 		for _, f := range files {
 			p := path.Join(rel, f)
 			seen[p] = true
@@ -551,6 +581,10 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 			*room++
 		}
 	case fsx.Other:
+		if info.Link && e.linksOn(entry) && rel != entry {
+			e.refreshLink(entry, rel, info, room)
+			return
+		}
 		sk[rel] = true
 	}
 }
@@ -586,13 +620,15 @@ func (e *Engine) newLocalVersion(rel string, info fsx.Info, origin version.Origi
 		vec, parents = fs.V.Vector, []string{fs.V.Hash}
 	}
 	v := version.Version{Hash: info.Hash, Vector: e.bump(vec), Parents: parents, Mtime: info.Mtime,
-		Exec: info.Exec, By: e.o.MachineID, ByName: e.o.Name, Origin: origin}
+		Exec: info.Exec, By: e.o.MachineID, ByName: e.o.Name, Origin: origin, Link: info.Link}
 	e.log.Debug("local version", "path", rel, "v", fmtVersion(&v))
 	if origin == version.Edit { // not every file of a new entry
 		e.event(EvChanged, rel, "", "")
 	}
-	if data, err := os.ReadFile(e.abs(rel)); err == nil && fsx.Hash(data) == v.Hash {
-		e.keep(data)
+	if !info.Link { // reading a link would follow it
+		if data, err := os.ReadFile(e.abs(rel)); err == nil && fsx.Hash(data) == v.Hash {
+			e.keep(data)
+		}
 	}
 	e.setCurrent(rel, v, true)
 	e.announce(rel, v, nil)
@@ -657,7 +693,7 @@ func (e *Engine) accept(rel string) (string, bool) {
 
 func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	entry, ok := e.accept(rel)
-	if !ok {
+	if !ok || in.Link && !e.linksOn(entry) {
 		return
 	}
 	e.refreshFile(entry, rel, nil)
@@ -686,6 +722,16 @@ func (e *Engine) onFetch(p *peer, rel string) {
 			p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Ancestry: anc})
 			return
 		}
+		if v.Link { // the content is the stored target; never read through the link
+			info, err := fsx.Stat(e.abs(rel))
+			if err == nil && info.Link {
+				if stored, _, err := storeLinkTarget(e.homes(), rel, info.Target); err == nil && fsx.LinkHash(stored) == v.Hash {
+					p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Ancestry: anc, Content: []byte(stored)})
+					return
+				}
+			}
+			continue
+		}
 		data, err := os.ReadFile(e.abs(rel))
 		if err == nil && fsx.Hash(data) == v.Hash {
 			p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Ancestry: anc, Content: data})
@@ -700,19 +746,46 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 	if !ok {
 		return
 	}
-	if !in.IsDeleted() && fsx.Hash(content) != in.Hash {
+	linkTarget := "" // from ~, for a link version
+	if in.Link {
+		if !e.linksOn(entry) {
+			return
+		}
+		stored := string(content)
+		if fsx.LinkHash(stored) != in.Hash {
+			e.log.Error("link target does not match its hash; dropped", "path", rel, "peer", p.name)
+			return
+		}
+		// Checked again here: a peer is trusted but may be buggy (D23).
+		target, ok := resolveStoredTarget(rel, stored)
+		reason := "target is invalid or outside your home folder"
+		if ok {
+			reason = e.linkReason(entry, rel, target)
+		}
+		if reason != "" {
+			e.log.Warn("received link not replicated", "path", rel, "peer", p.name, "reason", reason)
+			e.markSkipped(entry, rel)
+			e.noteLink(entry, rel, stored, LinkSkipped, reason)
+			return
+		}
+		linkTarget = target
+	} else if !in.IsDeleted() && fsx.Hash(content) != in.Hash {
 		e.log.Error("content does not match its hash; dropped", "path", rel, "peer", p.name)
 		return
 	}
-	if max := e.lim().MaxFileSize; !in.IsDeleted() && int64(len(content)) > max {
+	if max := e.lim().MaxFileSize; !in.IsDeleted() && !in.Link && int64(len(content)) > max {
 		msg := fmt.Sprintf("not received: %s, over the %s file limit", FormatSize(int64(len(content))), FormatSize(max))
 		e.log.Warn("received file over the size limit; dropped", "path", rel, "peer", p.name, "size", len(content))
 		e.event(EvError, rel, p.name, msg)
 		e.notify(rel, "~/"+rel+" "+msg)
 		return
 	}
-	if !in.IsDeleted() {
+	if !in.IsDeleted() && !in.Link {
 		e.keep(content)
+	}
+	delete(e.pending, rel) // superseded by this version, or applied now
+	if n := e.linkNotes[rel]; n != nil && n.state == LinkPending {
+		delete(e.linkNotes, rel)
 	}
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
 		e.refreshFile(entry, rel, nil)
@@ -720,6 +793,15 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 		d := DecidePolicy(rel, cur, in, true, e.firstAddPolicy(entry, rel))
 		if m, ok := e.tryMerge(rel, cur, in, anc, content); ok {
 			d = DecideMerged(rel, cur, in, m)
+		}
+		if d.Action == Apply && d.Result.Link {
+			if _, err := os.Lstat(e.abs(linkTarget)); err != nil {
+				// Never a dangling link: wait for the target (D23). Not a
+				// delete either; nothing was written.
+				e.pending[rel] = &pendingLink{p: p, in: in, anc: anc, content: content, target: linkTarget}
+				e.noteLink(entry, rel, string(content), LinkPending, "waiting for its target ~/"+linkTarget)
+				return
+			}
 		}
 		err := e.execute(p, entry, rel, in, anc, content, d)
 		if !errors.Is(err, fsx.ErrChanged) {
@@ -738,7 +820,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 // no base, its content is not in history, a side is not text, or the edits
 // overlap.
 func (e *Engine) tryMerge(rel string, cur *version.Version, in version.Version, anc []version.Node, content []byte) (Merged, bool) {
-	if cur == nil || cur.IsDeleted() || in.IsDeleted() || cur.Hash == in.Hash ||
+	if cur == nil || cur.IsDeleted() || in.IsDeleted() || cur.Hash == in.Hash || cur.Link || in.Link ||
 		version.Compare(in.Vector, cur.Vector) != version.Concurrent {
 		return Merged{}, false
 	}
@@ -796,7 +878,12 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		p.send(&proto.Msg{Type: proto.Fetch, Path: rel})
 		return nil
 	case Record:
-		if d.Copy != nil && d.Copy.FromIncoming {
+		switch {
+		case d.Copy != nil && d.Copy.FromIncoming && d.Copy.Version.Link:
+			// Never a conflict-copy link (D23): the losing link is trashed
+			// on the machine that has it.
+			e.log.Info("incoming link lost; its machine keeps it in its trash", "path", rel, "peer", p.name)
+		case d.Copy != nil && d.Copy.FromIncoming:
 			e.writeCopy(*d.Copy, content)
 		}
 		fs := e.st.Files[rel]
@@ -812,9 +899,34 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		}
 		// The precondition is what the decision was based on, never a fresh
 		// look at the disk: an edit made since then must not be overwritten.
-		basis, onDisk := "", false
+		basis, onDisk, curLink := "", false, false
 		if fs := e.st.Files[rel]; fs != nil && fs.Materialized && !fs.V.IsDeleted() {
-			basis, onDisk = fs.V.Hash, true
+			basis, onDisk, curLink = fs.V.Hash, true, fs.V.Link
+		}
+		expectLink := ""
+		if curLink {
+			// A link has no content to back up or copy: when it loses, or
+			// a file replaces it, the link itself goes to the trash (D23).
+			raw, err := e.linkOnDisk(rel, basis)
+			if err != nil {
+				return err
+			}
+			lost := d.Backup || (d.Copy != nil && !d.Copy.FromIncoming)
+			if lost || !d.Result.Link {
+				if err := e.trashLink(rel, raw); err != nil {
+					return err
+				}
+				if lost {
+					e.event(EvLinkLost, rel, p.name, raw)
+				}
+				basis, onDisk = "", false
+			} else {
+				expectLink = raw
+			}
+			d.Backup = false
+			if d.Copy != nil && !d.Copy.FromIncoming {
+				d.Copy = nil
+			}
 		}
 		if d.Backup || (d.Copy != nil && !d.Copy.FromIncoming) {
 			local, err := os.ReadFile(abs)
@@ -837,8 +949,22 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			content = d.Content
 			e.keep(content)
 		}
-		opts := fsx.WriteOpts{Mtime: d.Result.Mtime, Exec: d.Result.Exec, ExpectAbsent: !onDisk, ExpectHash: basis}
-		if _, err := fsx.Write(abs, content, opts); err != nil {
+		if d.Result.Link {
+			lo := fsx.LinkOpts{ExpectAbsent: !onDisk, ExpectHash: basis, ExpectLink: expectLink}
+			if expectLink != "" {
+				lo.ExpectHash = ""
+			}
+			if err := fsx.WriteLink(abs, materializeLinkTarget(e.givenHome, string(content)), lo); err != nil {
+				if errors.Is(err, fsx.ErrNotRegular) { // never clobber a folder (§6.6)
+					e.log.Warn("not replacing a folder with a link", "path", rel)
+					e.noteLink(entry, rel, string(content), LinkBlocked, "a folder (or something else that is not a file) is in the way here")
+					return nil
+				}
+				return err
+			}
+			delete(e.linkNotes, rel)
+			delete(e.skipped[entry], rel)
+		} else if _, err := fsx.Write(abs, content, fsx.WriteOpts{Mtime: d.Result.Mtime, Exec: d.Result.Exec, ExpectAbsent: !onDisk, ExpectHash: basis}); err != nil {
 			if errors.Is(err, fsx.ErrNotRegular) {
 				e.log.Warn("not overwriting a non-regular file", "path", rel)
 				return nil
@@ -858,6 +984,21 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		info, err := fsx.Stat(abs)
 		if err != nil {
 			return err
+		}
+		if info.Link && fs != nil && fs.Materialized && !fs.V.IsDeleted() && fs.V.Link {
+			// The link itself goes to the trash, never what it points at.
+			raw, err := e.linkOnDisk(rel, fs.V.Hash)
+			if err != nil {
+				return err
+			}
+			if err := e.trashLink(rel, raw); err != nil {
+				return err
+			}
+			fsx.RemoveEmptyDirs(filepath.Dir(abs), e.abs(entry))
+			e.setCurrent(rel, d.Result, false, anc...)
+			announce(d.Result)
+			e.event(EvDeleted, rel, p.name, "")
+			return nil
 		}
 		if info.Kind == fsx.Regular {
 			if fs == nil || !fs.Materialized || fs.V.IsDeleted() {

@@ -13,6 +13,7 @@ const (
 	EvMerged       = "merged"        // concurrent edits merged cleanly
 	EvConflict     = "conflict"      // a conflict copy was kept (Path: the copy, Detail: the original)
 	EvKeptBoth     = "kept-both"     // a first-add difference kept as a copy (Path: copy, Detail: original)
+	EvLinkLost     = "link-lost"     // a link here lost to another version and went to the trash (Detail: its target), D23
 	EvEntryAdded   = "entry-added"   // a file or folder started syncing
 	EvEntryRemoved = "entry-removed" // ... stopped syncing
 	EvEntryMoved   = "entry-moved"   // ... moved to another group (Detail: which)

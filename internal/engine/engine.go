@@ -28,6 +28,9 @@ const (
 	DefaultMaxFiles       = 2000
 	DefaultDebounce       = 200 * time.Millisecond
 	DefaultRescanInterval = 10 * time.Minute
+	// DefaultLinkPoll: how often links are re-read in entries with links
+	// on (D23); macOS file events miss a link removed or replaced.
+	DefaultLinkPoll = 2 * time.Second
 	// DefaultHeartbeat: each side pings every interval and drops a link
 	// silent for three. ssh keepalive only protects the dialing side; the
 	// accepting side would otherwise keep a dead link for many minutes.
@@ -47,6 +50,7 @@ type Options struct {
 	MaxFiles       int
 	Debounce       time.Duration
 	RescanInterval time.Duration
+	LinkPoll       time.Duration
 	Heartbeat      time.Duration
 	NoWatch        bool // no fs watcher: callers drive changes with Rescan (tests, simulation)
 	Log            *slog.Logger
@@ -93,6 +97,8 @@ type Engine struct {
 	skipped   map[string]map[string]bool // entry -> rel -> skipped
 	overLimit map[string]map[string]bool // entry -> rel: new files past the folder's file limit
 	missing   map[string]bool            // entry root vanished locally (§6.5 guard)
+	linkNotes map[string]*linkNote       // rel -> a link skipped, pending or blocked here (D23)
+	pending   map[string]*pendingLink    // rel -> a received link waiting for its target (D23)
 	dirty     bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
@@ -140,6 +146,9 @@ func New(o Options) (*Engine, error) {
 	if o.Heartbeat == 0 {
 		o.Heartbeat = DefaultHeartbeat
 	}
+	if o.LinkPoll == 0 {
+		o.LinkPoll = DefaultLinkPoll
+	}
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
@@ -156,6 +165,7 @@ func New(o Options) (*Engine, error) {
 		hist:      history.Open(filepath.Join(o.DataDir, "history")),
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
+		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),
@@ -196,6 +206,8 @@ func (e *Engine) loop() {
 	}
 	tick := time.NewTicker(e.o.RescanInterval)
 	defer tick.Stop()
+	linkTick := time.NewTicker(e.o.LinkPoll)
+	defer linkTick.Stop()
 	for {
 		select {
 		case <-e.quit:
@@ -217,6 +229,13 @@ func (e *Engine) loop() {
 		case <-tick.C:
 			e.rescanAll()
 			e.prune()
+		case <-linkTick.C:
+			if !e.o.NoWatch {
+				e.pollLinks()
+			}
+		}
+		if len(e.pending) > 0 {
+			e.retryPending()
 		}
 		e.saveIfDirty()
 	}
@@ -283,8 +302,23 @@ func (e *Engine) Add(abs string, ignore []string, group string) error {
 // AddWithPolicy is Add with the user's first-add choice (D22): keep-both
 // or replace, and per-file choices for a folder.
 func (e *Engine) AddWithPolicy(abs string, ignore []string, group string, policy proto.FirstAddPolicy, byPath map[string]proto.FirstAddPolicy) error {
+	return e.AddEntry(abs, AddOptions{Ignore: ignore, Group: group, Policy: policy, ByPath: byPath})
+}
+
+// AddOptions are the choices of an add: ignores, group ("" is main), the
+// first-add choice (D22) and link replication for a folder (D23).
+type AddOptions struct {
+	Ignore []string
+	Group  string
+	Policy proto.FirstAddPolicy
+	ByPath map[string]proto.FirstAddPolicy
+	Links  bool
+}
+
+// AddEntry starts syncing abs with the choices in o.
+func (e *Engine) AddEntry(abs string, o AddOptions) error {
 	var err error
-	if derr := e.do(func() { err = e.addEntry(abs, ignore, group, policy, byPath) }); derr != nil {
+	if derr := e.do(func() { err = e.addEntry(abs, o) }); derr != nil {
 		return derr
 	}
 	return err
@@ -326,6 +360,10 @@ type EntryStatus struct {
 	// OverLimit: new files not synced because the folder is at its file
 	// limit (SPEC §8).
 	OverLimit []string
+	// LinksOn: the entry replicates links (D23). Links is every link of
+	// the entry known here, with its state.
+	LinksOn bool         `json:"LinksOn,omitempty"`
+	Links   []LinkStatus `json:"Links,omitempty"`
 }
 
 type PeerStatus struct{ ID, Name string }
@@ -346,7 +384,10 @@ func (e *Engine) Status() Status {
 			if r.Removed {
 				continue
 			}
-			es := EntryStatus{Path: path, Dir: r.Dir, Group: r.Group, Frozen: !e.inScope(r), Missing: e.missing[path]}
+			es := EntryStatus{Path: path, Dir: r.Dir, Group: r.Group, Frozen: !e.inScope(r), Missing: e.missing[path], LinksOn: r.Dir && r.Links}
+			if es.LinksOn && !es.Frozen {
+				es.Links = e.linkStatuses(path)
+			}
 			for rel := range e.skipped[path] {
 				es.Skipped = append(es.Skipped, rel)
 			}

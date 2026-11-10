@@ -191,7 +191,7 @@ func wins(a, b version.Version) bool {
 }
 
 func sameContent(a, b version.Version) bool {
-	return a.Hash == b.Hash && (a.IsDeleted() || a.Exec == b.Exec)
+	return a.Hash == b.Hash && a.Link == b.Link && (a.IsDeleted() || a.Exec == b.Exec)
 }
 
 func sortedPair(a, b string) []string {

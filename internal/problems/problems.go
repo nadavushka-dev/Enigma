@@ -77,6 +77,20 @@ func Derive(in Input, now time.Time) []Problem {
 		}
 	}
 	for _, e := range in.Entries {
+		ps = append(ps, linkProblems(e, now)...)
+		if len(e.Links) > 0 { // a link with a state is reported on its own
+			listed := map[string]bool{}
+			for _, l := range e.Links {
+				listed[l.Path] = true
+			}
+			var rest []string
+			for _, s := range e.Skipped {
+				if !listed[s] {
+					rest = append(rest, s)
+				}
+			}
+			e.Skipped = rest
+		}
 		switch {
 		case e.Missing:
 			ps = append(ps, Problem{Key: "missing:" + e.Path, Severity: Error, Path: e.Path,
@@ -101,6 +115,10 @@ func Derive(in Input, now time.Time) []Problem {
 			ps = append(ps, Problem{Key: "conflict:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
 				Message: fmt.Sprintf("conflict on %s: the other edit is kept as %s", ev.Detail, ev.Path),
 				Hint:    "enigma conflicts lists every copy; delete the copy once you have what you need from it"})
+		case engine.EvLinkLost:
+			ps = append(ps, Problem{Key: "linklost:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
+				Message: fmt.Sprintf("%s: the link here (-> %s) lost to another version and is in the trash", ev.Path, ev.Detail),
+				Hint:    "enigma trash list shows it; enigma trash restore <id> brings it back as a new change"})
 		case engine.EvError:
 			ps = append(ps, Problem{Key: fmt.Sprintf("error:%d", ev.Seq), Severity: Error, Path: ev.Path, Peer: ev.Peer,
 				Message: errorMessage(ev)})
@@ -112,6 +130,37 @@ func Derive(in Input, now time.Time) []Problem {
 		}
 		return ps[i].Key < ps[j].Key
 	})
+	return ps
+}
+
+// linkProblems are the standing problems of an entry's links (D23):
+// skipped and dangling links and links waiting over a minute are
+// warnings; a link blocked by a folder is an error.
+func linkProblems(e engine.EntryStatus, now time.Time) []Problem {
+	var ps []Problem
+	for _, l := range e.Links {
+		switch l.State {
+		case engine.LinkSkipped:
+			ps = append(ps, Problem{Key: "link-skipped:" + l.Path, Severity: Warning, Path: l.Path,
+				Message: fmt.Sprintf("%s: link not synced: %s", l.Path, l.Reason),
+				Hint:    "a link syncs when its target is inside a synced entry of the same group, under ~; or remove the link"})
+		case engine.LinkPending:
+			if now.Sub(l.Since) < engine.PendingWarnAfter {
+				continue
+			}
+			ps = append(ps, Problem{Key: "link-pending:" + l.Path, Severity: Warning, Path: l.Path,
+				Message: fmt.Sprintf("%s: link waiting for its target (-> %s)", l.Path, l.Target),
+				Hint:    "it is created once its target syncs here; enigma status shows the links and machines"})
+		case engine.LinkBlocked:
+			ps = append(ps, Problem{Key: "link-blocked:" + l.Path, Severity: Error, Path: l.Path,
+				Message: fmt.Sprintf("%s: a link elsewhere (-> %s), %s", l.Path, l.Target, l.Reason),
+				Hint:    "keep one: delete the folder here, or the link on the other machine; Enigma never replaces a folder"})
+		case engine.LinkDangling:
+			ps = append(ps, Problem{Key: "link-dangling:" + l.Path, Severity: Warning, Path: l.Path,
+				Message: fmt.Sprintf("%s: dangling link (-> %s): %s", l.Path, l.Target, l.Reason),
+				Hint:    "Enigma leaves it alone; restore the target or delete the link"})
+		}
+	}
 	return ps
 }
 
