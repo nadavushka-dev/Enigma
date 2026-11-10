@@ -28,11 +28,12 @@ Global:
 
 | Command | Does |
 |---|---|
-| `enigma add [--group G] [--ignore GLOB]… [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json] [path]` | Sync a file or folder. `--dry-run` shows the first-add report; `--on-existing` answers it; no path opens the `fzf` picker. |
+| `enigma add [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json] [path]` | Sync a file or folder. `--dry-run` shows the first-add report; `--on-existing` answers it; no path opens the `fzf` picker; `--links` replicates the symlinks in a folder. |
 | `enigma remove <path>` | Stop syncing; the files stay everywhere. |
 | `enigma list` | Human list of synced entries and groups. Use `status --json` in scripts. |
 | `enigma status [--json]` | Problems first, then peers, entries, limits and conflict copies. |
 | `enigma entry move <path> <group>` | Move an entry to another group. |
+| `enigma entry links <path> on\|off` | Turn link replication on or off for a synced folder. |
 
 ## Groups
 
@@ -73,7 +74,9 @@ without `--on-existing` a difference cancels with an error naming the flag.
 ## Limits and what syncs
 
 - Files and folders under `~`; only regular files. Symlinks are listed as
-  skipped.
+  skipped, unless the folder has links on: then a link whose target is
+  synced in the same group is replicated as a link (`entries[].Links`
+  shows each with its state: synced, pending, skipped, blocked, dangling).
 - Defaults: 10 MB per file, 2,000 files per folder. Ceilings: 64 MB and
   20,000.
 - Always ignored: `.git/`, `node_modules/`, `.DS_Store`, editor swap files.

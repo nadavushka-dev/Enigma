@@ -18,7 +18,7 @@ import (
 func init() {
 	register(&command{name: "group", args: "list [--json] | create <name> [machine]... | delete <name> [--yes] | rename <name> <new> | add <name> <machine>... | remove <name> <machine>... | merge <from> <into> [--yes] [--add-members]",
 		summary: "groups: which machines sync which entries (SPEC §9)", run: cmdGroup})
-	register(&command{name: "entry", args: "move <path> <group>", summary: "move a synced file or folder to another group", run: cmdEntry})
+	register(&command{name: "entry", args: "move <path> <group> | links <path> on|off", summary: "move a synced file or folder to another group; turn link replication on or off for a synced folder", run: cmdEntry})
 }
 
 func cmdGroup(c *ctx, args []string) error {
@@ -371,6 +371,9 @@ func contains(xs []string, x string) bool {
 }
 
 func cmdEntry(c *ctx, args []string) error {
+	if len(args) >= 1 && args[0] == "links" {
+		return cmdEntryLinks(c, args[1:])
+	}
 	if len(args) != 3 || args[0] != "move" {
 		return usageError{"entry move needs a path and a group"}
 	}
@@ -394,6 +397,31 @@ func cmdEntry(c *ctx, args []string) error {
 		return err
 	}
 	fmt.Fprintf(c.stdout, "moved %s to %s\n", tilde(abs), args[2])
+	return nil
+}
+
+// cmdEntryLinks is `entry links <path> on|off` (D23).
+func cmdEntryLinks(c *ctx, args []string) error {
+	if len(args) != 2 || (args[1] != "on" && args[1] != "off") {
+		return usageError{"entry links needs a synced folder and on or off"}
+	}
+	abs, err := absPath(args[0])
+	if err != nil {
+		return err
+	}
+	cl, err := client()
+	if err != nil {
+		return err
+	}
+	on := args[1] == "on"
+	if err := cl.SetLinks(abs, on); err != nil {
+		return err
+	}
+	if on {
+		fmt.Fprintf(c.stdout, "%s: links are replicated when their target is synced in the same group\n", tilde(abs))
+	} else {
+		fmt.Fprintf(c.stdout, "%s: links are skipped again; the links already made stay\n", tilde(abs))
+	}
 	return nil
 }
 

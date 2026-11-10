@@ -22,7 +22,7 @@ import (
 )
 
 func init() {
-	register(&command{name: "add", args: "[--group G] [--ignore GLOB]... [--on-existing keep-both|mine-wins|cancel] [--dry-run] [--json] [path]", summary: "sync a file or folder on the machines of a group (default main; no path: pick with fzf)", run: cmdAdd})
+	register(&command{name: "add", args: "[--group G] [--ignore GLOB]... [--links] [--on-existing keep-both|mine-wins|cancel] [--dry-run] [--json] [path]", summary: "sync a file or folder on the machines of a group (default main; no path: pick with fzf; --links: replicate the symlinks in a folder)", run: cmdAdd})
 	register(&command{name: "remove", args: "<path>", summary: "stop syncing a file or folder (files stay everywhere)", run: cmdRemove})
 	register(&command{name: "list", summary: "list synced files and folders", run: cmdList})
 	register(&command{name: "status", args: "[--json]", summary: "machines, links, synced entries and conflicts", run: cmdStatus})
@@ -61,6 +61,7 @@ type adder interface {
 	Preview(abs string, ignore []string, group string) (engine.AdoptionReport, error)
 	Add(abs string, ignore []string, group string) error
 	AddWithPolicy(abs string, ignore []string, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error
+	AddWithLinks(abs string, ignore []string, group string, policy proto.FirstAddPolicy) error // D23
 }
 
 // The seams of `add` with no path (SPEC §12.4) and its prompt, replaced in tests.
@@ -123,6 +124,7 @@ func cmdAdd(c *ctx, args []string) error {
 	onExisting := fs.String("on-existing", "", "")
 	dryRun := fs.Bool("dry-run", false, "")
 	asJSON := fs.Bool("json", false, "")
+	links := fs.Bool("links", false, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 1 {
 		return usageError{"add takes one path, or none to pick with fzf"}
 	}
@@ -208,7 +210,11 @@ func cmdAdd(c *ctx, args []string) error {
 			continue
 		}
 		policy := chosen.policy()
-		if err := cl.AddWithPolicy(abs, ignore, groupID, policy, nil); err != nil {
+		add := func() error { return cl.AddWithPolicy(abs, ignore, groupID, policy, nil) }
+		if *links {
+			add = func() error { return cl.AddWithLinks(abs, ignore, groupID, policy) }
+		}
+		if err := add(); err != nil {
 			return err
 		}
 		res.Action, res.Policy = "added", string(policy)
@@ -220,6 +226,9 @@ func cmdAdd(c *ctx, args []string) error {
 			fmt.Fprintf(c.stdout, "syncing %s in group %s\n", tilde(abs)+trailingSlash(p), groupName)
 		} else {
 			fmt.Fprintf(c.stdout, "syncing %s on every machine\n", tilde(abs)+trailingSlash(p))
+		}
+		if *links {
+			fmt.Fprintln(c.stdout, "links inside it are replicated when their target is synced in the same group (enigma status shows each)")
 		}
 		switch {
 		case policy == proto.FirstAddKeepBoth && rep.NeedsDecision():
@@ -559,7 +568,17 @@ func cmdStatus(c *ctx, args []string) error {
 		case len(e.Skipped) > 0:
 			state = fmt.Sprintf("ok, %d skipped (symlinks or over %s)", len(e.Skipped), engine.FormatSize(st.Limits.MaxFileSize))
 		}
+		if e.LinksOn {
+			state += ", links on"
+		}
 		fmt.Fprintf(tw, "%s\t%s\n", entryLabel(e.Path, e.Dir), state)
+		for _, l := range e.Links { // D23
+			detail := l.State
+			if l.Reason != "" {
+				detail += ": " + l.Reason
+			}
+			fmt.Fprintf(tw, "  ~/%s -> %s\t%s\n", l.Path, l.Target, detail)
+		}
 	}
 	tw.Flush()
 	if st.Files == 1 {

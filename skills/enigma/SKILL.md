@@ -106,6 +106,10 @@ Common causes:
   capitalized: `Path`, `Dir`, `Group`, `Frozen`, `Missing`, `Skipped`,
   `OverLimit`). Raise with `enigma limits --files N` after asking.
 - **Skipped files:** `entries[].Skipped` — symlinks or over the size limit.
+- **Links** (folders with `LinksOn`): `entries[].Links[]` has each link's
+  `State` and `Reason`. Pending waits for its target; blocked means a
+  folder is in the way on this machine (the user keeps one); dangling
+  links are left alone.
 - **Entry root vanished:** `entries[].Missing`; deletes are suppressed until
   it is back.
 - **Version mismatch:** the fleet upgrades itself; wait for the link to come
@@ -150,8 +154,8 @@ Ask before any of these, and show exactly what changes:
   first.
 - Do not run a dev build (`make build`) against a live fleet: a newer binary
   upgrades every machine over its links.
-- Do not sync outside `~`, symlinks, `.git`, `node_modules`, or editor swap
-  files.
+- Do not sync outside `~`, `.git`, `node_modules`, or editor swap files.
+  Symlinks only with `--links` / `entry links ... on`, after asking.
 - Do not kill the daemon or delete its sockets to "fix" a link; use
   `status`, `doctor`, and the log.
 

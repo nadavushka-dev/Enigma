@@ -60,6 +60,16 @@ func (c *Client) AddWithPolicy(abs string, ignore []string, group string, policy
 	return c.do(http.MethodPost, "/add", AddRequest{Path: abs, Ignore: ignore, Group: group, Policy: policy, Policies: policies}, nil)
 }
 
+// AddWithLinks is AddWithPolicy for a folder that replicates its links (D23).
+func (c *Client) AddWithLinks(abs string, ignore []string, group string, policy proto.FirstAddPolicy) error {
+	return c.do(http.MethodPost, "/add", AddRequest{Path: abs, Ignore: ignore, Group: group, Policy: policy, Links: true}, nil)
+}
+
+// SetLinks turns link replication on or off for the folder entry at abs (D23).
+func (c *Client) SetLinks(abs string, on bool) error {
+	return c.do(http.MethodPost, "/links", LinksRequest{Path: abs, On: on}, nil)
+}
+
 // MoveEntry puts the entry at abs in another group (a group ID).
 func (c *Client) MoveEntry(abs string, group string) error {
 	return c.do(http.MethodPost, "/move", pathRequest{Path: abs, Group: group}, nil)

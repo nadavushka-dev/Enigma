@@ -126,11 +126,11 @@ list always selects — `enter` opens the choice.
 | `enigma init [--name NAME]` | Start a fleet with this machine as its first member. |
 | `enigma machine add <ssh-alias> [--group G]…` | Add a machine, to `main` or to the groups given. |
 | `enigma machine list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | Manage the machines in the fleet. |
-| `enigma add <path> [--group G] [--ignore GLOB]… [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` | Sync a file or folder on the machines of a group (default `main`). If another machine already has the path, it shows where and asks: keep both (the other copy becomes a conflict copy), this machine wins (the other copy is backed up and replaced), or cancel. `--dry-run` shows the report, `--json` is for scripts. |
+| `enigma add <path> [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` | Sync a file or folder on the machines of a group (default `main`). `--links` replicates the symlinks inside a folder (see below). If another machine already has the path, it shows where and asks: keep both (the other copy becomes a conflict copy), this machine wins (the other copy is backed up and replaced), or cancel. `--dry-run` shows the report, `--json` is for scripts. |
 | `enigma remove <path>` | Stop syncing it. The files stay everywhere. |
 | `enigma list` · `status` | What's synced, and the state of each link. Status starts with what is wrong right now. |
 | `enigma group list` · `create <name> [machine]…` · `delete <name>` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into>` | Groups: which machines sync which entries. Delete and merge show what changes and ask (`--yes` to skip). |
-| `enigma entry move <path> <group>` | Move a synced file or folder to another group. |
+| `enigma entry move <path> <group>` · `links <path> on\|off` | Move a synced file or folder to another group; turn link replication on or off for a synced folder. |
 | `enigma limits [--file-size SIZE] [--files N]` | Show the fleet's limits, or change them on every machine. |
 | `enigma conflicts [--local]` | Conflict copies on every machine. |
 | `enigma trash list` · `restore <id>` · `empty` | Files removed here by a synced delete. |
@@ -155,7 +155,18 @@ another agent at the same files. It ships in the release tarball.
 ## What it syncs, and what it doesn't
 
 - **Files and folders under `~`**, with the exec bit. Only regular files:
-  symlinks are listed in status and skipped.
+  symlinks are listed in status and skipped, and nothing is ever read or
+  written through one.
+- **Links, if a folder asks for it** (`enigma add --links`, `enigma entry
+  links <folder> on`). A symlink inside it is recreated as a link on the
+  other machines when its target is synced too, in the same group: for
+  example a flat `~/.agents/skills` linking into `~/work/repo/skills`, with
+  that folder added as well. Targets under `~` are rewritten for each
+  machine's home; a link waits until its target has arrived, never
+  replaces a folder, and a link that loses a conflict goes to the trash.
+  Enigma then shares the repo's folder with git on the other machines: a
+  `git pull` there syncs as an edit. Agent harnesses follow links, so do
+  not point one at a folder that contains it.
 - **Small things.** By default the limits are 10 MB per file and 2,000
   files per folder. Enigma is for the files around your projects, not the
   projects themselves. Change them for the whole fleet with

@@ -495,6 +495,13 @@ type AddRequest struct {
 	Group    string                          `json:"group,omitempty"`
 	Policy   proto.FirstAddPolicy            `json:"policy,omitempty"`
 	Policies map[string]proto.FirstAddPolicy `json:"policies,omitempty"` // per file, relative to the entry
+	Links    bool                            `json:"links,omitempty"`    // replicate links in the folder (D23)
+}
+
+// LinksRequest turns link replication on or off for a folder entry (D23).
+type LinksRequest struct {
+	Path string `json:"path"`
+	On   bool   `json:"on"`
 }
 
 // GroupRequest is one change to a group (SPEC §9): create (Name, Add as
@@ -547,7 +554,16 @@ func (d *daemon) api() http.Handler {
 			reply(w, nil, err)
 			return
 		}
-		reply(w, struct{}{}, d.eng.AddWithPolicy(req.Path, req.Ignore, req.Group, req.Policy, req.Policies))
+		reply(w, struct{}{}, d.eng.AddEntry(req.Path, engine.AddOptions{Ignore: req.Ignore, Group: req.Group,
+			Policy: req.Policy, ByPath: req.Policies, Links: req.Links}))
+	})
+	mux.HandleFunc("POST /links", func(w http.ResponseWriter, r *http.Request) {
+		var req LinksRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		reply(w, struct{}{}, d.eng.SetLinks(req.Path, req.On))
 	})
 	mux.HandleFunc("POST /remove", func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest

@@ -15,6 +15,7 @@ import (
 
 type fakeAdder struct {
 	adds       []string
+	linkAdds   []string
 	policies   []string
 	preview    func(abs string) engine.AdoptionReport
 	previewErr error
@@ -26,6 +27,12 @@ func (f *fakeAdder) Add(abs string, ignore []string, group string) error {
 
 func (f *fakeAdder) AddWithPolicy(abs string, ignore []string, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error {
 	f.adds = append(f.adds, abs+" "+strings.Join(ignore, ","))
+	f.policies = append(f.policies, string(policy))
+	return nil
+}
+
+func (f *fakeAdder) AddWithLinks(abs string, ignore []string, group string, policy proto.FirstAddPolicy) error {
+	f.linkAdds = append(f.linkAdds, abs)
 	f.policies = append(f.policies, string(policy))
 	return nil
 }
