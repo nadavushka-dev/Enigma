@@ -30,6 +30,14 @@ type box struct {
 	name string
 	port string // published sshd port on 127.0.0.1
 	bin  string // the enigma binary this box runs after an upgrade ("" : enigma on PATH)
+	home string // dev's home ("": /home/dev)
+}
+
+func (b *box) homeDir() string {
+	if b.home == "" {
+		return "/home/dev"
+	}
+	return b.home
 }
 
 // enigma runs an enigma command with the box's current binary.
@@ -67,11 +75,11 @@ func dockerTry(args ...string) (string, error) {
 // sh runs a shell command as user dev inside the box.
 func (b *box) sh(cmd string) string {
 	b.t.Helper()
-	return docker(b.t, "exec", "-u", "dev", "-e", "HOME=/home/dev", b.name, "sh", "-c", cmd)
+	return docker(b.t, "exec", "-u", "dev", "-e", "HOME="+b.homeDir(), b.name, "sh", "-c", cmd)
 }
 
 func (b *box) try(cmd string) (string, error) {
-	return dockerTry("exec", "-u", "dev", "-e", "HOME=/home/dev", b.name, "sh", "-c", cmd)
+	return dockerTry("exec", "-u", "dev", "-e", "HOME="+b.homeDir(), b.name, "sh", "-c", cmd)
 }
 
 // startDaemon runs the daemon the way users do: `service install`, which
@@ -174,7 +182,7 @@ func startBoxes(t *testing.T, prefix, keys, oldBin, newBin string, split bool) [
 	t.Cleanup(func() {
 		for _, b := range boxes {
 			if t.Failed() {
-				out, _ := dockerTry("exec", b.name, "sh", "-c", "cat /home/dev/.local/share/enigma/enigma.log")
+				out, _ := dockerTry("exec", b.name, "sh", "-c", "cat "+b.homeDir()+"/.local/share/enigma/enigma.log")
 				t.Logf("--- %s log ---\n%s", b.name, out)
 			}
 			dockerTry("rm", "-f", b.name)
