@@ -490,6 +490,11 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 	if e.ignored(entry, rel) {
 		return
 	}
+	if e.shadowed(entry, rel) { // not a delete either: the link hides it
+		delete(e.overLimit[entry], rel)
+		e.markSkipped(entry, rel)
+		return
+	}
 	fs := e.st.Files[rel]
 	isNew := fs == nil || fs.V.IsDeleted()
 	if room != nil && isNew && *room <= 0 {
@@ -672,7 +677,7 @@ func (e *Engine) onFetch(p *peer, rel string) {
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
 		e.refreshFile(entry, rel, nil)
 		fs := e.st.Files[rel]
-		if fs == nil {
+		if fs == nil || e.shadowed(entry, rel) {
 			return
 		}
 		v := fs.V
@@ -777,6 +782,13 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		e.announce(rel, v, skip)
 	}
 	abs := e.abs(rel)
+	if (d.Action == Apply || d.Action == Delete || d.Action == Record && d.Copy != nil) && e.shadowed(entry, rel) {
+		// The path leads through a symlinked folder: writing, trashing or
+		// copying there would change what the link points at.
+		e.log.Warn("not writing through a symlinked folder", "path", rel)
+		e.markSkipped(entry, rel)
+		return nil
+	}
 	switch d.Action {
 	case Ignore:
 		return nil

@@ -313,3 +313,32 @@ func TestWriteRaceRenameSaveDuringOverwrite(t *testing.T) {
 		t.Fatalf("leftover files: %v", entries)
 	}
 }
+
+func TestSymlinkedParent(t *testing.T) {
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	root := filepath.Join(dir, "root")
+	writeFile(t, filepath.Join(root, "real", "f"), "x")
+	writeFile(t, filepath.Join(dir, "elsewhere", "f"), "y")
+	os.Symlink(filepath.Join(dir, "elsewhere"), filepath.Join(root, "real", "link"))
+	os.Symlink(filepath.Join(dir, "elsewhere"), filepath.Join(dir, "linkroot"))
+	os.Symlink(filepath.Join(dir, "elsewhere", "f"), filepath.Join(root, "filelink"))
+	for _, c := range []struct {
+		root, p string
+		want    bool
+	}{
+		{root, filepath.Join(root, "real", "f"), false},
+		{root, filepath.Join(root, "real", "link", "f"), true},
+		{root, filepath.Join(root, "real", "link", "deeper", "f"), true},
+		{root, filepath.Join(root, "real", "link"), false}, // the last component is Lstat's job
+		{root, filepath.Join(root, "filelink"), false},
+		{root, filepath.Join(root, "missing", "f"), false},
+		{root, filepath.Join(root, "real", "f", "under-a-file"), false},
+		{filepath.Join(dir, "linkroot"), filepath.Join(dir, "linkroot", "f"), true}, // the root counts
+		{root, root, false},
+		{root, filepath.Join(dir, "elsewhere", "f"), false}, // not under root
+	} {
+		if got := SymlinkedParent(c.root, c.p); got != c.want {
+			t.Errorf("SymlinkedParent(%s, %s) = %v, want %v", c.root, c.p, got, c.want)
+		}
+	}
+}

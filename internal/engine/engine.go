@@ -453,13 +453,36 @@ func contains(xs []string, x string) bool {
 }
 
 // rootPresent: a folder entry's folder, or a file entry's parent, exists.
+// A folder entry's root that is now a symlink is not present: what is
+// behind it is not the entry (SPEC §6.6, D15).
 func (e *Engine) rootPresent(entry string, r proto.EntryRecord) bool {
-	p := e.abs(entry)
-	if !r.Dir {
-		p = filepath.Dir(p)
+	if r.Dir {
+		fi, err := os.Lstat(e.abs(entry))
+		return err == nil && fi.IsDir()
 	}
-	fi, err := os.Stat(p)
+	fi, err := os.Stat(filepath.Dir(e.abs(entry)))
 	return err == nil && fi.IsDir()
+}
+
+// shadowed: rel, inside entry, sits under a symlinked folder of the entry
+// (its root included), so its path leads somewhere else. It is never read,
+// written or trashed (SPEC §6.6, D15).
+func (e *Engine) shadowed(entry, rel string) bool {
+	r, ok := e.st.Entries[entry]
+	if !ok || !r.Dir || rel == entry {
+		return false
+	}
+	return fsx.SymlinkedParent(e.abs(entry), e.abs(rel))
+}
+
+// markSkipped lists rel as not synced in entry's status.
+func (e *Engine) markSkipped(entry, rel string) {
+	sk := e.skipped[entry]
+	if sk == nil {
+		sk = map[string]bool{}
+		e.skipped[entry] = sk
+	}
+	sk[rel] = true
 }
 
 // prune applies the retention policies: history (SPEC §10; each file's

@@ -273,3 +273,32 @@ func RemoveEmptyDirs(dir, root string) {
 		}
 	}
 }
+
+// SymlinkedParent reports whether a folder on the way from root (included)
+// down to p's parent is a symlink. Lstat only refuses to follow the last
+// component of a path, so a path under such a folder reads and writes
+// whatever the link points at; Enigma never touches it (SPEC §6.6, D15).
+// A component that is missing or not a folder ends the check: nothing
+// below it exists.
+func SymlinkedParent(root, p string) bool {
+	root, p = filepath.Clean(root), filepath.Clean(p)
+	rel, err := filepath.Rel(root, p)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	dir := root
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i := 0; ; i++ {
+		fi, err := os.Lstat(dir)
+		if err != nil {
+			return false
+		}
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			return true
+		}
+		if !fi.IsDir() || i >= len(parts)-1 {
+			return false
+		}
+		dir = filepath.Join(dir, parts[i])
+	}
+}

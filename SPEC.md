@@ -226,6 +226,11 @@ rescan, which compares disk against the stored current versions:
 - **Never clobbered:** something Enigma does not sync (a symlink, a folder,
   an oversized file) sitting at a target path is not overwritten. It is
   reported as an error on that path.
+- **Never through a link:** a path under a symlinked folder of a folder
+  entry (its root included) leads somewhere else, so it is never read,
+  written, copied or trashed, and is not a delete: it is listed as
+  skipped. A folder entry whose root became a symlink is missing locally
+  (§6.5).
 
 ## 7. Conflicts
 
