@@ -1,6 +1,7 @@
 # Enigma — design spec
 
-Status: **agreed**, 2026-10-20; groups, problems and the fleet rename added 2026-10-26 (D19–D21).
+Status: **agreed**, 2026-10-20; groups, problems and the fleet rename added 2026-10-26 (D19–D21);
+link replication agreed 2026-11-10 (D23, §8.1).
 Milestones 1–6 are implemented (v0.2.0); milestone 7 is the 2026-10-26 additions.
 Sections 1–3 record what was decided in discussion. Sections 4 onward are
 the technical design. Section 15 records how the remaining open points were
@@ -42,7 +43,7 @@ machines, in real time, over ssh.
 | D12 | Dev tools | tuxedo, tuicr and herdr are for our development workflow only, never part of Enigma. |
 | D13 | Backups | First-add backups are stored locally on the machine that made them, never next to the file. They are used when the user chooses "this machine wins". |
 | D14 | Folder first add | Files that exist only on another machine are kept and spread to everyone. Files that differ follow D7. |
-| D15 | Symlinks | Skipped and listed in status. |
+| D15 | Symlinks | Never followed: nothing is read, written or trashed through a link. Skipped and listed in status, unless the folder entry has link replication on (D23). |
 | D16 | Paths | Only paths under `~`. |
 | D17 | Repo | `github.com/nadavushka-dev/enigma`; releases come from there. |
 | D18 | Limits | 10 MB per file, 2,000 files per folder entry, by default; a fleet setting (`enigma limits`). |
@@ -50,6 +51,7 @@ machines, in real time, over ssh.
 | D20 | Problems | The daemon keeps a list of standing problems (what is wrong right now, with a hint), shown by `enigma status`, `doctor` and a notice line in the TUI, until each is resolved. |
 | D21 | TUI parity | Everything the CLI can do, the TUI can do. |
 | D22 | First-add preview | Before creating an entry, the adding machine asks every member of the target group what it has at that path and shows the user which machines have it, whether it differs, and which are offline. If anything differs the user chooses: keep both (default; differing copies become visible conflict copies), this machine wins (differing copies are replaced and backed up), or cancel. For a folder the TUI chooses per differing file. A non-interactive add with a difference and no `--on-existing` cancels. The choice travels in the entry record, so machines that were offline follow it when they reconnect. |
+| D23 | Link replication | Opt-in per folder entry (`enigma add --links`, `enigma entry links`), off by default. A symlink inside such an entry is replicated as a link, never as content, when its target is inside a synced entry of the same group (any entry, not ignored), checked on the sending and the receiving machine. Targets are stored relative to the link or as `~/…` and written under each machine's own home; targets outside `~` are skipped and reported. A received link waits until its target exists (never a dangling link, never a delete). A link never replaces a folder; a losing link goes to the trash, never to a conflict-copy link. Not in v1: links as entry roots, cross-group targets, resolving chains (§8.1). |
 
 ## 3. Vocabulary
 
@@ -62,7 +64,10 @@ machines, in real time, over ssh.
 - **Entry:** a file or folder you chose to sync, stored as a path relative to
   `~` (e.g. `.claude/CLAUDE.md`, `.claude/skills/`). It belongs to one group.
 - **Tracked file:** a regular file that is synced, either an entry itself or
-  a file inside a folder entry.
+  a file inside a folder entry; in a folder entry with link replication on,
+  also a symlink (D23, §8.1).
+- **Link:** a symlink. Its **stored target** is `~/…` (home-relative) or a
+  path relative to the link.
 - **Version:** one state of a tracked file: content hash (or "deleted"),
   version vector, parents, mtime, exec bit.
 - **Peer link:** the single ssh connection between two machines.
@@ -154,6 +159,10 @@ machines, in real time, over ssh.
   are never read. So a rescan of unchanged entries reads nothing.
 - A safety rescan runs at daemon start, after a watcher error, and every 10
   minutes.
+- In a folder entry with link replication on (D23), its links are also
+  re-read every 2 s (folder listings and `readlink` only): on macOS the
+  file events follow a link and report nothing when one is removed or
+  replaced by a rename (`ln -sfn`).
 
 ### 6.2 Versions
 Each tracked file has a current version with:
@@ -221,11 +230,19 @@ rescan, which compares disk against the stored current versions:
   it changed since the decision (someone is editing it right now), the write
   is abandoned and the new local edit wins the race: it becomes a local
   version and goes through §7 against the incoming one.
+- **Links** (D23): a link is written with `symlink(2)` into an absent name,
+  or as a new link in the same folder renamed over a file or a link after
+  the same precondition (the file's hash, or the link's target). The
+  stored target `~/rel` is written as `$HOME/rel` of this machine. A link
+  whose target does not exist here yet is not written: it waits (§8.1).
 - **Delete:** the file is moved to the trash (§10), and folders left empty
-  inside a folder entry are removed. The entry's root folder is never removed.
+  inside a folder entry are removed. The entry's root folder is never
+  removed. A deleted link is moved to the trash itself; what it points at
+  is never touched.
 - **Never clobbered:** something Enigma does not sync (a symlink, a folder,
   an oversized file) sitting at a target path is not overwritten. It is
-  reported as an error on that path.
+  reported as an error on that path. A received link never replaces a
+  folder: it is reported as blocked (§13.5).
 - **Never through a link:** a path under a symlinked folder of a folder
   entry (its root included) leads somewhere else, so it is never read,
   written, copied or trashed, and is not a delete: it is listed as
@@ -283,6 +300,16 @@ goes to the local backup instead (D13) and no copy is written. A
 first-add copy does not need a common ancestor; the two files are not
 merged.
 
+**Links** (D23) are versions like any other: a link's content is its
+stored target, and its hash (`sha256("enigma-link\0"+target)`) never
+equals a file's. Steps 1, 2 and 4 apply; links are never merged (step 3).
+In step 4, and when a first add replaces a link (D22, D13), the losing
+**link** is never written as a conflict copy, since every agent harness
+would load a `foo.conflict-…` skill link as a duplicate: the machine that
+has it moves it to the trash, records a `link-lost` activity event and
+shows a warning for an hour. A losing **file** is kept as a conflict copy
+or backup as usual, so a link replacing a file loses nothing.
+
 **Text detection:** valid UTF-8 and no NUL bytes in the first 8 KB.
 
 **Determinism.** Both machines usually detect the same conflict at the same
@@ -300,6 +327,8 @@ either way: the other edit is in the conflict copy.
   outside `~` are refused (D16).
 - **Regular files only.** Symlinks, sockets and devices are skipped and
   listed in status (D15). Only the exec bit of the permissions is synced.
+  Exception: links in a folder entry with link replication on (D23, §8.1).
+  A link counts as one file toward the folder's file limit.
 - **Always ignored:** `.git/`, `.hg/`, `.svn/`, `node_modules/`, `.DS_Store`,
   `*.swp`, `*.swx`, `*~`, `.#*`, `#*#`, Enigma temp files.
 - **Per-entry ignores:** extra globs. A pattern without `/` matches any path
@@ -321,6 +350,54 @@ either way: the other edit is in the conflict copy.
 - **Overlap:** an entry inside another entry is refused, whatever the
   group: a path is synced by one entry in one group (§9). Adding a folder
   that contains existing entries offers to replace them.
+
+### 8.1 Links (D23)
+
+A folder entry can replicate the symlinks inside it, as links: `enigma add
+--links <folder>`, later `enigma entry links <folder> on|off`, or `s` in
+the TUI Files pane. The setting travels in the entry record (`links`), so
+every member follows it. Off, symlinks are skipped (D15). Example: one
+flat `~/.agents/skills` whose entries link into `~/work/repo/skills`, with
+that folder synced too.
+
+- **Never followed.** Only `lstat` and `readlink` touch a link. Nothing is
+  read, written, copied or trashed through a link (§6.6).
+- **Stored target.** An absolute target under `~` (checked against the
+  home as given and as resolved) is stored as `~/rel`; a relative one is
+  kept verbatim if it stays under `~` by path arithmetic (a relative target
+  whose first component is `~` is stored as `./~/…`). Anything else
+  (outside `~`, empty, NUL) is skipped and reported. Each machine writes
+  `~/rel` under its own home, and reading it back gives the same stored
+  target, so macOS `/Users/x` and Linux `/home/x` never echo.
+- **Eligible.** The target, resolved by path arithmetic, must be inside a
+  live entry of the **same group** that this machine syncs (a different
+  entry is fine), not ignored there and not behind another link in it. The
+  sender only announces eligible links; the receiver checks again and
+  skips (and reports) one it would not have sent. Same group because a
+  target is a path: a link may not tell a member a path of a group it is
+  not in (D19). Eligibility is re-checked when entries change; a link that
+  stops being eligible stays where it is, is reported, and is not synced.
+- **Pending.** A received link whose target does not exist here yet is not
+  written and is not a delete: it waits, is re-checked after every change,
+  and becomes a warning after a minute. It is created once its target
+  arrives. Pending links are held in memory; after a restart the catch-up
+  brings them back.
+- **Dangling.** A synced link whose target later disappears is left alone
+  (Enigma never deletes what the user did not) and reported as dangling.
+- **Link vs folder.** A link never replaces a folder: the receiver reports
+  it blocked (an error); under the link on the other machine the folder's
+  files are never written through it (§6.6). The user keeps one.
+- **Link vs file.** At first add, D22 applies: keep both keeps the file as
+  a conflict copy (and backup) and writes the link; this machine wins
+  backs the file up and writes the link. Afterwards, §7 step 4: the newer
+  wins; a losing file is a conflict copy, a losing link goes to the trash.
+  The first-add preview does not list links yet.
+- **Retarget** is an edit; a retarget beats a concurrent delete (D8).
+- **Chains** are never resolved: eligibility looks at the first hop only.
+- **Not in v1:** an entry root that is a link (`enigma add` still refuses
+  one), targets in another group, Windows (Enigma is macOS and Linux).
+- No protocol bump: the fields (`version.link`, `entry.links`) are
+  additive and linked machines run the same version (§12), as in M7.
 
 ## 9. Groups
 
@@ -418,7 +495,8 @@ machines. The files stay as they are everywhere.
 **Trash:** `~/.local/share/enigma/trash/<YYYY-MM-DD>/<path>`, purged after
 30 days (a fleet setting). Trash is per machine and never synced. `enigma
 trash list` and `enigma trash restore <id>` restore a file, which then syncs
-as a normal edit. Restore never overwrites an existing file.
+as a normal edit. Restore never overwrites an existing file. A trashed
+link is the link itself (D23); restoring recreates it.
 - The same path trashed twice in a day goes to `<YYYY-MM-DD>.2/<path>`
   (then `.3`, …), so the original path is always everything after the
   first folder. The ID is `<day folder>/<path>`.
@@ -552,8 +630,8 @@ rules lives in `skills/enigma/` and ships in the release tarball.
 | `enigma init` | create the fleet on this machine, with the group `main` |
 | `enigma machine add <alias> [--group G]…` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §12) |
 | `enigma group list` · `create <name> [machine…]` · `delete <name> [--yes]` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into> [--add-members]` | manage groups (§9) |
-| `enigma entry move <path> <group>` | move an entry to another group (§9) |
-| `enigma add <path> [--group G] [--ignore GLOB]… [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4); `--dry-run` prints the first-add preview without adding; a difference with no flag and no terminal cancels (D22) |
+| `enigma entry move <path> <group>` · `entry links <path> on\|off` | move an entry to another group (§9); turn link replication on or off for a folder entry (D23) |
+| `enigma add <path> [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4); `--dry-run` prints the first-add preview without adding; a difference with no flag and no terminal cancels (D22) |
 | `enigma limits [--file-size SIZE] [--files N]` | show the fleet's limits, or change them for every machine (§8); SIZE like `25MB` |
 | `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers |
 | `enigma conflicts [--local]` | list conflict copies across the fleet (asks every member over ssh), with the machines that hold each |
@@ -620,7 +698,9 @@ a notice line (§13.5), and the key hints.
   entry there (a notice when it is already there), each with a notice
   naming the group, so a wrong target is seen at once and undone by
   selecting the other group and pressing `m`. No group is ever typed. `x`
-  stops syncing an entry (after a confirmation). `/` filters it with fuzzy
+  stops syncing an entry (after a confirmation). `s` turns link
+  replication on or off for a synced folder (D23), with a notice; a
+  replicated link shows `link → <target>` and its state. `/` filters it with fuzzy
   search (§13.4).
 - **Activity:** the daemon's recent events (a ring of the last 500: changes
   received and made, merges, conflict copies, deletes, links up and down,
@@ -696,6 +776,11 @@ Conditions, with their hints:
   entry, counting them);
 - a path that cannot be written: something unsyncable sits there (§6.6) or
   a permission error;
+- links (D23): a link skipped, with the reason (outside `~`, target not
+  synced, in another group, ignored); a link waiting for its target over a
+  minute; a dangling link (warnings); a link blocked by a folder (error);
+  a link that lost to another version and went to the trash, for an hour
+  (warning);
 - a conflict copy written in the last hour (warning; it clears by itself);
 - a group with no members; an entry of a group this machine is not in
   (cannot happen by construction, reported if it does);
@@ -745,7 +830,11 @@ Machines, Groups or Files pane when there is one.
     random edits, deletes, disconnects and restarts. The invariant: once
     quiet, every machine has identical content and no data is lost. Every
     overwritten version must exist somewhere as current content, a
-    conflict copy, the trash or a backup.
+    conflict copy, the trash or a backup. With links (D23): random link
+    creates, retargets, deletes and link/file swaps; once quiet every
+    machine has the same links, no file is ever changed through a link,
+    and every link a user set and did not replace is a link somewhere or
+    in a trash.
   - End-to-end (from milestone 2), with no second physical machine needed:
     - 3–4 Linux Docker containers, each running `sshd` and an Enigma
       daemon, plus the development Mac as a full member. The Mac covers
@@ -817,7 +906,7 @@ Each milestone ends with all tests passing and a review in tuicr.
 |---|---|
 | Where do first-add backups go? | Local backup folder (D13). |
 | First add of a folder: files only on another machine | Kept and spread (D14). |
-| Symlinks | Skipped (D15). |
+| Symlinks | Skipped (D15); replicated as links in folder entries that opt in (D23, §8.1). |
 | Paths outside `~` | Not supported (D16). |
 | Binary distribution | `github.com/nadavushka-dev/enigma` (D17). |
 | Limits | 10 MB / 2,000 files by default, per fleet (D18, §8). |
