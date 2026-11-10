@@ -134,6 +134,15 @@ func (f *fake) GroupOp(req daemon.GroupRequest) (string, error) {
 }
 func (f *fake) Remove(abs string) error { f.call("remove " + abs); return f.opErr }
 
+func (f *fake) SetLinks(abs string, on bool) error {
+	if on {
+		f.call("links on " + abs)
+	} else {
+		f.call("links off " + abs)
+	}
+	return f.opErr
+}
+
 func (f *fake) SetLimits(l engine.Limits) (engine.Limits, error) {
 	f.call(fmt.Sprintf("set-limits %d %d", l.MaxFileSize, l.MaxFiles))
 	if f.opErr != nil {

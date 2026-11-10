@@ -58,7 +58,7 @@ func (p *filesPane) Help() []KeyHelp {
 	if p.filter != nil {
 		return []KeyHelp{{"type", "filter"}, {"tab", "scope"}, {"↑/↓", "move"}, {"enter", "jump"}, {"esc", "cancel"}}
 	}
-	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"m", "move"}, {"x", "remove"}, {"/", "filter"}}
+	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"m", "move"}, {"x", "remove"}, {"s", "links"}, {"/", "filter"}}
 }
 
 func (p *filesPane) MoreHelp() (string, []KeyHelp) {
@@ -261,6 +261,8 @@ func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		return p.move(s, n)
 	case "x":
 		return p.remove(s, n)
+	case "s":
+		return p.toggleLinks(s, n)
 	case "/":
 		return p.openFilter(s)
 	}
@@ -362,6 +364,42 @@ func (p *filesPane) remove(s *Shared, n *fileNode) tea.Cmd {
 	return func() tea.Msg { return q }
 }
 
+// toggleLinks turns link replication on or off for a synced folder (D23).
+func (p *filesPane) toggleLinks(s *Shared, n *fileNode) tea.Cmd {
+	if n == nil {
+		return nil
+	}
+	e := entryFor(s, n.rel)
+	if e == nil || e.Path != n.rel || !e.Dir {
+		return showErr(fmt.Errorf("s turns link replication on or off for a synced folder"))
+	}
+	abs := filepath.Join(s.Backend.Home(), filepath.FromSlash(n.rel))
+	b, on := s.Backend, !e.LinksOn
+	return func() tea.Msg {
+		if err := b.SetLinks(abs, on); err != nil {
+			return ShowError{Err: err}
+		}
+		if on {
+			return done("links are replicated in ~/" + n.rel + " when their target is synced in the same group")
+		}
+		return done("links are skipped again in ~/" + n.rel)
+	}
+}
+
+// linkOf is the status of the link at rel (D23), if its entry knows it.
+func linkOf(s *Shared, rel string) *engine.LinkStatus {
+	e := entryFor(s, rel)
+	if e == nil {
+		return nil
+	}
+	for i := range e.Links {
+		if e.Links[i].Path == rel {
+			return &e.Links[i]
+		}
+	}
+	return nil
+}
+
 func showErr(err error) tea.Cmd { return func() tea.Msg { return ShowError{Err: err} } }
 
 // entryFor is the entry rel is, or is inside of; nil otherwise.
@@ -397,10 +435,18 @@ func (p *filesPane) markRel(s *Shared, rel string, dir bool) string {
 			return "frozen · " + groupNameOf(s, e.Group)
 		case e.Missing:
 			return "missing here"
-		case e.Group != "" && e.Group != proto.MainGroup:
-			return "synced · " + groupNameOf(s, e.Group)
 		}
-		return "synced"
+		mark := "synced"
+		if e.Group != "" && e.Group != proto.MainGroup {
+			mark += " · " + groupNameOf(s, e.Group)
+		}
+		if e.LinksOn {
+			mark += " · links"
+		}
+		return mark
+	}
+	if l := linkOf(s, rel); l != nil {
+		return "link " + l.State
 	}
 	for _, sk := range e.Skipped {
 		if sk == rel {
@@ -424,13 +470,21 @@ func markStyle(mark string) lipgloss.Style {
 		return StyleOK
 	case "missing here", "skipped", "over limit":
 		return StyleWarn
+	case "link " + engine.LinkSynced:
+		return StyleOK
+	case "link " + engine.LinkPending, "link " + engine.LinkSkipped, "link " + engine.LinkBlocked, "link " + engine.LinkDangling:
+		return StyleWarn
 	}
 	return StyleDim
 }
 
 // dimmed: ignored names, oversized files, symlinks and other non-regular items.
 func (p *filesPane) dimmed(s *Shared, n *fileNode) bool {
-	if n.symlink || n.other {
+	if n.symlink {
+		l := linkOf(s, n.rel)
+		return l == nil || l.State != engine.LinkSynced
+	}
+	if n.other {
 		return true
 	}
 	maxSize := s.Status.Limits.MaxFileSize
@@ -476,6 +530,9 @@ func (p *filesPane) View(s *Shared, width, height int, focused bool) string {
 		switch {
 		case n.symlink:
 			name += " -> "
+			if l := linkOf(s, n.rel); l != nil {
+				name += l.Target
+			}
 		case n.dir:
 			name += "/"
 		}
