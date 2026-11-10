@@ -126,6 +126,11 @@ type EntryRecord struct {
 	// to the entry root.
 	FirstAdd       FirstAddPolicy            `json:"first_add,omitempty"`
 	FirstAddByPath map[string]FirstAddPolicy `json:"first_add_by_path,omitempty"`
+
+	// Links turns on link replication for a folder entry (D23): symlinks
+	// inside it whose target is synced in the same group are replicated
+	// as links. Off by default; then symlinks are skipped (D15).
+	Links bool `json:"links,omitempty"`
 }
 
 // FirstAddFor is the policy for rel, a tracked path at or under the entry.

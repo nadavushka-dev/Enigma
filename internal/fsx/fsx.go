@@ -40,13 +40,23 @@ func (k Kind) String() string {
 	return [...]string{"missing", "regular", "dir", "other"}[k]
 }
 
-// Info describes a path. Hash, Size, Mtime and Exec are set for Regular only.
+// Info describes a path. Hash, Size, Mtime and Exec are set for Regular
+// only. A symlink is Kind Other with Link set, its raw target in Target
+// and its own mtime; it is never followed (SPEC §8.1, D23).
 type Info struct {
-	Kind  Kind
-	Hash  string
-	Size  int64
-	Mtime int64 // unix nanoseconds
-	Exec  bool
+	Kind   Kind
+	Hash   string
+	Size   int64
+	Mtime  int64 // unix nanoseconds
+	Exec   bool
+	Link   bool
+	Target string
+}
+
+// LinkHash is the hash of a link version whose content is target (D23).
+// It is domain-separated, so it never equals the hash of a file.
+func LinkHash(target string) string {
+	return Hash([]byte("enigma-link\x00" + target))
 }
 
 func Hash(b []byte) string {
@@ -66,6 +76,12 @@ func Stat(p string) (Info, error) {
 	switch {
 	case fi.IsDir():
 		return Info{Kind: Dir}, nil
+	case fi.Mode()&fs.ModeSymlink != 0:
+		t, err := os.Readlink(p)
+		if err != nil {
+			return Info{Kind: Other}, nil
+		}
+		return Info{Kind: Other, Link: true, Target: t, Mtime: fi.ModTime().UnixNano()}, nil
 	case !fi.Mode().IsRegular():
 		return Info{Kind: Other}, nil
 	}
@@ -232,6 +248,129 @@ func commit(tmp, p string, o WriteOpts) error {
 	return nil
 }
 
+// LinkOpts is the precondition for WriteLink: exactly one of them
+// describes what must be at the target now.
+type LinkOpts struct {
+	ExpectAbsent bool
+	ExpectHash   string // a regular file with this content
+	ExpectLink   string // a symlink with this raw target
+}
+
+func (o LinkOpts) check(cur Info) error {
+	switch {
+	case cur.Kind == Missing:
+		if o.ExpectAbsent {
+			return nil
+		}
+	case cur.Kind == Regular:
+		if o.ExpectHash != "" && cur.Hash == o.ExpectHash {
+			return nil
+		}
+	case cur.Link:
+		if o.ExpectLink != "" && cur.Target == o.ExpectLink {
+			return nil
+		}
+	default: // a folder, a socket...: never replaced by a link
+		return ErrNotRegular
+	}
+	return ErrChanged
+}
+
+// WriteLink makes p a symlink to target (SPEC §6.6, D23), never following
+// one: into an absent name with symlink(2), which fails if anything
+// appeared; over a file or a link by renaming a new link from the same
+// folder onto it, after a last precondition check. A folder is never
+// replaced. Missing parent directories are created.
+func WriteLink(p, target string, o LinkOpts) error {
+	if target == "" || strings.ContainsRune(target, 0) {
+		return fmt.Errorf("bad link target %q", target)
+	}
+	cur, err := Stat(p)
+	if err != nil {
+		return err
+	}
+	if err := o.check(cur); err != nil {
+		return err
+	}
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if o.ExpectAbsent {
+		if beforeCommit != nil {
+			beforeCommit(p)
+		}
+		if err := os.Symlink(target, p); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return ErrChanged
+			}
+			return err
+		}
+		return nil
+	}
+	var tmp string
+	for i := 0; ; i++ {
+		tmp = filepath.Join(dir, fmt.Sprintf("%slink-%d-%d", TempPrefix, time.Now().UnixNano(), i))
+		err := os.Symlink(target, tmp)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) || i > 100 {
+			return err
+		}
+	}
+	defer os.Remove(tmp) // no-op after a successful rename
+	if o.ExpectHash != "" {
+		return commit(tmp, p, WriteOpts{ExpectHash: o.ExpectHash})
+	}
+	if beforeCommit != nil {
+		beforeCommit(p)
+	}
+	if t, err := os.Readlink(p); err != nil || t != o.ExpectLink {
+		return ErrChanged
+	}
+	return os.Rename(tmp, p)
+}
+
+// MoveLinkTo moves the symlink src itself (never what it points at) to
+// dst, provided its raw target is still expect. Like MoveTo, it never
+// overwrites: a taken dst gets a numeric suffix. It returns the final
+// destination.
+func MoveLinkTo(src, dst, expect string) (string, error) {
+	cur, err := Stat(src)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case cur.Kind == Missing:
+		return "", ErrChanged
+	case !cur.Link:
+		return "", ErrNotRegular
+	case cur.Target != expect:
+		return "", ErrChanged
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return "", err
+	}
+	final := freeName(dst)
+	if err := os.Rename(src, final); err != nil {
+		return "", err
+	}
+	return final, nil
+}
+
+// freeName is dst, or dst with a numeric suffix if dst is taken.
+func freeName(dst string) string {
+	final := dst
+	for i := 2; ; i++ {
+		if _, err := os.Lstat(final); errors.Is(err, fs.ErrNotExist) {
+			return final
+		}
+		ext := filepath.Ext(dst)
+		final = fmt.Sprintf("%s.%d%s", strings.TrimSuffix(dst, ext), i, ext)
+	}
+}
+
 // MoveTo moves the regular file src to dst (creating dst's directories),
 // provided src still has hash expect. If dst exists, a numeric suffix is
 // added so nothing is overwritten. It returns the final destination.
@@ -249,14 +388,7 @@ func MoveTo(src, dst, expect string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
 	}
-	final := dst
-	for i := 2; ; i++ {
-		if _, err := os.Lstat(final); errors.Is(err, fs.ErrNotExist) {
-			break
-		}
-		ext := filepath.Ext(dst)
-		final = fmt.Sprintf("%s.%d%s", strings.TrimSuffix(dst, ext), i, ext)
-	}
+	final := freeName(dst)
 	if err := os.Rename(src, final); err != nil {
 		return "", err
 	}

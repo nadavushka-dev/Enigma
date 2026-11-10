@@ -56,9 +56,12 @@ func (m *Matcher) Ignored(rel string) bool {
 
 // ScanResult maps slash-separated paths relative to the root to file info.
 // Skipped lists files that exist but are not synced (symlinks, oversized).
+// Links lists the symlinks among them, which a folder entry with link
+// replication may sync (D23).
 type ScanResult struct {
 	Files   map[string]Info
 	Skipped []string
+	Links   []string
 }
 
 // Scan walks root. Files larger than maxSize (if > 0) are skipped.
@@ -93,6 +96,9 @@ func ScanWith(root string, m *Matcher, maxSize int64, stat func(p string) (Info,
 		}
 		if !d.Type().IsRegular() {
 			res.Skipped = append(res.Skipped, rel)
+			if d.Type()&fs.ModeSymlink != 0 {
+				res.Links = append(res.Links, rel)
+			}
 			return nil
 		}
 		if oversized(d, maxSize) { // before hashing: never read what is skipped
@@ -119,6 +125,16 @@ func ScanWith(root string, m *Matcher, maxSize int64, stat func(p string) (Info,
 // ListFiles is the regular files under root that m does not ignore,
 // slash-separated and relative to root. Nothing is read.
 func ListFiles(root string, m *Matcher) ([]string, error) {
+	return list(root, m, false)
+}
+
+// ListLinks is ListFiles for the symlinks under root (D23). Links are
+// never followed.
+func ListLinks(root string, m *Matcher) ([]string, error) {
+	return list(root, m, true)
+}
+
+func list(root string, m *Matcher, links bool) ([]string, error) {
 	var out []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -138,7 +154,7 @@ func ListFiles(root string, m *Matcher) ([]string, error) {
 			}
 			return nil
 		}
-		if d.Type().IsRegular() {
+		if links && d.Type()&fs.ModeSymlink != 0 || !links && d.Type().IsRegular() {
 			out = append(out, rel)
 		}
 		return nil
@@ -152,6 +168,12 @@ func ListFiles(root string, m *Matcher) ([]string, error) {
 // CountFiles counts the files Scan would sync under root, without reading
 // any, and stops once the count passes limit (returning limit+1).
 func CountFiles(root string, m *Matcher, maxSize int64, limit int) (int, error) {
+	return CountSynced(root, m, maxSize, limit, false)
+}
+
+// CountSynced is CountFiles that also counts symlinks, one each, when
+// links is set: a folder entry with link replication syncs them (D23).
+func CountSynced(root string, m *Matcher, maxSize int64, limit int, links bool) (int, error) {
 	n := 0
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -170,7 +192,8 @@ func CountFiles(root string, m *Matcher, maxSize int64, limit int) (int, error) 
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() || oversized(d, maxSize) {
+		isLink := links && d.Type()&fs.ModeSymlink != 0
+		if !isLink && (!d.Type().IsRegular() || oversized(d, maxSize)) {
 			return nil
 		}
 		if n++; n > limit {

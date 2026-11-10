@@ -34,6 +34,16 @@ type Item struct {
 // Move puts the file src (rel from ~) in the trash, provided it still has
 // hash expect.
 func Move(dir, src, rel, expect string, now time.Time) (Item, error) {
+	return move(dir, src, rel, now, func(dst string) (string, error) { return fsx.MoveTo(src, dst, expect) })
+}
+
+// MoveLink puts the symlink src itself in the trash, provided its raw
+// target is still expect (D23). What it points at is never touched.
+func MoveLink(dir, src, rel, expect string, now time.Time) (Item, error) {
+	return move(dir, src, rel, now, func(dst string) (string, error) { return fsx.MoveLinkTo(src, dst, expect) })
+}
+
+func move(dir, src, rel string, now time.Time, mv func(dst string) (string, error)) (Item, error) {
 	day := now.Format(dayFormat)
 	for i := 1; i < 1000; i++ {
 		slot := day
@@ -47,7 +57,7 @@ func Move(dir, src, rel, expect string, now time.Time) (Item, error) {
 		if os.MkdirAll(filepath.Dir(dst), 0o700) != nil {
 			continue // a trashed file has the name of a folder we need
 		}
-		final, err := fsx.MoveTo(src, dst, expect)
+		final, err := mv(dst)
 		if err != nil {
 			return Item{}, err
 		}
@@ -91,7 +101,7 @@ func List(dir string) ([]Item, error) {
 				return nil
 			}
 			info, err := d.Info()
-			if err != nil || !info.Mode().IsRegular() {
+			if err != nil || !info.Mode().IsRegular() && info.Mode()&fs.ModeSymlink == 0 {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, p)
@@ -118,12 +128,28 @@ func Restore(dir, home, id string) (string, error) {
 	}
 	src := filepath.Join(dir, slot, filepath.FromSlash(rel))
 	info, err := os.Lstat(src)
-	if err != nil || !info.Mode().IsRegular() {
+	isLink := err == nil && info.Mode()&fs.ModeSymlink != 0
+	if err != nil || !info.Mode().IsRegular() && !isLink {
 		return "", fmt.Errorf("%q is not in the trash (see `enigma trash list`)", id)
 	}
 	dst := filepath.Join(home, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return "", err
+	}
+	if isLink { // D23: recreate the link itself; symlink(2) never replaces
+		target, err := os.Readlink(src)
+		if err != nil {
+			return "", err
+		}
+		if err := os.Symlink(target, dst); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return "", fmt.Errorf("~/%s already exists; move it away first", rel)
+			}
+			return "", err
+		}
+		os.Remove(src)
+		fsx.RemoveEmptyDirs(filepath.Dir(src), dir)
+		return dst, nil
 	}
 	// link + remove: fails instead of replacing a file that exists.
 	if err := os.Link(src, dst); err != nil {

@@ -88,6 +88,9 @@ type Version struct {
 	By      string   `json:"by"`      // machine ID that made it
 	ByName  string   `json:"by_name"` // that machine's display name, for conflict copy names
 	Origin  Origin   `json:"origin,omitempty"`
+	// Link: a symlink whose content is its stored target (D23); Hash is
+	// then fsx.LinkHash of that target, never equal to a file's hash.
+	Link bool `json:"link,omitempty"`
 }
 
 func (v Version) IsDeleted() bool { return v.Hash == Deleted }
