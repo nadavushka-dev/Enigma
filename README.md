@@ -164,9 +164,12 @@ another agent at the same files. It ships in the release tarball.
   that folder added as well. Targets under `~` are rewritten for each
   machine's home; a link waits until its target has arrived, never
   replaces a folder, and a link that loses a conflict goes to the trash.
-  Enigma then shares the repo's folder with git on the other machines: a
-  `git pull` there syncs as an edit. Agent harnesses follow links, so do
-  not point one at a folder that contains it.
+  Agent harnesses follow links, so do not point one at a folder that
+  contains it.
+- **Synced folders inside a git repo.** Run git on one machine only;
+  Enigma carries the result to the others. Sync the skill/work folders,
+  not `.git`. A conflict copy from a simultaneous edit shows up in
+  `git status` on that machine — delete it or ignore it.
 - **Small things.** By default the limits are 10 MB per file and 2,000
   files per folder. Enigma is for the files around your projects, not the
   projects themselves. Change them for the whole fleet with
