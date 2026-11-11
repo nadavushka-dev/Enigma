@@ -31,7 +31,10 @@ e2e when it needs real ssh or a real Linux file system).
   `enigma service install`. `service install` alone does **not** restart a
   daemon that is running.
 - Look: `enigma status` (problems first), `enigma status --json`,
-  `enigma trash list`, `enigma log`.
+  `enigma trash list`, and the log at `~/.local/share/enigma/enigma.log`
+  (`tail -f` it; there is no `enigma log` command).
+- Folder identity: `stat -c '%i %W' ~/notes` shows the inode and birth
+  time; Linux often gives a re-created folder the old inode.
 - Stop: `make sandbox-down`.
 
 ## Scenarios
@@ -70,6 +73,43 @@ Each: steps, then what must be true. "Peers" means the other two boxes.
    missing locally and `~/notes` is not re-created; after `mkdir ~/notes`
    both files come back on s3 within seconds (status shows "restoring"
    until then); after the restart, still no delete anywhere.
+7. **A1 (found by hand 2026-11-11): root deleted and re-created on one
+   line.** On s3 with `~/notes` synced: `rm -rf ~/notes && mkdir ~/notes`
+   (check with `stat` that the inode came back).
+   Expect: s1 and s2 keep every file, trash empty; s3 gets them back within
+   seconds.
+8. **A2b: root deleted, left gone, re-created later.** `rm -rf ~/notes`;
+   wait 10 s (status: missing locally, deletes not sent); `mkdir ~/notes`.
+   Expect: as in 7.
+9. **A16: scenario 6 without the symlink.** `mv ~/notes ~/notes.old`;
+   wait 5 s; `rm -rf ~/notes.old; mkdir ~/notes`.
+   Expect: as in 7.
+10. **F2: the re-created folder keeps syncing.** After 7, 8 or 9:
+    `echo after > ~/notes/new.md`.
+    Expect: `new.md` reaches the peers within seconds, without a restart;
+    `enigma status` never shows the entry as plain `ok` while it is not
+    watched (it says `NOT WATCHED` until it is).
+11. **S2: following the "blocked" hint.** After 4, on s2
+    `rm -rf ~/.agents/skills/bar`.
+    Expect: within seconds the link appears on s2 (its own `$HOME`), the
+    blocked error goes, no restart needed; s2's old `SKILL.md` is not
+    listed as skipped anywhere afterwards (S3).
+12. **S4: concurrent retargets.** Cut s2. On s1 retarget
+    `~/.agents/skills/foo` to one skill; wait 2 s; on s2 retarget it to
+    another. Reconnect.
+    Expect: every box ends on s2's target; **every** box that had s1's
+    link, s1 included, has it in `enigma trash list` and a "lost" warning;
+    no `.conflict-` link anywhere.
+13. **S5: links off.** `enigma entry links ~/.agents/skills off` on s1,
+    then `rm ~/.agents/skills/foo` on s1.
+    Expect: the peers keep their link (nothing in their trash). Turn links
+    back on: the link comes back on s1 from the peers.
+14. **Status stays true (S1, S6, S7).** After every scenario above,
+    `enigma status` on each box lists only what is wrong now: no
+    "skipped" for links that are gone, no "is a symlink" or "vanished"
+    for folders that are back, no conflict whose copy was deleted, no line
+    twice. A box outside an entry's group shows it as "not synced here",
+    never `ok`. `enigma add` that you cancel exits non-zero (`echo $?`).
 
 ### Always also try
 
