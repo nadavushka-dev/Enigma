@@ -108,6 +108,30 @@ func TestWriteLinkKeepsAnEditMadeAtTheLastMoment(t *testing.T) {
 	}
 }
 
+// The last check before the write catches what appeared or changed
+// after the precondition was read.
+func TestWriteLinkLastMomentChecks(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "l")
+	beforeCommit = func(string) { os.WriteFile(p, []byte("appeared"), 0o644) }
+	if err := WriteLink(p, "t", LinkOpts{ExpectAbsent: true}); !errors.Is(err, ErrChanged) {
+		t.Fatalf("absent: err = %v", err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "appeared" {
+		t.Fatal("the file that appeared was replaced")
+	}
+	q := filepath.Join(dir, "q")
+	os.Symlink("old", q)
+	beforeCommit = func(string) { os.Remove(q); os.Symlink("user", q) }
+	defer func() { beforeCommit = nil }()
+	if err := WriteLink(q, "new", LinkOpts{ExpectLink: "old"}); !errors.Is(err, ErrChanged) {
+		t.Fatalf("retarget: err = %v", err)
+	}
+	if readlink(t, q) != "user" {
+		t.Fatal("the user's retarget was overwritten")
+	}
+}
+
 func TestMoveLinkToMovesTheLinkNotItsTarget(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
@@ -132,6 +156,39 @@ func TestMoveLinkToMovesTheLinkNotItsTarget(t *testing.T) {
 	}
 	if _, err := os.Lstat(l); !os.IsNotExist(err) {
 		t.Fatal("link still in place")
+	}
+}
+
+func TestWriteLinkRefusesBadTargetsAndMovesNeedALink(t *testing.T) {
+	dir := t.TempDir()
+	for _, target := range []string{"", "a\x00b"} {
+		if err := WriteLink(filepath.Join(dir, "l"), target, LinkOpts{ExpectAbsent: true}); err == nil {
+			t.Fatalf("target %q accepted", target)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "l")); !os.IsNotExist(err) {
+		t.Fatal("something was created")
+	}
+	// A link expected but a file there, and a file expected but a link.
+	f := filepath.Join(dir, "f")
+	writeFile(t, f, "x")
+	if err := WriteLink(f, "t", LinkOpts{ExpectLink: "t0"}); !errors.Is(err, ErrChanged) {
+		t.Fatalf("err = %v", err)
+	}
+	l := filepath.Join(dir, "l2")
+	os.Symlink("t0", l)
+	if err := WriteLink(l, "t", LinkOpts{ExpectHash: Hash([]byte("x"))}); !errors.Is(err, ErrChanged) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := MoveLinkTo(filepath.Join(dir, "gone"), filepath.Join(dir, "t", "gone"), "x"); !errors.Is(err, ErrChanged) {
+		t.Fatalf("missing source: %v", err)
+	}
+	// A taken destination gets a numbered name, as MoveTo does.
+	os.MkdirAll(filepath.Join(dir, "trash"), 0o755)
+	writeFile(t, filepath.Join(dir, "trash", "l2"), "taken")
+	got, err := MoveLinkTo(l, filepath.Join(dir, "trash", "l2"), "t0")
+	if err != nil || filepath.Base(got) != "l2.2" || readlink(t, got) != "t0" {
+		t.Fatalf("MoveLinkTo = %q, %v", got, err)
 	}
 }
 
