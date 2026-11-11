@@ -13,6 +13,7 @@ const (
 	EvMerged       = "merged"        // concurrent edits merged cleanly
 	EvConflict     = "conflict"      // a conflict copy was kept (Path: the copy, Detail: the original)
 	EvKeptBoth     = "kept-both"     // a first-add difference kept as a copy (Path: copy, Detail: original)
+	EvWhileAway    = "while-away"    // a catch-up scan found changes not seen live (Detail: the summary), §13.5
 	EvRootMissing  = "root-missing"  // an entry's folder is gone or a symlink here: deletes are not sent (§6.5)
 	EvRootIdentity = "root-identity" // an entry's folder identity keeps changing: not relied on (§6.5)
 	EvRootReplaced = "root-replaced" // an entry's folder is another folder now; its files are restored, not deleted (§6.5)

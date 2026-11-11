@@ -257,9 +257,11 @@ rescan, which compares disk against the stored current versions:
     whatever its identity says.
 
   Where a folder's identity changes while every file stays in place
-  (FUSE, some network mounts), after three such changes (counted across
-  restarts) it is no longer relied on for that entry, with a standing
-  warning; the root watch then only notices it becoming a symlink or
+  (FUSE, some network mounts), each change found by a check rather than
+  seen live is a strike; three strikes within 24 h (timestamps saved, so
+  a change once per boot counts; older strikes are forgotten) and it is
+  no longer relied on for that entry, with a standing warning, until the
+  entry is removed or 7 days pass with no further strike; the root watch then only notices it becoming a symlink or
   going away. Not covered: a
   folder deleted and re-created unseen (no event, daemon stopped) on a
   file system without birth times that reuses its inode; that reads as
@@ -898,7 +900,8 @@ Finding a file to add without walking the tree by hand.
 
 ### 13.3 Notifications
 For a conflict copy (not for a first-add copy, which is activity only), an
-entry root missing locally (vanished, or a symlink now), a folder going
+entry root missing locally (vanished, or a symlink now), a catch-up scan
+that found changes it did not see live (`while-away`, §13.5), a folder going
 over its file limit, a received file over the size limit, or a received
 version that could not be written:
 - macOS: `osascript -e 'display notification …'`; the text goes in as
@@ -930,7 +933,8 @@ a hint; one line per key):
 | `missing:<entry>` | error | a folder entry's folder is missing or a symlink here, or a file entry's parent folder is missing (§6.5) | a folder is there again |
 | `unwatched:<entry>` | error | the entry's folder has no live watch, or some of its subfolders could not be watched (NOT / PARTLY WATCHED, §6.5); not while missing | every folder is watched |
 | `restoring:<entry>` | warning | files this machine keeps a version of are not on disk and are being fetched (a replaced folder, a removed link, §6.5, §6.6); not while missing | they are here |
-| `identity:<entry>` | warning | the folder's identity changed three times with every file in place (FUSE, network mounts, §6.5) | the entry is removed (it is a property of the file system) |
+| `identity:<entry>` | warning | the folder's identity changed three times within 24 h with every file in place (FUSE, network mounts, §6.5) | 7 days with no further change, or the entry is removed |
+| `while-away:<entry>` | warning | a catch-up scan (the daemon starting, the entry coming back into this machine's groups, or its folder back after missing) found changes it did not see live: files deleted here (deleted on the other machines too; the hint points at `enigma trash list` / `enigma trash restore` on them), changed or added here (sent), the folder replaced, files being restored, an identity strike (N/3). Visibility only: nothing about what syncs changes | 24 h after it was found (not on reading it, so every view shows the same) |
 | `overlimit:<entry>` | error | new files wait past the folder's file limit (§8) | there is room, or they are gone |
 | `skipped:<entry>` | warning | files skipped as oversized or non-regular (one per entry, counting them; links with a state of their own are not counted) | they are gone or fit |
 | `link-skipped:<path>` | warning | a link not replicated, with the reason (outside `~`, target not synced, another group, ignored, a loop, not here) (D23) | the path is no longer such a link, or it becomes eligible |

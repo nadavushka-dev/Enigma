@@ -92,7 +92,10 @@ Use `--json` for reads. The commands below are the ones with JSON output;
   when set: `LinksOn`, `Links`, `Restoring` (files being restored from the
   other machines), `Unwatched` (the folder has no live watch),
   `UnwatchedFolders` (subfolders that could not be watched),
-  `IdentityUnreliable` (the folder's identity changes on its own here).
+  `IdentityUnreliable` (the folder's identity changes on its own here),
+  `WhileAway` (what the last catch-up scan found that was not seen live:
+  `kind`, `at`, `deleted`, `changed`, `added`, `replaced`, `restoring`,
+  `strike`; shown for 24 h).
 - `problems` is the standing set, errors first. Quote the `message` and
   `hint`.
 - `conflicts` is a list of conflict-copy paths on this machine.

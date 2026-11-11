@@ -58,6 +58,9 @@ type Options struct {
 	// Notify raises a desktop notification about path (SPEC §12.3); nil
 	// is silent. It is called on the loop, so it must return at once.
 	Notify func(path, title, body string)
+	// Now is the clock for what expires (identity strikes, while-away
+	// summaries); nil is time.Now. Tests move it.
+	Now func() time.Time
 
 	// Machines (SPEC §11).
 	Bin        string                      // this machine's enigma binary, for its own record
@@ -105,12 +108,18 @@ type Engine struct {
 	// when each path was last asked for.
 	shadowIn     map[string]bool
 	restoreAsked map[string]time.Time
-	restoreTries map[string]int         // per path: which peer a restore asks next
-	restoreFrom  *peer                  // set while a peer's announcement is refreshed: ask it
-	rootSeen     map[string]string      // entry -> what pollRoots last saw at its folder
-	restoring    map[string]string      // rel -> entry: waiting to be restored, asked again on the poll tick
-	watchRetry   map[string]*watchRetry // entry -> when its failed watch is tried again
-	dirty        bool
+	restoreTries map[string]int // per path: which peer a restore asks next
+	restoreFrom  *peer          // set while a peer's announcement is refreshed: ask it
+	// Catch-up summaries (away.go): awayScan while a scan runs, away once
+	// found; starting while New's startup scan runs.
+	awayScan   map[string]*AwaySummary
+	away       map[string]*AwaySummary
+	starting   bool
+	now        func() time.Time
+	rootSeen   map[string]string      // entry -> what pollRoots last saw at its folder
+	restoring  map[string]string      // rel -> entry: waiting to be restored, asked again on the poll tick
+	watchRetry map[string]*watchRetry // entry -> when its failed watch is tried again
+	dirty      bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
 
@@ -163,6 +172,9 @@ func New(o Options) (*Engine, error) {
 	if o.RestoreRetry == 0 {
 		o.RestoreRetry = DefaultRestoreRetry
 	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
@@ -181,6 +193,7 @@ func New(o Options) (*Engine, error) {
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
 		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, watchRetry: map[string]*watchRetry{},
+		awayScan: map[string]*AwaySummary{}, away: map[string]*AwaySummary{}, now: o.Now,
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),
@@ -202,11 +215,23 @@ func New(o Options) (*Engine, error) {
 		e.applyMachine(proto.MachineRecord{ID: o.MachineID, Name: o.Name, Bin: o.Bin, Clock: e.st.Lamport, By: o.MachineID}, nil)
 	}
 	e.ensureMain()
+	// What the startup scan finds was made while the daemon was not
+	// running: summed up per entry (§13.5).
+	e.starting = true
+	for path, r := range e.st.Entries {
+		if !r.Removed && e.inScope(r) {
+			e.beginAway(path, AwayNotRunning)
+		}
+	}
 	e.refreshScope() // watch the entries of the groups this machine is in
 	if o.OnMachines != nil {
 		go e.notifyMachines()
 	}
 	e.rescanAll() // changes made while the daemon was not running (§6.5)
+	for path := range e.awayScan {
+		e.endAway(path)
+	}
+	e.starting = false
 	e.saveIfDirty()
 	e.prune()
 	go e.loop()
@@ -396,6 +421,9 @@ type EntryStatus struct {
 	// (a network or FUSE file system), so it is not used to tell a
 	// replaced folder (§6.5).
 	IdentityUnreliable bool `json:"IdentityUnreliable,omitempty"`
+	// WhileAway: what a catch-up scan found that was not seen live (the
+	// daemon was stopped, the entry out of scope or missing), for 24 h.
+	WhileAway *AwaySummary `json:"WhileAway,omitempty"`
 }
 
 type PeerStatus struct{ ID, Name string }
@@ -432,6 +460,7 @@ func (e *Engine) Status() Status {
 					es.Unwatched, es.UnwatchedFolders = ws.dead || ws.rootFailed, ws.folders
 				}
 				es.IdentityUnreliable = e.st.Unreliable[path]
+				es.WhileAway = e.awayStatus(path)
 			}
 			for rel := range e.skipped[path] {
 				es.Skipped = append(es.Skipped, rel)

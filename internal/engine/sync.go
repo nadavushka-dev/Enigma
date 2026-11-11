@@ -221,8 +221,12 @@ func (e *Engine) refreshScope() {
 		_, watched := e.matchers[path]
 		switch {
 		case e.inScope(r) && !watched:
+			started := !e.starting && e.beginAway(path, AwayNotSynced)
 			e.track(path, r)
 			e.rescanEntry(path)
+			if started {
+				e.endAway(path)
+			}
 		case !e.inScope(r) && watched:
 			e.unwatch(path)
 		}
@@ -329,7 +333,8 @@ func (e *Engine) forget(path string) {
 	}
 	delete(e.st.Roots, path)
 	delete(e.st.Unreliable, path)
-	delete(e.st.Flips, path)
+	delete(e.st.Strikes, path)
+	delete(e.st.LastStrike, path)
 	e.dirty = true
 }
 
@@ -432,11 +437,18 @@ func (e *Engine) rescanAll() {
 
 func (e *Engine) rescanEntry(path string) {
 	r := e.st.Entries[path]
+	started := false
 	if e.rootPresent(path, r) {
+		if e.missing[path] { // back: what it finds was not seen live
+			started = e.beginAway(path, AwayMissing)
+		}
 		delete(e.missing, path)
 	}
 	e.scanEntry(path, r, false)
 	e.refreshUnder(path, path)
+	if started {
+		e.endAway(path)
+	}
 }
 
 // onLocalPath handles one watcher-reported path.
@@ -476,6 +488,9 @@ func (e *Engine) refreshUnder(entry, rel string) {
 			e.markMissingWhy(entry, "the folder is a symlink here now; nothing is synced through it until it is a folder again",
 				"~/"+entry+" is a symlink now; nothing is synced through it until it is a folder again")
 		case e.rootPresent(entry, e.st.Entries[entry]):
+			if e.missing[entry] && e.beginAway(entry, AwayMissing) {
+				defer e.endAway(entry)
+			}
 			delete(e.missing, entry) // back, as rescanEntry finds it (a file event is enough)
 		}
 	}
@@ -667,12 +682,18 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 		}
 		e.checkRoot(entry) // a replaced folder: nothing in it is a delete
 		if !fs.Materialized {
+			if s := e.awayOf(entry); s != nil {
+				s.restore(rel)
+			}
 			e.requestRestore(entry, rel) // not on disk here (it was behind a link): fetch it
 			return
 		}
 		v := version.Version{Hash: version.Deleted, Vector: e.bump(fs.V.Vector), Parents: []string{fs.V.Hash},
 			Mtime: time.Now().UnixNano(), By: e.o.MachineID, ByName: e.o.Name}
 		e.log.Debug("local delete", "path", rel, "v", fmtVersion(&v))
+		if s := e.awayOf(entry); s != nil {
+			s.Deleted++
+		}
 		e.event(EvDeleted, rel, "", "")
 		e.setCurrent(rel, v, false)
 		e.announce(rel, v, nil)
@@ -726,8 +747,18 @@ func (e *Engine) rootVanished(entry string) bool {
 func (e *Engine) newLocalVersion(rel string, info fsx.Info, origin version.Origin) {
 	var vec version.Vector
 	var parents []string
-	if fs := e.st.Files[rel]; fs != nil {
+	fs := e.st.Files[rel]
+	if fs != nil {
 		vec, parents = fs.V.Vector, []string{fs.V.Hash}
+	}
+	if entry, _, ok := e.entryFor(rel); ok && origin == version.Edit {
+		if s := e.awayOf(entry); s != nil {
+			if fs != nil && !fs.V.IsDeleted() {
+				s.Changed++
+			} else {
+				s.Added++
+			}
+		}
 	}
 	v := version.Version{Hash: info.Hash, Vector: e.bump(vec), Parents: parents, Mtime: info.Mtime,
 		Exec: info.Exec, By: e.o.MachineID, ByName: e.o.Name, Origin: origin, Link: info.Link}

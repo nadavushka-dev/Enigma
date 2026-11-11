@@ -43,6 +43,7 @@ func (e *Engine) rootDir(entry string) string {
 // seen is recorded. A symlink or an absent root is not a folder: nothing
 // changes (the missing-root guard applies).
 func (e *Engine) checkRoot(entry string) {
+	e.expireUnreliable(entry)
 	id, ok := dirIDOf(e.rootDir(entry))
 	if !ok {
 		return
@@ -53,31 +54,76 @@ func (e *Engine) checkRoot(entry string) {
 	}
 	e.st.Roots[entry] = id
 	e.dirty = true
-	if !had || fsx.SameFolder(old, id) || e.st.Unreliable[entry] {
-		return // first look, the device number drifting, or not relied on
+	if !had || fsx.SameFolder(old, id) {
+		return // first look, or the device number drifting
 	}
 	// An identity that changes while every file is still in place is a
-	// file system that does not keep it (FUSE, some network mounts):
-	// after a few, across restarts, it is not relied on for this entry.
-	if e.allOnDisk(entry) {
-		e.st.Flips[entry]++
-		if e.st.Flips[entry] >= rootFlipLimit {
-			delete(e.st.Flips, entry)
-			e.st.Unreliable[entry] = true
-			e.log.Warn("entry folder identity keeps changing; not relying on it", "entry", entry)
-			e.event(EvRootIdentity, entry, "", "the folder's identity keeps changing here (a network or FUSE file system?); a replaced folder is no longer told apart")
-			return
-		}
+	// file system that does not keep it (FUSE, some network mounts): a
+	// strike. Three within 24 h, across restarts, and it is not relied on
+	// for this entry; strikes are still counted then, to clear it later.
+	if e.allOnDisk(entry) && e.strike(entry) {
+		return
+	}
+	if e.st.Unreliable[entry] {
+		return // not relied on
 	}
 	if n := e.notOnDiskAnyMore(entry); n > 0 {
+		if s := e.awayOf(entry); s != nil {
+			s.Replaced = true
+		}
 		e.log.Warn("entry folder replaced; its files are restored from the peers, not deleted", "entry", entry, "files", n)
 		e.event(EvRootReplaced, entry, "", "the folder was replaced here; missing files are restored from the other machines, never deleted")
 	}
 }
 
-// rootFlipLimit: identity changes with every file in place before an
-// entry's identity is not relied on any more.
-const rootFlipLimit = 3
+// rootFlipLimit: identity changes with every file in place, within
+// strikeWindow, before an entry's identity is not relied on any more; it
+// is relied on again after unreliableFor with no further change.
+const (
+	rootFlipLimit = 3
+	strikeWindow  = 24 * time.Hour
+	unreliableFor = 7 * 24 * time.Hour
+)
+
+// strike records an identity change with every file in place. It
+// reports whether the entry is (now) not relied on.
+func (e *Engine) strike(entry string) bool {
+	now := e.now().UnixNano()
+	var keep []int64
+	for _, s := range e.st.Strikes[entry] {
+		if now-s < int64(strikeWindow) {
+			keep = append(keep, s)
+		}
+	}
+	keep = append(keep, now)
+	e.st.Strikes[entry], e.st.LastStrike[entry] = keep, now
+	e.dirty = true
+	if s := e.awayOf(entry); s != nil {
+		s.Strike = min(len(keep), rootFlipLimit)
+	}
+	if !e.st.Unreliable[entry] && len(keep) >= rootFlipLimit {
+		e.st.Unreliable[entry] = true
+		e.log.Warn("entry folder identity keeps changing; not relying on it", "entry", entry)
+		e.event(EvRootIdentity, entry, "", "the folder's identity keeps changing here (a network or FUSE file system?); a replaced folder is no longer told apart")
+	}
+	return e.st.Unreliable[entry]
+}
+
+// expireUnreliable relies on an entry's identity again once 7 days pass
+// with no further change of it.
+func (e *Engine) expireUnreliable(entry string) {
+	if !e.st.Unreliable[entry] {
+		return
+	}
+	if e.now().UnixNano()-e.st.LastStrike[entry] < int64(unreliableFor) {
+		return
+	}
+	delete(e.st.Unreliable, entry)
+	delete(e.st.Strikes, entry)
+	delete(e.st.LastStrike, entry)
+	e.dirty = true
+	e.log.Info("entry folder identity stable for 7 days; relying on it again", "entry", entry)
+}
 
 // allOnDisk: every file of entry marked on disk here is on disk.
 func (e *Engine) allOnDisk(entry string) bool {

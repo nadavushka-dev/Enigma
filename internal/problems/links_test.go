@@ -70,6 +70,29 @@ func TestD20_ConflictProblemClearsWithItsCopyAndNoDuplicates(t *testing.T) {
 	}
 }
 
+// Owner decision: what a catch-up scan found that was not seen live is a
+// warning per entry; deletes that went out point at the peers' trash.
+func TestWhileAwayIsAWarningWithATrashHint(t *testing.T) {
+	s := &engine.AwaySummary{Kind: engine.AwayNotRunning, At: t0, Deleted: 3, Replaced: true, Restoring: 12, Strike: 1}
+	ps := Derive(Input{Entries: []engine.EntryStatus{{Path: "notes", Dir: true, WhileAway: s}}}, t0)
+	if len(ps) != 1 || ps[0].Key != "while-away:notes" || ps[0].Severity != Warning {
+		t.Fatalf("%+v", ps)
+	}
+	for _, want := range []string{"while Enigma was not running", "3 files you deleted here were deleted on the other machines",
+		"~/notes was replaced", "12 files not here are restored", "strike 1/3"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("message %q lacks %q", ps[0].Message, want)
+		}
+	}
+	if !strings.Contains(ps[0].Hint, "enigma trash list") || !strings.Contains(ps[0].Hint, "enigma trash restore") {
+		t.Fatalf("hint %q", ps[0].Hint)
+	}
+	s.Deleted = 0
+	if ps := Derive(Input{Entries: []engine.EntryStatus{{Path: "notes", Dir: true, WhileAway: s}}}, t0); strings.Contains(ps[0].Hint, "trash") {
+		t.Fatalf("a trash hint without deletes: %q", ps[0].Hint)
+	}
+}
+
 // F2 and review #3: an unwatched folder is an error until it is watched
 // again; an unreliable identity is a standing warning.
 func TestD15_UnwatchedAndUnreliableProblems(t *testing.T) {

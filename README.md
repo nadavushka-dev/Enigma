@@ -184,6 +184,12 @@ another agent at the same files. It ships in the release tarball.
   folder, stop the daemon (or `enigma remove` the entry) before moving it
   and linking it back: a move seen on its own is a delete on the other
   machines (their trash keeps it 30 days).
+- **What happened while Enigma was off.** When the daemon starts (or a
+  folder comes back), anything it finds that it did not see happen is
+  summed up in `enigma status` for 24 h and in one desktop notification:
+  files you deleted (deleted on the other machines too: `enigma trash
+  list` there to get them back), changed or added, a folder that was
+  replaced and is being restored. It only tells you; it changes nothing.
 - **Synced folders inside a git repo.** Run git on one machine only;
   Enigma carries the result to the others. Sync the skill/work folders,
   not `.git`. A conflict copy from a simultaneous edit shows up in

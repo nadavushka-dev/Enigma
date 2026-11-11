@@ -104,6 +104,13 @@ func Derive(in Input, now time.Time) []Problem {
 				Message: e.Path + ": the folder's identity keeps changing here, so a replaced folder is not told apart",
 				Hint:    "usual on network or FUSE file systems; deleting or replacing the whole folder here then reads as deleting its files"})
 		}
+		if s := e.WhileAway; s != nil {
+			hint := "nothing to do if this is what you did; this goes 24 h after it was found"
+			if s.Deleted > 0 {
+				hint = "if those deletes were not meant, the other machines keep the files in their trash for 30 days: enigma trash list there, then enigma trash restore <id>"
+			}
+			ps = append(ps, Problem{Key: "while-away:" + e.Path, Severity: Warning, Path: e.Path, Message: s.Text(e.Path), Hint: hint})
+		}
 		if len(e.Restoring) > 0 && !e.Missing {
 			ps = append(ps, Problem{Key: "restoring:" + e.Path, Severity: Warning, Path: e.Path,
 				Message: fmt.Sprintf("%s: %s not here yet, being restored from the other machines", e.Path, plural(len(e.Restoring), "file")),
