@@ -5,6 +5,7 @@ package problems
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -45,6 +46,10 @@ type Input struct {
 	Entries []engine.EntryStatus
 	Limits  engine.Limits
 	Events  []engine.Event // recent activity; conflicts and errors count for an hour
+	// Conflicts are the conflict copies on disk now; with ConflictsKnown, a
+	// conflict is a problem only while its copy is there.
+	Conflicts      []string
+	ConflictsKnown bool
 }
 
 // recent is how long a conflict copy or an error event stays a problem.
@@ -127,13 +132,12 @@ func Derive(in Input, now time.Time) []Problem {
 		}
 		switch ev.Kind {
 		case engine.EvConflict:
+			if in.ConflictsKnown && !slices.Contains(in.Conflicts, ev.Path) {
+				continue // the copy is gone: resolved
+			}
 			ps = append(ps, Problem{Key: "conflict:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
 				Message: fmt.Sprintf("conflict on %s: the other edit is kept as %s", ev.Detail, ev.Path),
 				Hint:    "enigma conflicts lists every copy; delete the copy once you have what you need from it"})
-		case engine.EvRootReplaced:
-			ps = append(ps, Problem{Key: "rootreplaced:" + ev.Path, Severity: Warning, Path: ev.Path,
-				Message: ev.Path + ": the folder was replaced here; missing files are restored from the other machines, not deleted",
-				Hint:    "to delete files everywhere, delete the files, not the folder"})
 		case engine.EvLinkLost:
 			ps = append(ps, Problem{Key: "linklost:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
 				Message: fmt.Sprintf("%s: the link here (-> %s) lost to another version and is in the trash", ev.Path, ev.Detail),
@@ -143,6 +147,7 @@ func Derive(in Input, now time.Time) []Problem {
 				Message: errorMessage(ev)})
 		}
 	}
+	ps = dedupe(ps)
 	sort.SliceStable(ps, func(i, j int) bool {
 		if ps[i].Severity != ps[j].Severity {
 			return ps[i].Severity == Error
@@ -181,6 +186,19 @@ func linkProblems(e engine.EntryStatus, now time.Time) []Problem {
 		}
 	}
 	return ps
+}
+
+// dedupe keeps the first problem of each key: one condition, one line.
+func dedupe(ps []Problem) []Problem {
+	seen := map[string]bool{}
+	out := ps[:0]
+	for _, p := range ps {
+		if !seen[p.Key] {
+			seen[p.Key] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func errorMessage(ev engine.Event) string {

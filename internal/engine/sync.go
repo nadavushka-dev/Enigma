@@ -580,8 +580,13 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 	}
 	if e.shadowed(entry, rel) { // not a delete either: the link hides it
 		delete(e.overLimit[entry], rel)
+		fs := e.st.Files[rel]
+		if fs == nil || fs.V.IsDeleted() {
+			delete(e.skipped[entry], rel) // nothing to sync there: not skipped
+			return
+		}
 		e.markSkipped(entry, rel)
-		if fs := e.st.Files[rel]; fs != nil && fs.Materialized {
+		if fs.Materialized {
 			// What is there now is behind a link, not this version: once
 			// the link goes, the path is restored, never deleted (§6.6).
 			fs.Materialized, e.dirty = false, true
@@ -602,6 +607,9 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 	if err != nil {
 		e.log.Error("stat", "path", rel, "err", err)
 		return
+	}
+	if n := e.linkNotes[rel]; n != nil && n.state == LinkSkipped && !info.Link {
+		delete(e.linkNotes, rel) // not a link any more: nothing to report
 	}
 	sk := e.skipped[entry]
 	if sk == nil {
@@ -632,6 +640,14 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 		}
 		if !e.rootPresent(entry, e.st.Entries[entry]) {
 			e.markMissing(entry) // no deletes, and no restore re-creating the root
+			return
+		}
+		if fs.V.Link && !e.linksOn(entry) {
+			// Links off: links are not synced either way, so removing one
+			// here is not a delete elsewhere (D23). It is not on disk here.
+			if fs.Materialized {
+				fs.Materialized, e.dirty = false, true
+			}
 			return
 		}
 		e.checkRoot(entry) // a replaced folder: nothing in it is a delete
@@ -778,8 +794,8 @@ func (e *Engine) accept(rel string) (string, bool) {
 
 func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	entry, ok := e.accept(rel)
-	if !ok || in.Link && !e.linksOn(entry) {
-		return
+	if !ok || (in.Link || e.isLink(rel)) && !e.linksOn(entry) {
+		return // links off: neither created nor deleted here (D23)
 	}
 	e.restoreFrom = p // a restore this refresh asks for goes to p, which has a version of rel
 	e.refreshFile(entry, rel, nil)
@@ -847,6 +863,9 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 	entry, ok := e.accept(rel)
 	if !ok {
 		return
+	}
+	if e.isLink(rel) && !e.linksOn(entry) {
+		return // links off: a link here is neither replaced nor deleted (D23)
 	}
 	linkTarget := "" // from ~, for a link version
 	if in.Link {
@@ -971,10 +990,15 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		// The path leads through a symlinked folder: writing, trashing or
 		// copying there would change what the link points at.
 		e.log.Warn("not writing through a symlinked folder", "path", rel)
-		e.markSkipped(entry, rel)
-		if d.Action != Delete {
-			e.shadowIn[rel] = true // fetched once it is not behind a link (restore.go)
+		if d.Action == Delete {
+			// Nothing here is touched; the delete is only recorded, so the
+			// path is not restored or listed as skipped later.
+			e.setCurrent(rel, d.Result, false, anc...)
+			delete(e.skipped[entry], rel)
+			return nil
 		}
+		e.markSkipped(entry, rel)
+		e.shadowIn[rel] = true // fetched once it is not behind a link (restore.go)
 		return nil
 	}
 	switch d.Action {
@@ -1017,7 +1041,12 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			if err != nil {
 				return err
 			}
-			lost := d.Backup || (d.Copy != nil && !d.Copy.FromIncoming)
+			// It lost when the decision keeps it nowhere, or when the incoming
+			// version is another machine's resolution of a conflict that this
+			// link lost (two parents, this one among them): every machine that
+			// has the losing link keeps it in its trash.
+			lost := d.Backup || (d.Copy != nil && !d.Copy.FromIncoming) ||
+				d.Result.Link && d.Result.Hash != basis && len(d.Result.Parents) == 2 && contains(d.Result.Parents, basis)
 			if lost || !d.Result.Link {
 				if err := e.trashLink(rel, raw); err != nil {
 					return err
@@ -1077,6 +1106,8 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 				if errors.Is(err, fsx.ErrNotRegular) { // never clobber a folder (§6.6)
 					e.log.Warn("not replacing a folder with a link", "path", rel)
 					e.noteLink(entry, rel, string(content), LinkBlocked, "a folder (or something else that is not a file) is in the way here")
+					// Applied once what is in the way is gone (retryPending).
+					e.pending[rel] = &pendingLink{p: p, in: in, anc: anc, content: content, blocked: true}
 					return nil
 				}
 				return err

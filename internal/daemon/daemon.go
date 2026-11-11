@@ -462,7 +462,8 @@ func (d *daemon) status() StatusReport {
 // problems derives the standing problems from a status report (SPEC
 // §13.5), keeping each problem's Since while it stands.
 func (d *daemon) problems(r StatusReport) []problems.Problem {
-	in := problems.Input{Entries: r.Entries, Limits: r.Limits, Events: d.eng.Events(0)}
+	in := problems.Input{Entries: r.Entries, Limits: r.Limits, Events: d.eng.Events(0),
+		Conflicts: r.Conflicts, ConflictsKnown: true}
 	for _, p := range r.Peers {
 		in.Peers = append(in.Peers, problems.Peer{Name: p.Name, Dials: p.Target != "", Connected: p.Connected, LastError: p.LastError})
 	}

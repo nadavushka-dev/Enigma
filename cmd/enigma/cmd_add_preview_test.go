@@ -75,7 +75,8 @@ func TestAddOnExistingCancelAddsNothing(t *testing.T) {
 	fa.preview = differingPreview
 	writeTestFile(t, home, "f.txt")
 	out, code := runAdd("--on-existing=cancel", "~/f.txt")
-	if code != 0 || len(fa.adds) != 0 || !strings.Contains(out, "cancelled") {
+	// A cancelled add exits 1 (hand test S6; it exited 0 before).
+	if code != 1 || len(fa.adds) != 0 || !strings.Contains(out, "cancelled") {
 		t.Fatalf("exit %d adds %v: %q", code, fa.adds, out)
 	}
 }
@@ -98,7 +99,8 @@ func TestAddPromptEmptyCancels(t *testing.T) {
 	fa.preview = differingPreview
 	writeTestFile(t, home, "f.txt")
 	out, code := runAddInput("\n", "~/f.txt")
-	if code != 0 || len(fa.adds) != 0 || !strings.Contains(out, "cancelled") {
+	// A cancelled add exits 1 (hand test S6; it exited 0 before).
+	if code != 1 || len(fa.adds) != 0 || !strings.Contains(out, "cancelled") {
 		t.Fatalf("exit %d adds %v: %q", code, fa.adds, out)
 	}
 }

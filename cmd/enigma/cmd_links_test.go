@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+
+	"github.com/nadavushka-dev/enigma/internal/engine"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -20,6 +22,25 @@ func TestD23_AddWithLinksAsksForLinkReplication(t *testing.T) {
 	}
 	if !strings.Contains(out, "links inside it are replicated") {
 		t.Fatalf("output %q", out)
+	}
+}
+
+// Hand test S7 and F2: status never says "ok" for an entry that is not
+// synced here, or not watched.
+func TestStatusStateIsNeverOkWhenNotSynced(t *testing.T) {
+	lim := engine.Limits{MaxFileSize: 10 << 20, MaxFiles: 2000}
+	for _, c := range []struct {
+		e    engine.EntryStatus
+		want string
+	}{
+		{engine.EntryStatus{Path: "p", Dir: true, Frozen: true}, "not synced here"},
+		{engine.EntryStatus{Path: "p", Dir: true, Unwatched: true}, "NOT WATCHED"},
+		{engine.EntryStatus{Path: "p", Dir: true, Restoring: []string{"p/a"}}, "restoring 1"},
+		{engine.EntryStatus{Path: "p", Dir: true}, "ok"},
+	} {
+		if got := entryState(c.e, lim); !strings.HasPrefix(got, c.want) {
+			t.Errorf("%+v: %q, want %q", c.e, got, c.want)
+		}
 	}
 }
 

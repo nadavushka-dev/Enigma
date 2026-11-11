@@ -54,6 +54,7 @@ type pendingLink struct {
 	anc     []version.Node
 	content []byte
 	target  string // relative to ~
+	blocked bool   // a folder was in the way: retried once the path is free
 }
 
 var errLinkOutside = errors.New("target outside your home folder")
@@ -134,6 +135,12 @@ func materializeLinkTarget(home, stored string) string {
 }
 
 func (e *Engine) homes() []string { return []string{e.o.Home, e.givenHome} }
+
+// isLink: this machine's current version of rel is a link.
+func (e *Engine) isLink(rel string) bool {
+	fs := e.st.Files[rel]
+	return fs != nil && fs.V.Link && !fs.V.IsDeleted()
+}
 
 // linksOn: entry is a folder entry with link replication on.
 func (e *Engine) linksOn(entry string) bool {
@@ -287,11 +294,15 @@ func (e *Engine) trashLink(rel, raw string) error {
 // created a target.
 func (e *Engine) retryPending() {
 	for rel, pl := range e.pending {
-		if _, err := os.Lstat(e.abs(pl.target)); err != nil {
+		if pl.blocked {
+			if _, err := os.Lstat(e.abs(rel)); err == nil {
+				continue // still in the way
+			}
+		} else if _, err := os.Lstat(e.abs(pl.target)); err != nil {
 			continue
 		}
 		delete(e.pending, rel)
-		if n := e.linkNotes[rel]; n != nil && n.state == LinkPending {
+		if n := e.linkNotes[rel]; n != nil && (n.state == LinkPending || n.state == LinkBlocked) {
 			delete(e.linkNotes, rel)
 		}
 		e.onFile(pl.p, rel, pl.in, pl.anc, pl.content)
@@ -351,6 +362,14 @@ func (e *Engine) pollLinks() {
 		}
 		for rel, fs := range e.st.Files {
 			if !seen[rel] && fs.V.Link && !fs.V.IsDeleted() && strings.HasPrefix(rel, entry+"/") {
+				seen[rel] = true
+				e.refreshFile(entry, rel, room)
+			}
+		}
+		// Links reported skipped that are gone (not tracked, so not above):
+		// their notes go (hand test S1).
+		for rel, n := range e.linkNotes {
+			if !seen[rel] && n.entry == entry && n.state == LinkSkipped {
 				e.refreshFile(entry, rel, room)
 			}
 		}

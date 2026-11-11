@@ -39,7 +39,7 @@ func TestD15_RestoringAndRootReplacedProblems(t *testing.T) {
 	st := Input{Limits: lim(), Entries: []engine.EntryStatus{{Path: "notes", Dir: true, Restoring: []string{"notes/a.md", "notes/b.md"}}},
 		Events: []engine.Event{{Kind: engine.EvRootReplaced, Path: "notes", Time: t0}}}
 	ps := Derive(st, t0.Add(time.Minute))
-	if got := keys(ps); got != "restoring:notes rootreplaced:notes" {
+	if got := keys(ps); got != "restoring:notes" { // the replacement itself is activity only
 		t.Fatalf("keys = %q", got)
 	}
 	if ps[0].Severity != Warning || ps[0].Message != "notes: 2 files not here yet, being restored from the other machines" {
@@ -48,6 +48,24 @@ func TestD15_RestoringAndRootReplacedProblems(t *testing.T) {
 	st.Entries[0].Missing = true // missing locally says it already
 	if got := keys(Derive(st, t0.Add(2*time.Hour))); got != "missing:notes" {
 		t.Fatalf("keys = %q", got)
+	}
+}
+
+// Hand test S1: a conflict problem goes when its copy is deleted, and
+// the same condition is listed once.
+func TestD20_ConflictProblemClearsWithItsCopyAndNoDuplicates(t *testing.T) {
+	copy := "notes/todo.conflict-mac-20261026-133000-1a2b3c.md"
+	ev := []engine.Event{
+		{Seq: 1, Time: t0, Kind: engine.EvConflict, Path: copy, Detail: "notes/todo.md"},
+		{Seq: 2, Time: t0, Kind: engine.EvConflict, Path: copy, Detail: "notes/todo.md"},
+	}
+	in := Input{Limits: lim(), Events: ev, ConflictsKnown: true, Conflicts: []string{copy}}
+	if got := keys(Derive(in, t0)); got != "conflict:"+copy {
+		t.Fatalf("keys = %q", got)
+	}
+	in.Conflicts = nil // the copy was deleted
+	if ps := Derive(in, t0); len(ps) != 0 {
+		t.Fatalf("stale: %+v", ps)
 	}
 }
 

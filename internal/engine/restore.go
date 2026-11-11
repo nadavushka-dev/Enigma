@@ -215,7 +215,7 @@ func (e *Engine) retryRestores() {
 // restore never re-creates a root the user removed (§6.5).
 func (e *Engine) needsRestore(entry, rel string) bool {
 	fs := e.st.Files[rel]
-	if fs == nil || fs.V.IsDeleted() || fs.Materialized || e.missing[entry] ||
+	if fs == nil || fs.V.IsDeleted() || fs.Materialized || e.missing[entry] || fs.V.Link && !e.linksOn(entry) ||
 		!e.rootPresent(entry, e.st.Entries[entry]) || e.shadowed(entry, rel) {
 		return false
 	}

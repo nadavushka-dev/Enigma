@@ -162,6 +162,7 @@ func cmdAdd(c *ctx, args []string) error {
 		input = bufio.NewReader(c.stdin)
 	}
 	var results []addResult
+	cancelled := 0
 	for _, p := range picks {
 		abs, err := absPath(p)
 		if err != nil {
@@ -202,6 +203,7 @@ func cmdAdd(c *ctx, args []string) error {
 			}
 		}
 		if chosen == firstAddCancel {
+			cancelled++
 			res.Action = "cancelled"
 			if !*asJSON {
 				fmt.Fprintf(c.stdout, "cancelled; %s was not added\n", tilde(abs))
@@ -237,15 +239,27 @@ func cmdAdd(c *ctx, args []string) error {
 			fmt.Fprintf(c.stdout, "note: %s offline; this machine wins will replace its copy (backed up) when it reconnects\n", pluralMachines(rep.Summary.Unknown))
 		}
 	}
+	// A cancelled add did not do what was asked: exit non-zero, after the
+	// JSON report if one was asked for.
+	var errCancelled error
+	if cancelled > 0 {
+		errCancelled = fmt.Errorf("cancelled: %d of %d not added", cancelled, len(picks))
+	}
 	if !*asJSON {
-		return nil
+		return errCancelled
 	}
 	enc := json.NewEncoder(c.stdout)
 	enc.SetIndent("", "  ")
+	var err2 error
 	if len(results) == 1 {
-		return enc.Encode(results[0])
+		err2 = enc.Encode(results[0])
+	} else {
+		err2 = enc.Encode(results)
 	}
-	return enc.Encode(results)
+	if err2 != nil {
+		return err2
+	}
+	return errCancelled
 }
 
 func anyPeerHas(r engine.AdoptionReport) bool {
@@ -554,28 +568,7 @@ func cmdStatus(c *ctx, args []string) error {
 		fmt.Fprintln(tw, "(nothing yet)\t")
 	}
 	for _, e := range st.Entries {
-		state := "ok"
-		switch {
-		case e.Missing:
-			state = "MISSING LOCALLY: deletes are not propagated"
-		case e.Unwatched:
-			state = "NOT WATCHED: changes here sync only at the next check"
-		case len(e.Restoring) > 0:
-			state = fmt.Sprintf("restoring %d from the other machines (not here yet)", len(e.Restoring))
-		case len(e.OverLimit) > 0:
-			files := "files"
-			if len(e.OverLimit) == 1 {
-				files = "file"
-			}
-			state = fmt.Sprintf("over the %s-file limit, %d new %s not synced (enigma limits --files N raises it)",
-				engine.FormatCount(st.Limits.MaxFiles), len(e.OverLimit), files)
-		case len(e.Skipped) > 0:
-			state = fmt.Sprintf("ok, %d skipped (symlinks or over %s)", len(e.Skipped), engine.FormatSize(st.Limits.MaxFileSize))
-		}
-		if e.LinksOn {
-			state += ", links on"
-		}
-		fmt.Fprintf(tw, "%s\t%s\n", entryLabel(e.Path, e.Dir), state)
+		fmt.Fprintf(tw, "%s\t%s\n", entryLabel(e.Path, e.Dir), entryState(e, st.Limits))
 		for _, l := range e.Links { // D23
 			detail := l.State
 			if l.Reason != "" {
@@ -598,6 +591,34 @@ func cmdStatus(c *ctx, args []string) error {
 	}
 	fmt.Fprintln(c.stdout)
 	return nil
+}
+
+// entryState is an entry's line in enigma status.
+func entryState(e engine.EntryStatus, lim engine.Limits) string {
+	state := "ok"
+	switch {
+	case e.Frozen: // hand test S7: never "ok" when it is not synced here
+		return "not synced here: this machine is not in its group"
+	case e.Missing:
+		state = "MISSING LOCALLY: deletes are not propagated"
+	case e.Unwatched:
+		state = "NOT WATCHED: changes here sync only at the next check"
+	case len(e.Restoring) > 0:
+		state = fmt.Sprintf("restoring %d from the other machines (not here yet)", len(e.Restoring))
+	case len(e.OverLimit) > 0:
+		files := "files"
+		if len(e.OverLimit) == 1 {
+			files = "file"
+		}
+		state = fmt.Sprintf("over the %s-file limit, %d new %s not synced (enigma limits --files N raises it)",
+			engine.FormatCount(lim.MaxFiles), len(e.OverLimit), files)
+	case len(e.Skipped) > 0:
+		state = fmt.Sprintf("ok, %d skipped (symlinks or over %s)", len(e.Skipped), engine.FormatSize(lim.MaxFileSize))
+	}
+	if e.LinksOn {
+		state += ", links on"
+	}
+	return state
 }
 
 func entryLabel(rel string, dir bool) string {
