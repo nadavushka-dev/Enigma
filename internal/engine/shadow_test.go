@@ -29,14 +29,19 @@ func isSymlink(p string) bool {
 
 // moveBehindLink moves the folder rel of m to target (from ~) and leaves a
 // symlink to it in its place, as a user moving a folder into a repo does.
-// The engine sees both steps at once.
+// Both steps run on the engine's loop, so it sees them at once: an engine
+// refresh landing between them would see the folder gone, which is a
+// delete of what was moved (SPEC §6.6), not what these tests are about.
 func moveBehindLink(t *testing.T, m *machine, rel, target string) {
 	t.Helper()
-	os.MkdirAll(filepath.Dir(m.path(target)), 0o755)
-	if err := os.Rename(m.path(rel), m.path(target)); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(m.path(target), m.path(rel)); err != nil {
+	var err error
+	m.e.do(func() {
+		os.MkdirAll(filepath.Dir(m.path(target)), 0o755)
+		if err = os.Rename(m.path(rel), m.path(target)); err == nil {
+			err = os.Symlink(m.path(target), m.path(rel))
+		}
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	m.e.Rescan()

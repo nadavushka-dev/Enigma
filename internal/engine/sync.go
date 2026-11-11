@@ -24,6 +24,9 @@ const maxApplyAttempts = 3
 // where a concurrent user edit would race the engine.
 var afterDecide atomic.Pointer[func(machine, rel string, act Action)]
 
+// onFetchHook is a test hook run when a peer asks this machine for rel.
+var onFetchHook atomic.Pointer[func(machine, rel string)]
+
 // ---- entries (fleet state, SPEC §6.4) ----------------------------------------
 
 func (e *Engine) addEntry(abs string, o AddOptions) error {
@@ -429,11 +432,16 @@ func (e *Engine) onLocalPath(abs string) {
 // New files past the folder's file limit wait as over the limit (§8), and
 // the ones waiting take any room this refresh made.
 func (e *Engine) refreshUnder(entry, rel string) {
-	if rel == entry && e.rootIsLink(entry) {
-		// Nothing under a linked root is this entry's (§6.6): no writes,
-		// no deletes, until it is a folder again (§6.5 guard).
-		e.markMissingWhy(entry, "the folder is a symlink here now; nothing is synced through it until it is a folder again",
-			"~/"+entry+" is a symlink now; nothing is synced through it until it is a folder again")
+	if rel == entry {
+		switch {
+		case e.rootIsLink(entry):
+			// Nothing under a linked root is this entry's (§6.6): no
+			// writes, no deletes, until it is a folder again (§6.5 guard).
+			e.markMissingWhy(entry, "the folder is a symlink here now; nothing is synced through it until it is a folder again",
+				"~/"+entry+" is a symlink now; nothing is synced through it until it is a folder again")
+		case e.rootPresent(entry, e.st.Entries[entry]):
+			delete(e.missing, entry) // back, as rescanEntry finds it (a file event is enough)
+		}
 	}
 	waiting := len(e.overLimit[entry])
 	room := e.room(entry, e.st.Entries[entry])
@@ -591,15 +599,15 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 		e.newLocalVersion(rel, info, version.Edit)
 	case fsx.Missing:
 		delete(sk, rel)
-		if fs != nil && !fs.V.IsDeleted() && !fs.Materialized {
-			e.requestRestore(rel) // not on disk here (it was behind a link): fetch it
-			return
-		}
 		if fs == nil || fs.V.IsDeleted() {
 			return // never had it here: not a delete
 		}
 		if !e.rootPresent(entry, e.st.Entries[entry]) {
-			e.markMissing(entry)
+			e.markMissing(entry) // no deletes, and no restore re-creating the root
+			return
+		}
+		if !fs.Materialized {
+			e.requestRestore(entry, rel) // not on disk here (it was behind a link): fetch it
 			return
 		}
 		v := version.Version{Hash: version.Deleted, Vector: e.bump(fs.V.Vector), Parents: []string{fs.V.Hash},
@@ -638,13 +646,14 @@ func (e *Engine) markMissingWhy(entry, detail, note string) {
 }
 
 // rootVanished: the entry's root is gone although this machine had files
-// under it. A brand-new entry's root is merely not created yet (D6).
+// under it: on disk, or kept as not on disk here after a link hid them
+// (§6.6). A brand-new entry's root is merely not created yet (D6).
 func (e *Engine) rootVanished(entry string) bool {
 	if e.rootPresent(entry, e.st.Entries[entry]) {
 		return false
 	}
 	for rel, fs := range e.st.Files {
-		if fs.Materialized && !fs.V.IsDeleted() && (rel == entry || strings.HasPrefix(rel, entry+"/")) {
+		if !fs.V.IsDeleted() && (rel == entry || strings.HasPrefix(rel, entry+"/")) {
 			return true
 		}
 	}
@@ -740,7 +749,9 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	if !ok || in.Link && !e.linksOn(entry) {
 		return
 	}
+	e.restoreFrom = p // a restore this refresh asks for goes to p, which has a version of rel
 	e.refreshFile(entry, rel, nil)
+	e.restoreFrom = nil
 	d := DecidePolicy(rel, e.current(rel), in, false, e.firstAddPolicy(entry, rel))
 	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
 		e.log.Error("apply", "path", rel, "err", err)
@@ -750,6 +761,9 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 }
 
 func (e *Engine) onFetch(p *peer, rel string) {
+	if hook := onFetchHook.Load(); hook != nil {
+		(*hook)(e.o.Name, rel)
+	}
 	entry, _, ok := e.entryFor(rel)
 	if !ok {
 		return

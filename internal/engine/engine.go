@@ -104,6 +104,8 @@ type Engine struct {
 	// when each path was last asked for.
 	shadowIn     map[string]bool
 	restoreAsked map[string]time.Time
+	restoreTries map[string]int // per path: which peer a restore asks next
+	restoreFrom  *peer          // set while a peer's announcement is refreshed: ask it
 	dirty        bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
@@ -171,7 +173,7 @@ func New(o Options) (*Engine, error) {
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
-		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{},
+		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),

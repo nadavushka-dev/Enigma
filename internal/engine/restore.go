@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -21,42 +22,60 @@ import (
 const restoreEvery = 30 * time.Second
 
 // needsRestore: rel has a live current version this machine does not have
-// on disk, and nothing is in its way.
+// on disk, and nothing is in its way. The entry's root must be here: a
+// restore never re-creates a root the user removed (§6.5).
 func (e *Engine) needsRestore(entry, rel string) bool {
 	fs := e.st.Files[rel]
-	if fs == nil || fs.V.IsDeleted() || fs.Materialized || e.shadowed(entry, rel) {
+	if fs == nil || fs.V.IsDeleted() || fs.Materialized || e.missing[entry] ||
+		!e.rootPresent(entry, e.st.Entries[entry]) || e.shadowed(entry, rel) {
 		return false
 	}
 	info, err := fsx.Stat(e.abs(rel))
 	return err == nil && info.Kind == fsx.Missing
 }
 
-// requestRestore asks every linked peer that shares rel for its current
-// version; onFile writes it back (see restoreDecision).
-func (e *Engine) requestRestore(rel string) {
+// requestRestore asks one linked peer that shares rel for its current
+// version; onFile writes it back (see restoreDecision). The peer is the
+// one that just announced rel (it has a version of it), else the next in
+// turn: each later attempt asks another, so one peer without it does not
+// stall the restore. Nothing is asked while the entry's root is missing.
+func (e *Engine) requestRestore(entry, rel string) {
+	if e.missing[entry] || !e.rootPresent(entry, e.st.Entries[entry]) {
+		return
+	}
 	if t, ok := e.restoreAsked[rel]; ok && time.Since(t) < restoreEvery {
 		return
 	}
-	asked := false
-	for _, p := range e.peers {
-		if e.sharesPath(rel, p.id) {
-			p.send(&proto.Msg{Type: proto.Fetch, Path: rel})
-			asked = true
+	p := e.restoreFrom
+	if p == nil || !e.sharesPath(rel, p.id) {
+		var ids []string
+		for id, q := range e.peers {
+			if e.sharesPath(rel, q.id) {
+				ids = append(ids, id)
+			}
 		}
+		if len(ids) == 0 {
+			return
+		}
+		sort.Strings(ids)
+		p = e.peers[ids[e.restoreTries[rel]%len(ids)]]
 	}
-	if asked {
-		e.restoreAsked[rel] = time.Now()
-		e.log.Info("restoring a path that is no longer behind a link", "path", rel)
-	}
+	e.restoreTries[rel]++
+	p.send(&proto.Msg{Type: proto.Fetch, Path: rel})
+	e.restoreAsked[rel] = time.Now()
+	e.log.Info("restoring a path that is no longer behind a link", "path", rel, "from", p.name)
 }
 
 // restoreShadowIn fetches the paths under rel that peers changed while
 // they were shadowed here, now that they are not.
 func (e *Engine) restoreShadowIn(entry, rel string) {
+	if e.missing[entry] || !e.rootPresent(entry, e.st.Entries[entry]) {
+		return // kept for when the root is back
+	}
 	for p := range e.shadowIn {
 		if (p == rel || strings.HasPrefix(p, rel+"/")) && !e.shadowed(entry, p) {
 			delete(e.shadowIn, p)
-			e.requestRestore(p)
+			e.requestRestore(entry, p)
 		}
 	}
 }
