@@ -280,19 +280,26 @@ func (e *Engine) track(path string, r proto.EntryRecord) {
 		return err == nil && m.Ignored(filepath.ToSlash(rel))
 	}
 	// Watching creates a missing root (D6, a brand-new entry). A root that
-	// is gone while this machine has versions under it, or is a symlink,
-	// is not watched: it is missing locally, and pollRoots watches it again
-	// once it is a folder (§6.5).
-	// Folder entries only: a file entry's parent may be a symlink
-	// (dotfiles), and is watched through it as always.
-	if _, ok := dirIDOf(e.rootDir(path)); r.Dir && !ok {
-		if _, err := os.Lstat(e.rootDir(path)); err == nil || e.rootVanished(path) {
+	// is gone while this machine has versions under it, a file entry's
+	// parent included, or is not a folder, is not watched: it is missing
+	// locally, and pollRoots watches it again once it is a folder (§6.5).
+	// A file entry's parent may be a symlink (dotfiles): it is watched
+	// through it as always.
+	if dir := e.rootDir(path); !isFolder(dir) {
+		fi, err := os.Lstat(dir)
+		if err == nil && (r.Dir || fi.Mode()&os.ModeSymlink == 0) || err != nil && e.rootVanished(path) {
 			return
 		}
 	}
 	if err := e.w.Add(root, !r.Dir, skip); err != nil {
 		e.log.Error("watch", "entry", path, "err", err)
 	}
+}
+
+// isFolder: p is a folder, not a symlink to one.
+func isFolder(p string) bool {
+	_, ok := dirIDOf(p)
+	return ok
 }
 
 // unwatch stops watching an entry; its versions stay (a frozen entry).
