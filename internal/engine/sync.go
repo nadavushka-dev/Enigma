@@ -765,6 +765,11 @@ func (e *Engine) setCurrent(rel string, v version.Version, materialized bool, le
 	g.Add([]version.Node{{Hash: v.Hash, Parents: v.Parents}})
 	e.st.Files[rel] = &fileState{V: v, Materialized: materialized, Anc: version.Trim(g, v.Hash, version.AncestryLimit)}
 	e.dirty = true
+	// A link held as blocked (or waiting) is superseded by any version
+	// that becomes current here: its retry and its report go with it.
+	if pl := e.pending[rel]; pl != nil && pl.in.Hash != v.Hash {
+		e.dropHeld(rel)
+	}
 }
 
 // keep stores content in the history store, as a future merge base.
@@ -926,10 +931,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 	if !in.IsDeleted() && !in.Link {
 		e.keep(content)
 	}
-	delete(e.pending, rel) // superseded by this version, or applied now
-	if n := e.linkNotes[rel]; n != nil && n.state == LinkPending {
-		delete(e.linkNotes, rel)
-	}
+	e.dropHeld(rel) // superseded by this version, or applied now
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
 		e.refreshFile(entry, rel, nil)
 		cur := e.current(rel)

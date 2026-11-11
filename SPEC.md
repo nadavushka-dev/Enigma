@@ -226,8 +226,9 @@ rescan, which compares disk against the stored current versions:
 - a missing file is a local delete, but only if that path was previously
   written on this machine (`materialized`). A file this machine has never
   had is not a delete.
-- **Vanished-root guard:** if an entry's whole folder, or a file entry's
-  parent folder, is missing or is a symlink, Enigma records no deletes for
+- **Vanished-root guard:** if a folder entry's folder is missing or is a
+  symlink, or a file entry's parent folder is missing (a symlinked parent
+  of a file entry is watched and synced through), Enigma records no deletes for
   it, writes nothing there and fetches nothing for it. The entry is
   marked "missing locally" (status and a standing error, §13.5), with an
   activity event and a notification. This covers an unmounted disk, a
@@ -769,7 +770,8 @@ version.
 Most commands take `--json` for agents and scripts; `enigma list` is
 human-only, and `enigma status --json` carries the entries for scripts.
 `enigma -h` / `--help` lists every command, `enigma <command> -h` explains
-one, and `enigma -v` / `--version` prints the version.
+one, and `enigma -v` / `--version` prints the version. There is no log
+command: the daemon log is `~/.local/share/enigma/enigma.log` (§11).
 
 An Agent Skill for the safe first-add flow, diagnosis and destructive-action
 rules lives in `skills/enigma/` and ships in the release tarball.
@@ -785,7 +787,6 @@ rules lives in `skills/enigma/` and ships in the release tarball.
 | `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers. Each entry has one state, the first that applies: `not synced here: this machine is not in its group` (a frozen entry, §9), `MISSING LOCALLY: deletes are not propagated` (§6.5), `NOT WATCHED: changes here sync only at the next check`, `PARTLY WATCHED: N subfolders not watched; …` (§6.5 root watch), `restoring N from the other machines (not here yet)`, `over the N-file limit, …` (§8), `ok, N skipped (symlinks or over SIZE)`, else `ok`; `, links on` is appended for a folder with link replication on. `--json` carries the same as fields (`Frozen`, `Missing`, `Unwatched`, `UnwatchedFolders`, `Restoring`, `OverLimit`, `Skipped`, `IdentityUnreliable`, `LinksOn`, `Links`) |
 | `enigma conflicts [--local]` | list conflict copies across the fleet (asks every member over ssh), with the machines that hold each |
 | `enigma trash list` · `restore <id>` · `empty` | trash on this machine |
-| `enigma log [-f]` | daemon log |
 | `enigma doctor` | the standing problems (§13.5), connectivity matrix between all machines (each asked over ssh), versions, daemon and service check; exits non-zero on problems |
 | `enigma tui` | the TUI; also what bare `enigma` runs in a terminal |
 | `enigma daemon` · `service install` / `uninstall` | run in the foreground / as a background service |
@@ -926,7 +927,7 @@ a hint; one line per key):
 | `link:<machine>` | error | a member's link is down (the ssh error, since when; hint: `enigma doctor`) | the link is up |
 | `link:<machine>` | warning | the member has no ssh target here, so only it can dial (hint: `enigma machine alias`) | the link is up |
 | `upgrade:<machine>` | error | a member on another version cannot be upgraded (no binary for its platform; hint: `make dist` / `enigma update`) | the link is up |
-| `missing:<entry>` | error | the entry's folder (a file entry's parent) is missing or a symlink here (§6.5) | a folder is there again |
+| `missing:<entry>` | error | a folder entry's folder is missing or a symlink here, or a file entry's parent folder is missing (§6.5) | a folder is there again |
 | `unwatched:<entry>` | error | the entry's folder has no live watch, or some of its subfolders could not be watched (NOT / PARTLY WATCHED, §6.5); not while missing | every folder is watched |
 | `restoring:<entry>` | warning | files this machine keeps a version of are not on disk and are being fetched (a replaced folder, a removed link, §6.5, §6.6); not while missing | they are here |
 | `identity:<entry>` | warning | the folder's identity changed three times with every file in place (FUSE, network mounts, §6.5) | the entry is removed (it is a property of the file system) |
@@ -934,7 +935,7 @@ a hint; one line per key):
 | `skipped:<entry>` | warning | files skipped as oversized or non-regular (one per entry, counting them; links with a state of their own are not counted) | they are gone or fit |
 | `link-skipped:<path>` | warning | a link not replicated, with the reason (outside `~`, target not synced, another group, ignored, a loop, not here) (D23) | the path is no longer such a link, or it becomes eligible |
 | `link-pending:<path>` | warning | a received link has waited over a minute for its target | the target arrives (the link is written) |
-| `link-blocked:<path>` | error | a received link is blocked by a folder here | the folder is gone (the link is written) or another version wins |
+| `link-blocked:<path>` | error | a received link is blocked by a folder here; a rescan does not clear it | the folder is gone (the link is written), or another version becomes current at that path (the retry is dropped with it) |
 | `link-dangling:<path>` | warning | a synced link's target is gone | the target is back, or the link is removed |
 | `conflict:<copy>` | warning | a conflict copy was written in the last hour | the copy is deleted, or after an hour |
 | `error:<n>` | error | an error event: a received version could not be written (a permission or disk error), a received file over the size limit, a folder going over its file limit | after an hour |

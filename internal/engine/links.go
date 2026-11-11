@@ -214,10 +214,22 @@ func (e *Engine) noteLink(entry, rel, target, state, reason string) {
 	e.linkNotes[rel] = &linkNote{entry: entry, target: target, state: state, reason: reason, since: since}
 }
 
+// dropHeld forgets the received link held at rel (waiting for its target
+// or blocked by a folder) together with its report.
+func (e *Engine) dropHeld(rel string) {
+	delete(e.pending, rel)
+	if n := e.linkNotes[rel]; n != nil && (n.state == LinkPending || n.state == LinkBlocked) {
+		delete(e.linkNotes, rel)
+	}
+}
+
 // clearLinkNotes forgets the notes and pending links at or under rel.
+// With keepPending (a rescan) it keeps what a rescan cannot see again:
+// received links waiting for their target or blocked by a folder.
 func (e *Engine) clearLinkNotes(rel string, keepPending bool) {
 	for p, n := range e.linkNotes {
-		if (p == rel || strings.HasPrefix(p, rel+"/")) && !(keepPending && n.state == LinkPending) {
+		held := n.state == LinkPending || n.state == LinkBlocked
+		if (p == rel || strings.HasPrefix(p, rel+"/")) && !(keepPending && held) {
 			delete(e.linkNotes, p)
 		}
 	}

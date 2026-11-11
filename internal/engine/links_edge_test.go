@@ -115,6 +115,36 @@ func TestD23_LinkReplacedByAFileBetweenDecideAndApplyIsKept(t *testing.T) {
 	}
 }
 
+// Review #6: a blocked link stays reported through a rescan while the
+// folder is still in the way, and the report goes when another version
+// wins (here the link is deleted where it was made).
+func TestD23_BlockedNoteSurvivesRescanAndClearsWhenAnotherVersionWins(t *testing.T) {
+	a, b := newMachine(t, "a"), newMachine(t, "b")
+	a.write("repo/skills/foo/SKILL.md", "foo")
+	a.write(".agents/skills/x.md", "x")
+	a.symlink(".agents/skills/bar", a.path("repo/skills/foo"))
+	b.write(".agents/skills/bar/SKILL.md", "b's own")
+	a.add("repo/skills")
+	a.addLinks(".agents/skills")
+	link(t, a, b)
+	eventually(t, "blocked on b", linkState(b, ".agents/skills/bar", LinkBlocked))
+	b.e.Rescan()
+	if l, ok := linkStatus(b, ".agents/skills/bar"); !ok || l.State != LinkBlocked {
+		t.Fatalf("a rescan dropped the blocked report: %+v %v", l, ok)
+	}
+	os.Remove(a.path(".agents/skills/bar"))
+	a.e.Rescan()
+	eventually(t, "the blocked report goes", func() bool {
+		l, ok := linkStatus(b, ".agents/skills/bar")
+		return !ok || l.State != LinkBlocked
+	})
+	var held bool
+	b.e.do(func() { _, held = b.e.pending[".agents/skills/bar"] })
+	if held || b.read(".agents/skills/bar/SKILL.md") != "b's own" {
+		t.Fatalf("retry still held %v, or b's folder changed", held)
+	}
+}
+
 // The receiver's other checks: a link to an entry with links off, and a
 // link whose content does not match its hash, are dropped.
 func TestD23_ReceiverDropsLinksForOffEntriesAndBadHashes(t *testing.T) {
