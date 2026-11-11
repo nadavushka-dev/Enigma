@@ -98,8 +98,20 @@ Each: steps, then what must be true. "Peers" means the other two boxes.
     `~/.agents/skills/foo` to one skill; wait 2 s; on s2 retarget it to
     another. Reconnect.
     Expect: every box ends on s2's target; **every** box that had s1's
-    link, s1 included, has it in `enigma trash list` and a "lost" warning;
-    no `.conflict-` link anywhere.
+    link, s1 included, has it in `enigma trash list`; the loss is a
+    `link-lost` line in the TUI activity only, not a standing problem in
+    `enigma status` (it is handled: the link is in the trash); no
+    `.conflict-` link anywhere.
+15. **F1 (hand test 3): the blocking folder's file stays deleted.** After
+    11, `enigma status --json` on every box: the old
+    `~/.agents/skills/bar/SKILL.md` is not in any `Skipped`. Then on s1
+    `rm ~/.agents/skills/bar` (the link): no `bar/SKILL.md` comes back on
+    any box. Try 11 + 15 at least five times (it was 2 in 5 before).
+16. **F2 (hand test 3): a failed write is retried.** On s2
+    `chmod 000 ~/notes/perm`; on s1 edit `~/notes/perm/p.md`; s2's status
+    says `WRITE FAILING` (an error problem names the path). On s2
+    `chmod 755 ~/notes/perm`: within seconds (at most a few minutes of
+    backoff) s2 has the edit, the problem is gone, no restart.
 13. **S5: links off.** `enigma entry links ~/.agents/skills off` on s1,
     then `rm ~/.agents/skills/foo` on s1.
     Expect: the peers keep their link (nothing in their trash). Turn links
