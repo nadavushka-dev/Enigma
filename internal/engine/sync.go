@@ -317,6 +317,11 @@ func (e *Engine) unwatch(path string) {
 	delete(e.missing, path)
 	delete(e.watchRetry, path)
 	e.clearLinkNotes(path, false)
+	for rel := range e.failing {
+		if rel == path || strings.HasPrefix(rel, path+"/") {
+			delete(e.failing, rel)
+		}
+	}
 }
 
 // forget drops an entry's versions and stamps (it was removed).
@@ -801,6 +806,7 @@ func (e *Engine) setCurrent(rel string, v version.Version, materialized bool, le
 	if pl := e.pending[rel]; pl != nil && pl.in.Hash != v.Hash {
 		e.dropHeld(rel)
 	}
+	delete(e.failing, rel) // written, or superseded
 }
 
 // keep stores content in the history store, as a future merge base.
@@ -853,9 +859,7 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	e.restoreFrom = nil
 	d := DecidePolicy(rel, e.current(rel), in, false, e.firstAddPolicy(entry, rel))
 	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
-		e.log.Error("apply", "path", rel, "err", err)
-		e.event(EvError, rel, p.name, err.Error())
-		e.notify(rel, "could not write ~/"+rel+": "+err.Error())
+		e.writeFailed(p, entry, rel, in, nil, nil, err)
 	}
 }
 
@@ -983,9 +987,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 		err := e.execute(p, entry, rel, in, anc, content, d)
 		if !errors.Is(err, fsx.ErrChanged) {
 			if err != nil {
-				e.log.Error("apply", "path", rel, "err", err)
-				e.event(EvError, rel, p.name, err.Error())
-				e.notify(rel, "could not write ~/"+rel+": "+err.Error())
+				e.writeFailed(p, entry, rel, in, anc, content, err)
 			}
 			return
 		}

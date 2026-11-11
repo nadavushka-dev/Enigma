@@ -93,6 +93,20 @@ func TestWhileAwayIsAWarningWithATrashHint(t *testing.T) {
 	}
 }
 
+// Hand test 3, F2: a write that keeps failing is an error naming the path
+// while it fails, and nothing once it is written.
+func TestWriteFailingIsAnErrorWhileItFails(t *testing.T) {
+	in := Input{Entries: []engine.EntryStatus{{Path: "notes", Dir: true, WriteFailing: []string{"notes/perm/p.md"}}}}
+	ps := Derive(in, t0)
+	if len(ps) != 1 || ps[0].Key != "write-failing:notes/perm/p.md" || ps[0].Severity != Error {
+		t.Fatalf("%+v", ps)
+	}
+	in.Entries[0].WriteFailing = nil
+	if ps := Derive(in, t0); len(ps) != 0 {
+		t.Fatalf("%+v", ps)
+	}
+}
+
 // F2 and review #3: an unwatched folder is an error until it is watched
 // again; an unreliable identity is a standing warning.
 func TestD15_UnwatchedAndUnreliableProblems(t *testing.T) {

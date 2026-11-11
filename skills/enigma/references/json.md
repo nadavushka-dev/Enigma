@@ -93,6 +93,8 @@ Use `--json` for reads. The commands below are the ones with JSON output;
   other machines), `Unwatched` (the folder has no live watch),
   `UnwatchedFolders` (subfolders that could not be watched),
   `IdentityUnreliable` (the folder's identity changes on its own here),
+  `WriteFailing` (received versions that cannot be written here: permissions
+  or a full disk; retried until they are),
   `WhileAway` (what the last catch-up scan found that was not seen live:
   `kind`, `at`, `deleted`, `changed`, `added`, `replaced`, `restoring`,
   `strike`; shown for 24 h).

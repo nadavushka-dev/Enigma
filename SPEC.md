@@ -310,6 +310,11 @@ rescan, which compares disk against the stored current versions:
   inside a folder entry are removed. The entry's root folder is never
   removed. A deleted link is moved to the trash itself; what it points at
   is never touched.
+- **Failed writes** (permission denied, disk full) are held and retried
+  with a backoff until they work or another version supersedes them; the
+  entry's status says `WRITE FAILING` meanwhile (§13.5). Before a link is
+  written where a folder was, what was tracked under it and is gone is
+  recorded as deleted first, so the link never hides a delete.
 - **Never clobbered:** something Enigma does not sync (a symlink, a folder,
   an oversized file) sitting at a target path is not overwritten: the
   received version is not written (it is logged; a symlink or an
@@ -786,7 +791,7 @@ rules lives in `skills/enigma/` and ships in the release tarball.
 | `enigma entry move <path> <group>` · `entry links <path> on\|off` | move an entry to another group (§9); turn link replication on or off for a folder entry (D23) |
 | `enigma add <path> [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4); `--dry-run` prints the first-add preview without adding; a difference with no flag and no terminal cancels (D22); a cancelled add exits 1 |
 | `enigma limits [--file-size SIZE] [--files N]` | show the fleet's limits, or change them for every machine (§8); SIZE like `25MB` |
-| `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers. Each entry has one state, the first that applies: `not synced here: this machine is not in its group` (a frozen entry, §9), `MISSING LOCALLY: deletes are not propagated` (§6.5), `NOT WATCHED: changes here sync only at the next check`, `PARTLY WATCHED: N subfolders not watched; …` (§6.5 root watch), `restoring N from the other machines (not here yet)`, `over the N-file limit, …` (§8), `ok, N skipped (symlinks or over SIZE)`, else `ok`; `, links on` is appended for a folder with link replication on. `--json` carries the same as fields (`Frozen`, `Missing`, `Unwatched`, `UnwatchedFolders`, `Restoring`, `OverLimit`, `Skipped`, `IdentityUnreliable`, `LinksOn`, `Links`) |
+| `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers. Each entry has one state, the first that applies: `not synced here: this machine is not in its group` (a frozen entry, §9), `MISSING LOCALLY: deletes are not propagated` (§6.5), `NOT WATCHED: changes here sync only at the next check`, `PARTLY WATCHED: N subfolders not watched; …` (§6.5 root watch), `WRITE FAILING: N not written here (retried; see the problems)` (§6.6), `restoring N from the other machines (not here yet)`, `over the N-file limit, …` (§8), `ok, N skipped (symlinks or over SIZE)`, else `ok`; `, links on` is appended for a folder with link replication on. `--json` carries the same as fields (`Frozen`, `Missing`, `Unwatched`, `UnwatchedFolders`, `WriteFailing`, `Restoring`, `OverLimit`, `Skipped`, `IdentityUnreliable`, `WhileAway`, `LinksOn`, `Links`) |
 | `enigma conflicts [--local]` | list conflict copies across the fleet (asks every member over ssh), with the machines that hold each |
 | `enigma trash list` · `restore <id>` · `empty` | trash on this machine |
 | `enigma doctor` | the standing problems (§13.5), connectivity matrix between all machines (each asked over ssh), versions, daemon and service check; exits non-zero on problems |
@@ -942,7 +947,8 @@ a hint; one line per key):
 | `link-blocked:<path>` | error | a received link is blocked by a folder here; a rescan does not clear it | the folder is gone (the link is written), or another version becomes current at that path (the retry is dropped with it) |
 | `link-dangling:<path>` | warning | a synced link's target is gone | the target is back, or the link is removed |
 | `conflict:<copy>` | warning | a conflict copy was written in the last hour | the copy is deleted, or after an hour |
-| `error:<n>` | error | an error event: a received version could not be written (a permission or disk error), a received file over the size limit, a folder going over its file limit | after an hour |
+| `write-failing:<path>` | error | a received version could not be written here (a permission or disk error); it is retried with a backoff (2 s, doubling to 5 min) and the entry says `WRITE FAILING` | it is written, or another version supersedes it |
+| `error:<n>` | error | an error event: a received file over the size limit, a folder going over its file limit | after an hour |
 
 Not problems, activity only: a first-add copy (`kept-both`), an entry
 folder replaced (`root-replaced`; the `restoring` problem stands while

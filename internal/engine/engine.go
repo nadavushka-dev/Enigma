@@ -114,6 +114,7 @@ type Engine struct {
 	// found; starting while New's startup scan runs.
 	awayScan   map[string]*AwaySummary
 	away       map[string]*AwaySummary
+	failing    map[string]*failedWrite // rel -> a received version that could not be written (retry.go)
 	starting   bool
 	now        func() time.Time
 	rootSeen   map[string]string      // entry -> what pollRoots last saw at its folder
@@ -193,7 +194,7 @@ func New(o Options) (*Engine, error) {
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
 		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, watchRetry: map[string]*watchRetry{},
-		awayScan: map[string]*AwaySummary{}, away: map[string]*AwaySummary{}, now: o.Now,
+		awayScan: map[string]*AwaySummary{}, away: map[string]*AwaySummary{}, failing: map[string]*failedWrite{}, now: o.Now,
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),
@@ -274,6 +275,7 @@ func (e *Engine) loop() {
 				e.pollRoots()
 				e.pollLinks()
 				e.retryRestores()
+				e.retryFailedWrites()
 			}
 		}
 		if len(e.pending) > 0 {
@@ -424,6 +426,9 @@ type EntryStatus struct {
 	// WhileAway: what a catch-up scan found that was not seen live (the
 	// daemon was stopped, the entry out of scope or missing), for 24 h.
 	WhileAway *AwaySummary `json:"WhileAway,omitempty"`
+	// WriteFailing: paths whose received version could not be written here
+	// (permission, disk full); retried until it works (§6.6).
+	WriteFailing []string `json:"WriteFailing,omitempty"`
 }
 
 type PeerStatus struct{ ID, Name string }
@@ -461,6 +466,7 @@ func (e *Engine) Status() Status {
 				}
 				es.IdentityUnreliable = e.st.Unreliable[path]
 				es.WhileAway = e.awayStatus(path)
+				es.WriteFailing = e.writeFailing(path)
 			}
 			for rel := range e.skipped[path] {
 				es.Skipped = append(es.Skipped, rel)

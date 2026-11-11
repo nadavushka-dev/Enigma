@@ -104,6 +104,11 @@ func Derive(in Input, now time.Time) []Problem {
 				Message: e.Path + ": the folder's identity keeps changing here, so a replaced folder is not told apart",
 				Hint:    "usual on network or FUSE file systems; deleting or replacing the whole folder here then reads as deleting its files"})
 		}
+		for _, p := range e.WriteFailing {
+			ps = append(ps, Problem{Key: "write-failing:" + p, Severity: Error, Path: p,
+				Message: p + ": a received version cannot be written here (it is retried)",
+				Hint:    "check the folder's permissions and the free disk space; enigma.log has the error"})
+		}
 		if s := e.WhileAway; s != nil {
 			hint := "nothing to do if this is what you did; this goes 24 h after it was found"
 			if s.Deleted > 0 {

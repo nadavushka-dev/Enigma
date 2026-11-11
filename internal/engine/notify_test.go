@@ -105,6 +105,33 @@ func TestNotifiesOnFailedWrite(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(b.path("n"), 0o755) })
 	a.write("n/f.md", "v2")
-	eventually(t, "error event on b", b.hasEvent(EvError, "n/f.md", "a"))
+	// Hand test 3, F2: a failed write is a standing problem that clears when
+	// a retry succeeds, so its activity event is write-failed (it was an
+	// error event, which stood as a problem for an hour after any success).
+	eventually(t, "write-failed event on b", b.hasEvent(EvWriteFailed, "n/f.md", "a"))
 	eventually(t, "failed-write notification on b", bn.has("n/f.md", "could not write ~/n/f.md"))
+}
+
+// Hand test 3, F2: a write that failed (permission denied) is retried
+// until it works, without a restart; while it fails the entry says so,
+// and the report goes once it is written.
+func TestFailedWriteIsRetriedAndClears(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	a, b := newMachine(t, "a"), newMachine(t, "b", func(o *Options) { o.LinkPoll = 100 * time.Millisecond })
+	a.write("n/perm/p.md", "v1")
+	a.add("n")
+	link(t, a, b)
+	eventually(t, "synced", hasFile(b, "n/perm/p.md", "v1"))
+	if err := os.Chmod(b.path("n/perm"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(b.path("n/perm"), 0o755) })
+	a.write("n/perm/p.md", "v2")
+	failing := func() []string { return b.e.Status().Entries[0].WriteFailing }
+	eventually(t, "b reports the failing write", func() bool { f := failing(); return len(f) == 1 && f[0] == "n/perm/p.md" })
+	os.Chmod(b.path("n/perm"), 0o755)
+	eventually(t, "retried without a restart", hasFile(b, "n/perm/p.md", "v2"))
+	eventually(t, "the report goes", func() bool { return len(failing()) == 0 })
 }

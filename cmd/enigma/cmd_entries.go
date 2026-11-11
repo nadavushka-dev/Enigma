@@ -609,6 +609,8 @@ func entryState(e engine.EntryStatus, lim engine.Limits) string {
 			folders = "subfolder"
 		}
 		state = fmt.Sprintf("PARTLY WATCHED: %d %s not watched; changes there sync only at the next check", len(e.UnwatchedFolders), folders)
+	case len(e.WriteFailing) > 0:
+		state = fmt.Sprintf("WRITE FAILING: %d not written here (retried; see the problems)", len(e.WriteFailing))
 	case len(e.Restoring) > 0:
 		state = fmt.Sprintf("restoring %d from the other machines (not here yet)", len(e.Restoring))
 	case len(e.OverLimit) > 0:
