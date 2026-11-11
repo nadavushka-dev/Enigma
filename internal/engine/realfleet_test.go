@@ -170,6 +170,158 @@ func TestRealFleet_StrayRelativeLinksInsideASkill(t *testing.T) {
 	})
 }
 
+// joinMac starts the newcomer "mac" (records as `enigma join` hands them
+// over), lets prep lay out its disk, and links it to the members.
+func joinMac(t *testing.T, members []*machine, prep func(mac *machine)) *machine {
+	t.Helper()
+	boot := append(members[0].e.Machines(), proto.MachineRecord{ID: "id-mac", Name: "mac", Clock: 1, By: "id-mac"})
+	mac := newMachine(t, "mac", func(o *Options) { o.Bootstrap = boot })
+	prep(mac)
+	for _, m := range members {
+		link(t, m, mac)
+	}
+	eventually(t, "mac has the entry", func() bool { return hasEntry(mac, ".agents") })
+	return mac
+}
+
+// holds reports whether content is somewhere m keeps it for rel: the file,
+// a conflict copy next to it, or a first-add backup.
+func holds(m *machine, rel, content string) bool {
+	if m.read(rel) == content || backedUp(m, content) {
+		return true
+	}
+	dir, base := filepath.Split(rel)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	for _, c := range conflictCopies(m, strings.TrimSuffix(dir, "/"), stem) {
+		if c == content {
+			return true
+		}
+	}
+	return false
+}
+
+// Shape 3, the other layout: the newcomer's ~/.agents/skills is itself a
+// symlink into its repo, where members have a real folder. Nothing on the
+// members, and nothing behind the link, is deleted or overwritten; when
+// the newcomer makes it a real folder, the members' skills come back.
+func TestRealFleet_MacWhoseSkillsFolderIsALink(t *testing.T) {
+	for _, mode := range []string{"links-off", "links-on", "links-on-repo-synced"} {
+		t.Run(mode, func(t *testing.T) {
+			u1, u2 := newMachine(t, "u1"), newMachine(t, "u2")
+			for _, m := range []*machine{u1, u2} {
+				m.write(".agents/skills/tkt-work/SKILL.md", "ubuntu tkt-work")
+				m.write(".agents/skills/other/SKILL.md", "other")
+				m.write(".agents/AGENTS.md", "agents")
+			}
+			knownFleet(t, u1, u2)
+			addAgents(t, u1, mode != "links-off")
+			eventually(t, "u2 has the entry", func() bool { return hasEntry(u2, ".agents") })
+			settle(t, u1, u2)
+			const repo = "work/nadavushka-plugs/squad/skills"
+			mac := joinMac(t, []*machine{u1, u2}, func(mac *machine) {
+				mac.write(repo+"/tkt-work/SKILL.md", "mac repo tkt-work")
+				mac.write(repo+"/tkt-ship/SKILL.md", "mac repo tkt-ship")
+				mac.symlink(".agents/skills", mac.path(repo))
+			})
+			eventually(t, "mac has AGENTS.md", hasFile(mac, ".agents/AGENTS.md", "agents"))
+			if mode == "links-on-repo-synced" {
+				if err := mac.e.AddEntry(mac.path(repo), AddOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				eventually(t, "u1 has the repo", hasFile(u1, repo+"/tkt-ship/SKILL.md", "mac repo tkt-ship"))
+				eventually(t, "u1 reports mac's link blocked by its folder", linkState(u1, ".agents/skills", LinkBlocked))
+			}
+			settle(t, u1, u2, mac)
+			for _, m := range []*machine{u1, u2} {
+				if m.read(".agents/skills/tkt-work/SKILL.md") != "ubuntu tkt-work" || m.read(".agents/skills/other/SKILL.md") != "other" ||
+					isSymlink(m.path(".agents/skills")) || trashed(m, "ubuntu tkt-work") || trashed(m, "other") {
+					t.Fatalf("%s's real skills changed", m.name)
+				}
+			}
+			if got := listDir(t, mac.path(repo)); len(got) != 2 || mac.read(repo+"/tkt-work/SKILL.md") != "mac repo tkt-work" {
+				t.Fatalf("written through mac's skills link: %v", got)
+			}
+			if !isSymlink(mac.path(".agents/skills")) {
+				t.Fatal("mac's skills link was replaced")
+			}
+
+			os.Remove(mac.path(".agents/skills"))
+			mac.e.Rescan()
+			eventually(t, "mac gets the members' skills", hasFile(mac, ".agents/skills/other/SKILL.md", "other"))
+			eventually(t, "mac gets tkt-work", hasFile(mac, ".agents/skills/tkt-work/SKILL.md", "ubuntu tkt-work"))
+			settle(t, u1, u2, mac)
+			for _, m := range []*machine{u1, u2} {
+				if m.read(".agents/skills/tkt-work/SKILL.md") != "ubuntu tkt-work" || m.read(".agents/skills/other/SKILL.md") != "other" {
+					t.Fatalf("%s lost skills when mac's link went", m.name)
+				}
+			}
+			if mac.read(repo+"/tkt-work/SKILL.md") != "mac repo tkt-work" {
+				t.Fatal("mac's repo copy changed")
+			}
+		})
+	}
+}
+
+// D22 when the newcomer has its own, differing files at the members'
+// paths (and one only it has): nothing is lost on either side. Keep-both
+// keeps its copy as a conflict copy, this-machine-wins backs it up, and a
+// later edit on a member makes an ordinary conflict (§7 step 4).
+func TestRealFleet_MacJoinsWithDifferingFiles(t *testing.T) {
+	for _, mode := range []string{"keep-both", "mine-wins", "edited-after-add"} {
+		t.Run(mode, func(t *testing.T) {
+			u1, u2 := newMachine(t, "u1"), newMachine(t, "u2")
+			u1.write(".agents/skills/other/SKILL.md", "members' other")
+			knownFleet(t, u1, u2)
+			policy := proto.FirstAddKeepBoth
+			if mode == "mine-wins" {
+				policy = proto.FirstAddReplace
+			}
+			if err := u1.e.AddEntry(u1.path(".agents"), AddOptions{Policy: policy}); err != nil {
+				t.Fatal(err)
+			}
+			eventually(t, "u2 has it", hasFile(u2, ".agents/skills/other/SKILL.md", "members' other"))
+			if mode == "edited-after-add" {
+				u1.write(".agents/skills/other/SKILL.md", "members' edit")
+				u1.e.Rescan()
+				eventually(t, "u2 has the edit", hasFile(u2, ".agents/skills/other/SKILL.md", "members' edit"))
+			}
+			settle(t, u1, u2)
+			members := "members' other"
+			if mode == "edited-after-add" {
+				members = "members' edit"
+			}
+			mac := joinMac(t, []*machine{u1, u2}, func(mac *machine) {
+				mac.write(".agents/skills/other/SKILL.md", "mac's own other")
+				mac.write(".agents/skills/maconly/SKILL.md", "mac only")
+			})
+			eventually(t, "mac's own skill spreads (D14)", hasFile(u1, ".agents/skills/maconly/SKILL.md", "mac only"))
+			settle(t, u1, u2, mac)
+			for _, m := range []*machine{u1, u2, mac} {
+				if !holds(m, ".agents/skills/other/SKILL.md", members) {
+					t.Fatalf("the members' version is lost (%s)", m.name)
+				}
+			}
+			if !holds(mac, ".agents/skills/other/SKILL.md", "mac's own other") {
+				t.Fatal("mac's own version is lost")
+			}
+			switch mode {
+			case "keep-both":
+				if mac.read(".agents/skills/other/SKILL.md") != members || !holds(u1, ".agents/skills/other/SKILL.md", "mac's own other") {
+					t.Fatal("keep-both: the members' version must win in place and mac's travel as a copy")
+				}
+			case "mine-wins":
+				if mac.read(".agents/skills/other/SKILL.md") != members || !backedUp(mac, "mac's own other") {
+					t.Fatal("mine-wins: mac's copy must be backed up and replaced")
+				}
+			case "edited-after-add":
+				if u1.read(".agents/skills/other/SKILL.md") != mac.read(".agents/skills/other/SKILL.md") {
+					t.Fatal("the machines did not converge")
+				}
+			}
+		})
+	}
+}
+
 // Shape 3: a machine joins whose ~/.agents/skills holds a symlinked
 // folder (skills -> a repo's skills) and per-skill links into that repo,
 // where the members have real folders. Nothing on the members, and

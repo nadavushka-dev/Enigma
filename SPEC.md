@@ -254,10 +254,14 @@ rescan, which compares disk against the stored current versions:
   this machine's copy: its version is kept but marked as not on disk here
   (`materialized` off, persisted). When the link goes away, the path's
   absence is therefore never a delete, after a restart too: the version is
-  fetched from the peers and written back into the now-real folder, with
+  fetched from one peer (the one that announced it, else the next in turn)
+  and written back into the now-real folder, with
   the edits and new files peers made meanwhile (those are remembered in
   memory; after a restart the catch-up brings them). A preexisting copy
-  replaced this way is backed up from the history store (D13). No other
+  replaced this way is backed up from the history store (D13). A restore
+  never re-creates an entry root that is gone: the entry is missing
+  locally until the user makes it a folder again (a file event or a rescan
+  notices), and only then are the files fetched. No other
   path makes a delete: a local delete is only ever a materialized file
   found missing under a present root. Moving a folder away and only later
   putting a link in its place is still a delete of what was moved (the
