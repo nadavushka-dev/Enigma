@@ -27,6 +27,10 @@ var afterDecide atomic.Pointer[func(machine, rel string, act Action)]
 // onFetchHook is a test hook run when a peer asks this machine for rel.
 var onFetchHook atomic.Pointer[func(machine, rel string)]
 
+// dropFetchHook is a test hook: when it returns true, this machine does
+// not answer a peer asking for rel (a peer that does not have it).
+var dropFetchHook atomic.Pointer[func(machine, rel string) bool]
+
 // ---- entries (fleet state, SPEC §6.4) ----------------------------------------
 
 func (e *Engine) addEntry(abs string, o AddOptions) error {
@@ -265,6 +269,8 @@ func (e *Engine) MoveEntry(abs string, group string) error {
 func (e *Engine) track(path string, r proto.EntryRecord) {
 	m := fsx.NewMatcher(r.Ignore)
 	e.matchers[path] = m
+	e.rootSeen[path] = e.rootSig(path) // pollRoots compares with this
+	e.checkRoot(path)                  // record the folder, or notice it is another one
 	if e.w == nil {
 		return
 	}
@@ -272,6 +278,15 @@ func (e *Engine) track(path string, r proto.EntryRecord) {
 	skip := func(abs string) bool {
 		rel, err := filepath.Rel(root, abs)
 		return err == nil && m.Ignored(filepath.ToSlash(rel))
+	}
+	// Watching creates a missing root (D6, a brand-new entry). A root that
+	// is gone while this machine has versions under it, or is a symlink,
+	// is not watched: it is missing locally, and pollRoots watches it again
+	// once it is a folder (§6.5).
+	if _, ok := fsx.DirIDOf(e.rootDir(path)); !ok {
+		if _, err := os.Lstat(e.rootDir(path)); err == nil || e.rootVanished(path) {
+			return
+		}
 	}
 	if err := e.w.Add(root, !r.Dir, skip); err != nil {
 		e.log.Error("watch", "entry", path, "err", err)
@@ -302,6 +317,7 @@ func (e *Engine) forget(path string) {
 			delete(e.st.Stamps, rel)
 		}
 	}
+	delete(e.st.Roots, path)
 	e.dirty = true
 }
 
@@ -433,6 +449,7 @@ func (e *Engine) onLocalPath(abs string) {
 // the ones waiting take any room this refresh made.
 func (e *Engine) refreshUnder(entry, rel string) {
 	if rel == entry {
+		e.rootSeen[entry] = e.rootSig(entry) // what pollRoots compares with
 		switch {
 		case e.rootIsLink(entry):
 			// Nothing under a linked root is this entry's (§6.6): no
@@ -443,6 +460,7 @@ func (e *Engine) refreshUnder(entry, rel string) {
 			delete(e.missing, entry) // back, as rescanEntry finds it (a file event is enough)
 		}
 	}
+	e.checkRoot(entry) // another folder than the one synced: restore, never delete
 	waiting := len(e.overLimit[entry])
 	room := e.room(entry, e.st.Entries[entry])
 	seen := map[string]bool{}
@@ -606,6 +624,7 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 			e.markMissing(entry) // no deletes, and no restore re-creating the root
 			return
 		}
+		e.checkRoot(entry) // a replaced folder: nothing in it is a delete
 		if !fs.Materialized {
 			e.requestRestore(entry, rel) // not on disk here (it was behind a link): fetch it
 			return
@@ -764,6 +783,9 @@ func (e *Engine) onFetch(p *peer, rel string) {
 	if hook := onFetchHook.Load(); hook != nil {
 		(*hook)(e.o.Name, rel)
 	}
+	if hook := dropFetchHook.Load(); hook != nil && (*hook)(e.o.Name, rel) {
+		return
+	}
 	entry, _, ok := e.entryFor(rel)
 	if !ok {
 		return
@@ -771,13 +793,22 @@ func (e *Engine) onFetch(p *peer, rel string) {
 	for attempt := 0; attempt < maxApplyAttempts; attempt++ {
 		e.refreshFile(entry, rel, nil)
 		fs := e.st.Files[rel]
-		if fs == nil || e.shadowed(entry, rel) {
+		if fs == nil {
 			return
 		}
 		v := fs.V
 		anc := version.Walk(fs.Anc, v.Hash, version.AncestryLimit)
 		if v.IsDeleted() {
 			p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Ancestry: anc})
+			return
+		}
+		if !fs.Materialized || e.shadowed(entry, rel) {
+			// Not on disk here (behind a link, a replaced folder): the
+			// history store may still hold it, so a peer restoring it gets
+			// it. Nothing is read through a link.
+			if data, ok := e.hist.Get(v.Hash); ok && !v.Link && fsx.Hash(data) == v.Hash {
+				p.send(&proto.Msg{Type: proto.File, Path: rel, Version: &v, Ancestry: anc, Content: data})
+			}
 			return
 		}
 		if v.Link { // the content is the stored target; never read through the link
@@ -1046,6 +1077,7 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			}
 			return err
 		}
+		e.checkRoot(entry) // records the folder this write made, or notices it is another
 		e.setCurrent(rel, d.Result, true, anc...)
 		announce(d.Result)
 		if d.Content != nil {

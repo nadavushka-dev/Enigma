@@ -232,4 +232,60 @@ func TestDocker_LinkReplication(t *testing.T) {
 	if got := mac.read("work/repo-notes/sub/a.md"); got != "a1" {
 		t.Fatalf("the repo copy changed: %q", got)
 	}
+
+	// 8. The sandbox regression (2026-11-11, links off): the entry ROOT is
+	//    replaced by a symlink on one line, the link and the moved folder
+	//    are removed, the root is re-created empty, the daemon restarts. The
+	//    files come back on that box and are never deleted on the other.
+	lin.sh("mkdir -p ~/vault && printf 'n1' > ~/vault/a.md && printf 'n2' > ~/vault/b.md")
+	lin.sh("enigma add ~/vault")
+	eventuallyLong(t, "mac has the vault", 60*time.Second, func() bool { return mac.read("vault/a.md") == "n1" && mac.read("vault/b.md") == "n2" })
+	lin.sh("mkdir -p ~/repo && cp -r ~/vault ~/repo/vault && mv ~/vault ~/vault.old && ln -s ~/repo/vault ~/vault")
+	time.Sleep(3 * time.Second)
+	lin.sh("rm ~/vault; rm -rf ~/vault.old")
+	time.Sleep(3 * time.Second)
+	if mac.read("vault/a.md") != "n1" || mac.read("vault/b.md") != "n2" {
+		t.Fatal("mac lost the vault while lin's root was a link or gone")
+	}
+	if _, err := lin.try("test -e ~/vault"); err == nil {
+		t.Fatal("lin's removed root was re-created")
+	}
+	lin.sh("mkdir ~/vault")
+	eventuallyLong(t, "lin restores the vault into the new folder", 60*time.Second, func() bool {
+		return lin.read("vault/a.md") == "n1" && lin.read("vault/b.md") == "n2"
+	})
+	if out := lin.sh("enigma status"); strings.Contains(out, "MISSING") || strings.Contains(out, "restoring") {
+		t.Fatalf("lin's status after the restore:\n%s", out)
+	}
+	lin.stopDaemon()
+	lin.startDaemon()
+	eventuallyLong(t, "lin links again", 60*time.Second, func() bool {
+		for _, p := range lin.status().Peers {
+			if p.Connected {
+				return true
+			}
+		}
+		return false
+	})
+	barrier(t, lin, mac, 6)
+	barrier(t, mac, lin, 7)
+	if mac.read("vault/a.md") != "n1" || mac.read("vault/b.md") != "n2" {
+		t.Fatal("a delete reached mac after lin's restart")
+	}
+	if out := mac.sh("enigma trash list"); strings.Contains(out, "vault/") {
+		t.Fatalf("mac trashed the vault:\n%s", out)
+	}
+
+	// 9. The same restart while the root is still the new, empty folder
+	//    the user just made (the daemon never saw anything in between).
+	lin.stopDaemon()
+	lin.sh("mv ~/vault ~/vault.old && ln -s ~/vault.old ~/vault && rm ~/vault && rm -rf ~/vault.old && mkdir ~/vault")
+	lin.startDaemon()
+	eventuallyLong(t, "lin restores the vault after starting", 90*time.Second, func() bool {
+		return lin.read("vault/a.md") == "n1" && lin.read("vault/b.md") == "n2"
+	})
+	barrier(t, lin, mac, 8)
+	if mac.read("vault/a.md") != "n1" || mac.read("vault/b.md") != "n2" || strings.Contains(mac.sh("enigma trash list"), "vault/") {
+		t.Fatal("a delete reached mac after a restart over a re-created root")
+	}
 }

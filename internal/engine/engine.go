@@ -51,6 +51,7 @@ type Options struct {
 	Debounce       time.Duration
 	RescanInterval time.Duration
 	LinkPoll       time.Duration
+	RestoreRetry   time.Duration // how often a path waiting to be restored is asked for again (DefaultRestoreRetry)
 	Heartbeat      time.Duration
 	NoWatch        bool // no fs watcher: callers drive changes with Rescan (tests, simulation)
 	Log            *slog.Logger
@@ -104,8 +105,10 @@ type Engine struct {
 	// when each path was last asked for.
 	shadowIn     map[string]bool
 	restoreAsked map[string]time.Time
-	restoreTries map[string]int // per path: which peer a restore asks next
-	restoreFrom  *peer          // set while a peer's announcement is refreshed: ask it
+	restoreTries map[string]int    // per path: which peer a restore asks next
+	restoreFrom  *peer             // set while a peer's announcement is refreshed: ask it
+	rootSeen     map[string]string // entry -> what pollRoots last saw at its folder
+	restoring    map[string]string // rel -> entry: waiting to be restored, asked again on the poll tick
 	dirty        bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
@@ -156,6 +159,9 @@ func New(o Options) (*Engine, error) {
 	if o.LinkPoll == 0 {
 		o.LinkPoll = DefaultLinkPoll
 	}
+	if o.RestoreRetry == 0 {
+		o.RestoreRetry = DefaultRestoreRetry
+	}
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
@@ -173,7 +179,7 @@ func New(o Options) (*Engine, error) {
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
-		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{},
+		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),
@@ -239,7 +245,9 @@ func (e *Engine) loop() {
 			e.prune()
 		case <-linkTick.C:
 			if !e.o.NoWatch {
+				e.pollRoots()
 				e.pollLinks()
+				e.retryRestores()
 			}
 		}
 		if len(e.pending) > 0 {
@@ -372,6 +380,10 @@ type EntryStatus struct {
 	// the entry known here, with its state.
 	LinksOn bool         `json:"LinksOn,omitempty"`
 	Links   []LinkStatus `json:"Links,omitempty"`
+	// Restoring: files this machine keeps a version of but does not have
+	// on disk (they were behind a link, or the folder was replaced): they
+	// are being fetched from the other machines, never deleted (§6.5).
+	Restoring []string `json:"Restoring,omitempty"`
 }
 
 type PeerStatus struct{ ID, Name string }
@@ -395,6 +407,14 @@ func (e *Engine) Status() Status {
 			es := EntryStatus{Path: path, Dir: r.Dir, Group: r.Group, Frozen: !e.inScope(r), Missing: e.missing[path], LinksOn: r.Dir && r.Links}
 			if es.LinksOn && !es.Frozen {
 				es.Links = e.linkStatuses(path)
+			}
+			if !es.Frozen {
+				for rel := range e.st.Files {
+					if (rel == path || strings.HasPrefix(rel, path+"/")) && e.needsRestore(path, rel) {
+						es.Restoring = append(es.Restoring, rel)
+					}
+				}
+				sort.Strings(es.Restoring)
 			}
 			for rel := range e.skipped[path] {
 				es.Skipped = append(es.Skipped, rel)

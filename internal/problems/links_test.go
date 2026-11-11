@@ -33,6 +33,24 @@ func TestD23_LinkProblems(t *testing.T) {
 	}
 }
 
+// A replaced folder: its files waiting to be restored are a warning while
+// the entry is not missing, and the replacement is one for an hour.
+func TestD15_RestoringAndRootReplacedProblems(t *testing.T) {
+	st := Input{Limits: lim(), Entries: []engine.EntryStatus{{Path: "notes", Dir: true, Restoring: []string{"notes/a.md", "notes/b.md"}}},
+		Events: []engine.Event{{Kind: engine.EvRootReplaced, Path: "notes", Time: t0}}}
+	ps := Derive(st, t0.Add(time.Minute))
+	if got := keys(ps); got != "restoring:notes rootreplaced:notes" {
+		t.Fatalf("keys = %q", got)
+	}
+	if ps[0].Severity != Warning || ps[0].Message != "notes: 2 files not here yet, being restored from the other machines" {
+		t.Fatalf("%+v", ps[0])
+	}
+	st.Entries[0].Missing = true // missing locally says it already
+	if got := keys(Derive(st, t0.Add(2*time.Hour))); got != "missing:notes" {
+		t.Fatalf("keys = %q", got)
+	}
+}
+
 func TestD23_LostLinkIsAWarningForAnHour(t *testing.T) {
 	ev := engine.Event{Kind: engine.EvLinkLost, Path: "s/l", Detail: "../r/a", Time: t0}
 	if ps := Derive(Input{Events: []engine.Event{ev}}, t0.Add(30*time.Minute)); len(ps) != 1 || ps[0].Severity != Warning {

@@ -78,6 +78,11 @@ func Derive(in Input, now time.Time) []Problem {
 	}
 	for _, e := range in.Entries {
 		ps = append(ps, linkProblems(e, now)...)
+		if len(e.Restoring) > 0 && !e.Missing {
+			ps = append(ps, Problem{Key: "restoring:" + e.Path, Severity: Warning, Path: e.Path,
+				Message: fmt.Sprintf("%s: %s not here yet, being restored from the other machines", e.Path, plural(len(e.Restoring), "file")),
+				Hint:    "they were behind a symlink, or the folder was replaced; they come back once a machine that has them is linked (enigma status shows the links)"})
+		}
 		if len(e.Links) > 0 { // a link with a state is reported on its own
 			listed := map[string]bool{}
 			for _, l := range e.Links {
@@ -115,6 +120,10 @@ func Derive(in Input, now time.Time) []Problem {
 			ps = append(ps, Problem{Key: "conflict:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
 				Message: fmt.Sprintf("conflict on %s: the other edit is kept as %s", ev.Detail, ev.Path),
 				Hint:    "enigma conflicts lists every copy; delete the copy once you have what you need from it"})
+		case engine.EvRootReplaced:
+			ps = append(ps, Problem{Key: "rootreplaced:" + ev.Path, Severity: Warning, Path: ev.Path,
+				Message: ev.Path + ": the folder was replaced here; missing files are restored from the other machines, not deleted",
+				Hint:    "to delete files everywhere, delete the files, not the folder"})
 		case engine.EvLinkLost:
 			ps = append(ps, Problem{Key: "linklost:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
 				Message: fmt.Sprintf("%s: the link here (-> %s) lost to another version and is in the trash", ev.Path, ev.Detail),

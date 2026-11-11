@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -18,8 +21,109 @@ import (
 // peer sent for a shadowed path while it was shadowed are remembered
 // (shadowIn, in memory) and fetched the same way.
 
-// restoreEvery bounds how often one path is asked for again.
-const restoreEvery = 30 * time.Second
+// rootDir is the folder entry's files live in: a folder entry's root, a
+// file entry's parent.
+func (e *Engine) rootDir(entry string) string {
+	if e.st.Entries[entry].Dir {
+		return e.abs(entry)
+	}
+	return filepath.Dir(e.abs(entry))
+}
+
+// checkRoot notices that entry's folder is not the one its files were
+// synced in: moved away and re-created, replaced by another, a symlink
+// in between. Nothing this machine had there is on disk as it left it, so
+// none of it is marked on disk here any more: a file now missing is
+// restored from the peers, never a delete (SPEC §6.5). The first folder
+// seen is recorded. A symlink or an absent root is not a folder: nothing
+// changes (the missing-root guard applies).
+func (e *Engine) checkRoot(entry string) {
+	id, ok := fsx.DirIDOf(e.rootDir(entry))
+	if !ok {
+		return
+	}
+	old, had := e.st.Roots[entry]
+	if had && old == id {
+		return
+	}
+	e.st.Roots[entry] = id
+	e.dirty = true
+	if !had {
+		return
+	}
+	n := 0
+	for rel, fs := range e.st.Files {
+		if fs.Materialized && !fs.V.IsDeleted() && (rel == entry || strings.HasPrefix(rel, entry+"/")) {
+			fs.Materialized = false
+			n++
+		}
+	}
+	if n > 0 {
+		e.log.Warn("entry folder replaced; its files are restored from the peers, not deleted", "entry", entry, "files", n)
+		e.event(EvRootReplaced, entry, "", "the folder was replaced here; missing files are restored from the other machines, never deleted")
+	}
+}
+
+// rootSig is what is at entry's folder now: a folder (by identity), a
+// symlink, something else, or nothing.
+func (e *Engine) rootSig(entry string) string {
+	dir := e.rootDir(entry)
+	if id, ok := fsx.DirIDOf(dir); ok {
+		return fmt.Sprintf("dir %d %d", id.Dev, id.Ino)
+	}
+	fi, err := os.Lstat(dir)
+	switch {
+	case err != nil:
+		return "absent"
+	case fi.Mode()&os.ModeSymlink != 0:
+		return "link"
+	}
+	return "other"
+}
+
+// pollRoots notices an entry's folder moved away, replaced by a symlink,
+// removed or re-created. File events do not report the watched folder
+// itself reliably (kqueue follows links; a moved folder's watch follows
+// it), so this runs with the link poll; it only stats each root. On a
+// change the entry is watched again (or not, see track) and refreshed:
+// missing, back, or restored (§6.5).
+func (e *Engine) pollRoots() {
+	for entry, r := range e.st.Entries {
+		if r.Removed || !e.inScope(r) {
+			continue
+		}
+		sig := e.rootSig(entry)
+		if old, had := e.rootSeen[entry]; had && old == sig {
+			continue
+		} else if !had {
+			e.rootSeen[entry] = sig // first look; refreshUnder records it from then on
+			continue
+		}
+		old := e.rootSeen[entry]
+		e.log.Info("entry folder changed", "entry", entry, "was", old, "now", sig)
+		if e.w != nil {
+			e.w.Remove(e.abs(entry))
+			e.track(entry, r)
+		}
+		e.refreshUnder(entry, entry)
+	}
+}
+
+// DefaultRestoreRetry bounds how often one path is asked for again; each
+// attempt asks the next peer.
+const DefaultRestoreRetry = 30 * time.Second
+
+// retryRestores asks again for the paths still waiting to be restored
+// (the peer asked may not have had them), on the poll tick.
+func (e *Engine) retryRestores() {
+	for rel, entry := range e.restoring {
+		if !e.needsRestore(entry, rel) {
+			delete(e.restoring, rel)
+			continue
+		}
+		e.requestRestore(entry, rel)
+	}
+}
 
 // needsRestore: rel has a live current version this machine does not have
 // on disk, and nothing is in its way. The entry's root must be here: a
@@ -43,7 +147,8 @@ func (e *Engine) requestRestore(entry, rel string) {
 	if e.missing[entry] || !e.rootPresent(entry, e.st.Entries[entry]) {
 		return
 	}
-	if t, ok := e.restoreAsked[rel]; ok && time.Since(t) < restoreEvery {
+	e.restoring[rel] = entry
+	if t, ok := e.restoreAsked[rel]; ok && time.Since(t) < e.o.RestoreRetry {
 		return
 	}
 	p := e.restoreFrom

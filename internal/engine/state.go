@@ -33,6 +33,10 @@ type state struct {
 	// Stamps: the last hash taken of a file on disk, valid while its
 	// lstat stamp is unchanged (SPEC §6.1). Keyed by path from ~.
 	Stamps map[string]*hashStamp `json:"stamps,omitempty"`
+	// Roots: the folder each entry's files were synced in (a folder
+	// entry's root, a file entry's parent), so a folder put in its place is
+	// not read as the user deleting them (SPEC §6.5).
+	Roots map[string]fsx.DirID `json:"roots,omitempty"`
 }
 
 type hashStamp struct {
@@ -41,7 +45,7 @@ type hashStamp struct {
 }
 
 func newState() *state {
-	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}}
+	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}, Roots: map[string]fsx.DirID{}}
 }
 
 func loadState(p string) (*state, error) {
@@ -76,6 +80,9 @@ func loadState(p string) (*state, error) {
 	}
 	if s.Stamps == nil {
 		s.Stamps = map[string]*hashStamp{}
+	}
+	if s.Roots == nil {
+		s.Roots = map[string]fsx.DirID{}
 	}
 	return s, nil
 }

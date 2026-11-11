@@ -222,7 +222,21 @@ rescan, which compares disk against the stored current versions:
 - **Vanished-root guard:** if an entry's whole folder, or a file entry's
   parent folder, is missing, Enigma records no deletes for it. The entry is
   marked "missing locally" and an alert is raised. This covers an unmounted
-  disk or a moved home folder.
+  disk or a moved home folder. A missing root is not created again by
+  starting to watch it (only a brand-new entry's root is, D6).
+- **Replaced-folder guard:** each machine records which folder (device and
+  inode) an entry's files were synced in. When another folder is in its
+  place (moved away and re-created, swapped for a symlink and back,
+  restored from elsewhere), the files are no longer counted as on disk
+  here: a missing one is restored from the peers, never a delete, after a
+  restart too. A peer that no longer has the file on disk serves it from
+  its history store. To delete files everywhere, delete the files, not the
+  folder. Status lists the files being restored, and a warning stands
+  until they are here.
+- **Root watch:** every entry's folder is also checked every 2 s (one
+  `lstat`): file events do not reliably report the watched folder itself
+  being moved, replaced or re-created. A change is refreshed at once, and
+  the folder is watched again.
 
 ### 6.6 Applying a version
 - **Write:** to a temp file in the same folder, fsync, set the exec bit and

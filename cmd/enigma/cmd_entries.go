@@ -558,6 +558,8 @@ func cmdStatus(c *ctx, args []string) error {
 		switch {
 		case e.Missing:
 			state = "MISSING LOCALLY: deletes are not propagated"
+		case len(e.Restoring) > 0:
+			state = fmt.Sprintf("restoring %d from the other machines (not here yet)", len(e.Restoring))
 		case len(e.OverLimit) > 0:
 			files := "files"
 			if len(e.OverLimit) == 1 {
