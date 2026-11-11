@@ -304,6 +304,7 @@ func (e *Engine) unwatch(path string) {
 	delete(e.skipped, path)
 	delete(e.overLimit, path)
 	delete(e.missing, path)
+	delete(e.watchRetry, path)
 	e.clearLinkNotes(path, false)
 }
 

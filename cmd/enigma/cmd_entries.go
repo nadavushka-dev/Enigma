@@ -603,6 +603,12 @@ func entryState(e engine.EntryStatus, lim engine.Limits) string {
 		state = "MISSING LOCALLY: deletes are not propagated"
 	case e.Unwatched:
 		state = "NOT WATCHED: changes here sync only at the next check"
+	case len(e.UnwatchedFolders) > 0:
+		folders := "subfolders"
+		if len(e.UnwatchedFolders) == 1 {
+			folders = "subfolder"
+		}
+		state = fmt.Sprintf("PARTLY WATCHED: %d %s not watched; changes there sync only at the next check", len(e.UnwatchedFolders), folders)
 	case len(e.Restoring) > 0:
 		state = fmt.Sprintf("restoring %d from the other machines (not here yet)", len(e.Restoring))
 	case len(e.OverLimit) > 0:

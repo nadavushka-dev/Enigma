@@ -1,6 +1,7 @@
 package problems
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +80,16 @@ func TestD15_UnwatchedAndUnreliableProblems(t *testing.T) {
 	}
 	st.Entries[0].Unwatched, st.Entries[0].IdentityUnreliable = false, false
 	if ps := Derive(st, t0); len(ps) != 0 {
+		t.Fatalf("%+v", ps)
+	}
+}
+
+// Review 5: subfolders whose watch could not be added (the watch limit)
+// are an error too, naming them, until a retry watches them.
+func TestD15_PartlyWatchedFolderIsAnError(t *testing.T) {
+	st := Input{Limits: lim(), Entries: []engine.EntryStatus{{Path: "notes", Dir: true, UnwatchedFolders: []string{"notes/a", "notes/b"}}}}
+	ps := Derive(st, t0)
+	if len(ps) != 1 || ps[0].Key != "unwatched:notes" || ps[0].Severity != Error || !strings.Contains(ps[0].Message, "notes/a") {
 		t.Fatalf("%+v", ps)
 	}
 }

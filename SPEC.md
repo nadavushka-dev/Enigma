@@ -239,7 +239,9 @@ rescan, which compares disk against the stored current versions:
 
   Where a folder's identity changes while every file stays in place
   (FUSE, some network mounts), after three such changes it is no longer
-  relied on for that entry, with a standing warning. Not covered: a
+  relied on for that entry, with a standing
+  warning; the root watch then only notices it becoming a symlink or
+  going away. Not covered: a
   folder deleted and re-created unseen (no event, daemon stopped) on a
   file system without birth times that reuses its inode; that reads as
   deleting its files. A peer that no longer has the file on disk serves it from
@@ -250,7 +252,10 @@ rescan, which compares disk against the stored current versions:
   `lstat`): file events do not reliably report the watched folder itself
   being moved, replaced or re-created. A change, or a folder whose watch
   died, is refreshed at once and watched again; status never says "ok"
-  for a folder that is not watched (an error until it is). A file
+  for a folder that is not watched, or has subfolders that are not (an
+  error until they are). A watch that could not be added (the Linux
+  inotify watch limit) did not die: the folder is the same, and the
+  watch is retried with a growing wait (up to 5 minutes). A file
   entry's parent is watched through a symlink as before.
 
 ### 6.6 Applying a version

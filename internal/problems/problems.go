@@ -57,6 +57,10 @@ const recent = time.Hour
 
 // Derive lists the problems in in, errors first, then by key. Since is
 // left zero; Tracker fills it.
+// unwatchedHint goes with a folder, or part of one, not watched.
+const unwatchedHint = "Enigma keeps trying to watch it; on Linux the inotify watch limit may be reached " +
+	"(sysctl fs.inotify.max_user_watches); if this stays, check enigma.log"
+
 func Derive(in Input, now time.Time) []Problem {
 	var ps []Problem
 	for _, p := range in.Peers {
@@ -83,10 +87,17 @@ func Derive(in Input, now time.Time) []Problem {
 	}
 	for _, e := range in.Entries {
 		ps = append(ps, linkProblems(e, now)...)
-		if e.Unwatched && !e.Missing {
+		switch {
+		case e.Missing:
+		case e.Unwatched:
 			ps = append(ps, Problem{Key: "unwatched:" + e.Path, Severity: Error, Path: e.Path,
 				Message: e.Path + ": changes here are not watched; they sync only at the next check",
-				Hint:    "it is watched again within seconds; if this stays, restart the daemon and check enigma.log"})
+				Hint:    unwatchedHint})
+		case len(e.UnwatchedFolders) > 0:
+			ps = append(ps, Problem{Key: "unwatched:" + e.Path, Severity: Error, Path: e.Path,
+				Message: fmt.Sprintf("%s: %s not watched (%s); changes there sync only at the next check",
+					e.Path, plural(len(e.UnwatchedFolders), "subfolder"), strings.Join(e.UnwatchedFolders, ", ")),
+				Hint: unwatchedHint})
 		}
 		if e.IdentityUnreliable {
 			ps = append(ps, Problem{Key: "identity:" + e.Path, Severity: Warning, Path: e.Path,
