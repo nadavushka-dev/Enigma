@@ -214,6 +214,17 @@ func (e *Engine) noteLink(entry, rel, target, state, reason string) {
 	e.linkNotes[rel] = &linkNote{entry: entry, target: target, state: state, reason: reason, since: since}
 }
 
+// recordGoneUnder refreshes every live tracked path under rel (a folder
+// about to become a link), so what is no longer on disk becomes a local
+// delete before the link hides it.
+func (e *Engine) recordGoneUnder(entry, rel string) {
+	for p, fs := range e.st.Files {
+		if strings.HasPrefix(p, rel+"/") && !fs.V.IsDeleted() {
+			e.refreshFile(entry, p, nil)
+		}
+	}
+}
+
 // dropHeld forgets the received link held at rel (waiting for its target
 // or blocked by a folder) together with its report.
 func (e *Engine) dropHeld(rel string) {

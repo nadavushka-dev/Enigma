@@ -1155,6 +1155,10 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			e.keep(content)
 		}
 		if d.Result.Link {
+			// Whatever was tracked under the path and is gone is a delete,
+			// recorded now: once the link is there, those paths are behind it
+			// and could no longer be seen as deleted (hand test 3, F1).
+			e.recordGoneUnder(entry, rel)
 			lo := fsx.LinkOpts{ExpectAbsent: !onDisk, ExpectHash: basis, ExpectLink: expectLink}
 			if expectLink != "" {
 				lo.ExpectHash = ""

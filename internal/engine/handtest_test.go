@@ -58,6 +58,53 @@ func TestD15_DeletedShadowedFileIsNotSkippedForever(t *testing.T) {
 	}
 }
 
+// Hand test 3, F1: the blocking folder's files are deleted before the
+// link lands in its place, whatever runs first: here the link's retry runs
+// before any refresh has seen the folder go (b has no watcher). The
+// deletes are recorded and spread, nothing stays skipped, and removing the
+// link later resurrects nothing.
+func TestD23_BlockingFolderDeletesAreRecordedBeforeTheLink(t *testing.T) {
+	a, b := newMachine(t, "a"), newMachine(t, "b", noWatch)
+	a.write("repo/skills/foo/SKILL.md", "foo")
+	a.write(".agents/skills/x.md", "x")
+	a.add("repo/skills")
+	a.addLinks(".agents/skills")
+	link(t, a, b)
+	eventually(t, "b has the entry", hasFile(b, ".agents/skills/x.md", "x"))
+	cutAll(t, a, b)
+	a.symlink(".agents/skills/bar", a.path("repo/skills/foo"))
+	b.write(".agents/skills/bar/SKILL.md", "b real")
+	a.e.Rescan()
+	b.e.Rescan()
+	link(t, a, b)
+	eventually(t, "blocked on b", linkState(b, ".agents/skills/bar", LinkBlocked))
+	eventually(t, "a has b's file under its link", func() bool { return skippedHas(a, ".agents/skills/bar/SKILL.md") })
+
+	os.RemoveAll(b.path(".agents/skills/bar")) // the hint; no refresh on b
+	b.e.do(b.e.retryPending)                   // the link's retry comes first
+	if b.readlink(".agents/skills/bar") != b.path("repo/skills/foo") {
+		t.Fatalf("the link did not land: %q", b.readlink(".agents/skills/bar"))
+	}
+	if v := cur(b, ".agents/skills/bar/SKILL.md"); v == nil || !v.IsDeleted() {
+		t.Fatalf("b's delete of its folder's file was not recorded: %+v", v)
+	}
+	eventually(t, "not skipped on a", func() bool { return !skippedHas(a, ".agents/skills/bar/SKILL.md") })
+	settle(t, a, b)
+	if skippedHas(b, ".agents/skills/bar/SKILL.md") {
+		t.Fatal("skipped on b")
+	}
+	os.Remove(a.path(".agents/skills/bar")) // and later the link goes
+	a.e.Rescan()
+	settle(t, a, b)
+	b.e.Rescan()
+	settle(t, a, b)
+	for _, m := range []*machine{a, b} {
+		if got := m.read(".agents/skills/bar/SKILL.md"); got != "<missing>" {
+			t.Fatalf("%s: the deleted file came back: %q", m.name, got)
+		}
+	}
+}
+
 // Hand test S2: following the "blocked" hint (deleting the folder) lets
 // the link in, without a restart.
 func TestD23_BlockedLinkArrivesOnceTheFolderIsGone(t *testing.T) {
