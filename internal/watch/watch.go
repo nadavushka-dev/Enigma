@@ -4,12 +4,14 @@
 package watch
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -28,9 +30,25 @@ type Batch struct {
 }
 
 type root struct {
-	file bool
-	skip func(abs string) bool
-	dirs []string // directories this root added a watch for
+	file  bool
+	skip  func(abs string) bool
+	dirs  []string        // directories this root added a watch for
+	top   string          // the root folder, or a file root's parent
+	added bool            // top's watch was added
+	fail  map[string]bool // folders whose watch could not be added
+	err   error           // why top's watch could not be added
+}
+
+// addHook, when set, runs before each folder watch is added; an error it
+// returns is that watch's failure (tests: the watch limit).
+var addHook atomic.Pointer[func(dir string) error]
+
+// SetAddHook is for tests: f runs before each folder watch is added, and
+// an error it returns fails that watch (as the inotify watch limit,
+// ENOSPC, does). It returns a func that removes the hook.
+func SetAddHook(f func(dir string) error) (restore func()) {
+	addHook.Store(&f)
+	return func() { addHook.Store(nil) }
 }
 
 type Watcher struct {
@@ -82,12 +100,18 @@ func (w *Watcher) Add(path string, file bool, skip func(abs string) bool) error 
 	if _, ok := w.roots[path]; ok {
 		return nil
 	}
-	r := &root{file: file, skip: skip}
+	r := &root{file: file, skip: skip, top: dir, fail: map[string]bool{}}
 	w.roots[path] = r
 	if file {
 		return w.watchDir(r, dir)
 	}
-	return w.addTree(r, dir)
+	if err := w.addTree(r, dir); err != nil {
+		return err
+	}
+	if !r.added {
+		return fmt.Errorf("watch %s: %w", dir, r.err)
+	}
+	return nil
 }
 
 // Remove stops watching path.
@@ -108,14 +132,31 @@ func (w *Watcher) Remove(path string) {
 	}
 }
 
+// watchDir adds a watch for dir, shared between roots. A failure is
+// remembered (Health) until a later add of dir succeeds.
 func (w *Watcher) watchDir(r *root, dir string) error {
 	if w.watched[dir] == 0 {
-		if err := w.fw.Add(dir); err != nil {
+		err := error(nil)
+		if hook := addHook.Load(); hook != nil {
+			err = (*hook)(dir)
+		}
+		if err == nil {
+			err = w.fw.Add(dir)
+		}
+		if err != nil {
+			r.fail[dir] = true
+			if dir == r.top {
+				r.err = err
+			}
 			return err
 		}
 	}
 	w.watched[dir]++
 	r.dirs = append(r.dirs, dir)
+	delete(r.fail, dir)
+	if dir == r.top {
+		r.added = true
+	}
 	return nil
 }
 
@@ -163,6 +204,38 @@ func (w *Watcher) owner(p string) (string, *root) {
 		}
 	}
 	return "", nil
+}
+
+// Health is how well a root is watched.
+type Health struct {
+	// Added: the root's folder (a file root's parent) got a watch. Alive:
+	// that watch is still live; a watch dies with its folder (deleted),
+	// and then nothing under it is reported until it is added again. A
+	// watch never added did not die: the folder is not another one.
+	Added, Alive bool
+	// Failed: folders of the root whose watch could not be added (the
+	// inotify watch limit), sorted; the root's own folder included.
+	Failed []string
+}
+
+// Health reports every root's Health, with one look at the watch list.
+func (w *Watcher) Health() map[string]Health {
+	live := map[string]bool{}
+	for _, p := range w.fw.WatchList() {
+		live[p] = true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make(map[string]Health, len(w.roots))
+	for p, r := range w.roots {
+		h := Health{Added: r.added, Alive: r.added && live[r.top]}
+		for d := range r.fail {
+			h.Failed = append(h.Failed, d)
+		}
+		sort.Strings(h.Failed)
+		out[p] = h
+	}
+	return out
 }
 
 // Watching reports whether the folder root path is still watched: a
