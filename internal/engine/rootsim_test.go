@@ -21,14 +21,31 @@ import (
 //   - convergence: identical files everywhere;
 //   - no delete nobody made: every path a user wrote and did not delete
 //     exists on every machine.
+//
+// Identity modes: "real" folder identities; "reuse", every folder gets
+// the same device and inode (Linux reusing a deleted folder's inode, birth
+// times still differ); "collide", no identity tells folders apart at all.
+// In "collide" a folder replaced unseen (ops 5 and 7: no event, no
+// identity) is indistinguishable from the user deleting its files, so
+// those ops are replaced by their seen forms there (SPEC §6.5 states it).
 func TestSimulationRoots(t *testing.T) {
 	seeds := 8
 	if n, err := strconv.Atoi(os.Getenv("ENIGMA_SIM_SEEDS")); err == nil {
 		seeds = n
 	}
-	for i := 0; i < seeds; i++ {
-		seed := int64(3000 + i)
-		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) { simulateRoots(t, seed, 40) })
+	for _, mode := range []string{"real", "reuse", "collide"} {
+		for i := 0; i < seeds; i++ {
+			seed := int64(3000 + i)
+			t.Run(fmt.Sprintf("%s/seed=%d", mode, seed), func(t *testing.T) {
+				switch mode {
+				case "reuse":
+					reuseInodes(t)
+				case "collide":
+					collideAll(t)
+				}
+				simulateRoots(t, seed, 40, mode)
+			})
+		}
 	}
 }
 
@@ -37,7 +54,7 @@ type rootSim struct {
 	want map[string]bool // paths that must exist everywhere at the end
 }
 
-func simulateRoots(t *testing.T, seed int64, steps int) {
+func simulateRoots(t *testing.T, seed int64, steps int, mode string) {
 	rng := rand.New(rand.NewSource(seed))
 	buf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -80,7 +97,11 @@ func simulateRoots(t *testing.T, seed int64, steps int) {
 				delete(s.want, name)
 			}
 		case op < 8:
-			s.rootOp(m, rng.Intn(6))
+			rop := rng.Intn(8)
+			if mode == "collide" && (rop == 5 || rop == 7) {
+				rop-- // unseen swaps cannot be told apart without an identity
+			}
+			s.rootOp(m, rop)
 		case op < 11:
 			i, j := rng.Intn(3), rng.Intn(3)
 			if i != j {
@@ -110,6 +131,22 @@ func simulateRoots(t *testing.T, seed int64, steps int) {
 	}
 }
 
+// forgetOnlyCopies: before m deletes its whole folder, a path no other
+// machine has on disk goes with it (the user destroyed the only copy).
+func (s *rootSim) forgetOnlyCopies(m int) {
+	for p := range s.want {
+		elsewhere := false
+		for i, o := range s.ms {
+			if i != m && o.read(p) != "<missing>" {
+				elsewhere = true
+			}
+		}
+		if !elsewhere {
+			delete(s.want, p)
+		}
+	}
+}
+
 func (s *rootSim) rootIsReal(m int) bool {
 	fi, err := os.Lstat(s.ms[m].path("notes"))
 	return err == nil && fi.IsDir()
@@ -120,7 +157,9 @@ func (s *rootSim) rootIsReal(m int) bool {
 // stays aside); 2 make the root an empty folder; 3 move the copy back;
 // 4 the whole sandbox sequence at once (copy aside, link, unlink, empty
 // folder), so the engine never sees the link; 5 the same, and the engine
-// is not even told (a missed event: a later rescan or restart finds it).
+// is not even told (a missed event: a later rescan or restart finds it);
+// 6 rm -rf the root and mkdir it at once (the copy is gone; the engine is
+// told); 7 the same, unseen.
 func (s *rootSim) rootOp(m, op int) {
 	mc := s.ms[m]
 	root, aside := mc.path("notes"), mc.path("notes.aside")
@@ -143,7 +182,16 @@ func (s *rootSim) rootOp(m, op int) {
 			s.logf("root %s: move the copy back", mc.name)
 			os.Remove(root)
 			os.Rename(aside, root)
-		case op >= 4 && isDir && asideErr != nil:
+		case op >= 6 && isDir:
+			s.logf("root %s: rm -rf and mkdir, unseen=%v", mc.name, op == 7)
+			s.forgetOnlyCopies(m)
+			os.RemoveAll(root)
+			os.Mkdir(root, 0o755)
+			if op == 7 {
+				return
+			}
+			mc.e.onLocalPath(root) // the watcher reports the root's removal
+		case op >= 4 && op < 6 && isDir && asideErr != nil:
 			s.logf("root %s: replaced by an empty folder, unseen=%v", mc.name, op == 5)
 			os.Rename(root, aside)
 			os.Symlink(aside, root)
@@ -152,6 +200,7 @@ func (s *rootSim) rootOp(m, op int) {
 			if op == 5 {
 				return
 			}
+			mc.e.onLocalPath(root) // the watcher reports the root moved away
 		default:
 			return
 		}

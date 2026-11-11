@@ -167,6 +167,34 @@ func TestRemoveStopsEvents(t *testing.T) {
 	}
 }
 
+// A folder root deleted or moved away is reported as the root itself, and
+// is no longer watched; a sibling of it is not reported.
+func TestDirRootGoneIsReported(t *testing.T) {
+	for _, how := range []string{"deleted", "moved"} {
+		t.Run(how, func(t *testing.T) {
+			base := real(t, t.TempDir())
+			root := filepath.Join(base, "notes")
+			write(t, filepath.Join(root, "a.md"), "x")
+			w := newW(t)
+			if err := w.Add(root, false, nil); err != nil {
+				t.Fatal(err)
+			}
+			if !w.Watching(root) {
+				t.Fatal("not watching the root")
+			}
+			if how == "deleted" {
+				os.RemoveAll(root)
+			} else {
+				os.Rename(root, filepath.Join(base, "notes.old"))
+			}
+			waitFor(t, w, root)
+			if how == "deleted" && w.Watching(root) {
+				t.Fatal("still watching a deleted root")
+			}
+		})
+	}
+}
+
 func TestAddCreatesMissingRoot(t *testing.T) {
 	root := filepath.Join(real(t, t.TempDir()), "not", "yet")
 	w := newW(t)

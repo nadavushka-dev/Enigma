@@ -224,19 +224,34 @@ rescan, which compares disk against the stored current versions:
   marked "missing locally" and an alert is raised. This covers an unmounted
   disk or a moved home folder. A missing root is not created again by
   starting to watch it (only a brand-new entry's root is, D6).
-- **Replaced-folder guard:** each machine records which folder (device and
-  inode) an entry's files were synced in. When another folder is in its
-  place (moved away and re-created, swapped for a symlink and back,
-  restored from elsewhere), the files are no longer counted as on disk
-  here: a missing one is restored from the peers, never a delete, after a
-  restart too. A peer that no longer has the file on disk serves it from
+- **Replaced-folder guard:** each machine records which folder (inode,
+  birth time and device) an entry's files were synced in; the same inode
+  and birth time on another device is the same folder (device numbers
+  drift on btrfs, NFS, external volumes), and Linux's reuse of a deleted
+  folder's inode is told apart by the birth time. The files are no longer
+  counted as on disk here, so a missing one is restored from the peers,
+  never a delete, after a restart too, when:
+  - another folder is in its place (moved away and re-created, swapped
+    for a symlink and back, restored from elsewhere);
+  - the folder was ever seen gone: absent, a symlink, or deleted or moved
+    away by a file event. Whatever folder comes back is a replacement,
+    whatever its identity says.
+
+  Where a folder's identity changes while every file stays in place
+  (FUSE, some network mounts), after three such changes it is no longer
+  relied on for that entry, with a standing warning. Not covered: a
+  folder deleted and re-created unseen (no event, daemon stopped) on a
+  file system without birth times that reuses its inode; that reads as
+  deleting its files. A peer that no longer has the file on disk serves it from
   its history store. To delete files everywhere, delete the files, not the
   folder. Status lists the files being restored, and a warning stands
   until they are here.
 - **Root watch:** every entry's folder is also checked every 2 s (one
   `lstat`): file events do not reliably report the watched folder itself
-  being moved, replaced or re-created. A change is refreshed at once, and
-  the folder is watched again.
+  being moved, replaced or re-created. A change, or a folder whose watch
+  died, is refreshed at once and watched again; status never says "ok"
+  for a folder that is not watched (an error until it is). A file
+  entry's parent is watched through a symlink as before.
 
 ### 6.6 Applying a version
 - **Write:** to a temp file in the same folder, fsync, set the exec bit and

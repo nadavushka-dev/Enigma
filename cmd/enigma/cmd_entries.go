@@ -558,6 +558,8 @@ func cmdStatus(c *ctx, args []string) error {
 		switch {
 		case e.Missing:
 			state = "MISSING LOCALLY: deletes are not propagated"
+		case e.Unwatched:
+			state = "NOT WATCHED: changes here sync only at the next check"
 		case len(e.Restoring) > 0:
 			state = fmt.Sprintf("restoring %d from the other machines (not here yet)", len(e.Restoring))
 		case len(e.OverLimit) > 0:

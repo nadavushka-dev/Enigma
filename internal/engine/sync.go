@@ -283,7 +283,9 @@ func (e *Engine) track(path string, r proto.EntryRecord) {
 	// is gone while this machine has versions under it, or is a symlink,
 	// is not watched: it is missing locally, and pollRoots watches it again
 	// once it is a folder (§6.5).
-	if _, ok := fsx.DirIDOf(e.rootDir(path)); !ok {
+	// Folder entries only: a file entry's parent may be a symlink
+	// (dotfiles), and is watched through it as always.
+	if _, ok := dirIDOf(e.rootDir(path)); r.Dir && !ok {
 		if _, err := os.Lstat(e.rootDir(path)); err == nil || e.rootVanished(path) {
 			return
 		}
@@ -318,6 +320,7 @@ func (e *Engine) forget(path string) {
 		}
 	}
 	delete(e.st.Roots, path)
+	delete(e.st.Unreliable, path)
 	e.dirty = true
 }
 
@@ -433,7 +436,14 @@ func (e *Engine) onLocalPath(abs string) {
 	if !ok {
 		return
 	}
-	if entry, _, ok := e.entryFor(rel); ok {
+	if entry, r, ok := e.entryFor(rel); ok {
+		if rel == entry && r.Dir {
+			// The watcher reports a folder root only when it is deleted or
+			// moved away: a folder here later is another one (§6.5).
+			e.log.Info("entry folder deleted or moved", "entry", entry)
+			e.rootGone(entry)
+			e.rewatch(entry)
+		}
 		e.refreshUnder(entry, rel)
 		return
 	}
@@ -658,10 +668,13 @@ func (e *Engine) markMissing(entry string) {
 func (e *Engine) markMissingWhy(entry, detail, note string) {
 	if !e.missing[entry] {
 		e.log.Warn("entry root missing; not propagating deletes", "entry", entry, "why", detail)
-		e.event(EvError, entry, "", detail)
+		// Activity only: the standing "missing locally" problem comes from
+		// the status, so it clears when the folder is back.
+		e.event(EvRootMissing, entry, "", detail)
 		e.notify(entry, note)
 	}
 	e.missing[entry] = true
+	e.rootGone(entry) // whatever comes back here is a replacement
 }
 
 // rootVanished: the entry's root is gone although this machine had files

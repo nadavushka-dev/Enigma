@@ -109,6 +109,7 @@ type Engine struct {
 	restoreFrom  *peer             // set while a peer's announcement is refreshed: ask it
 	rootSeen     map[string]string // entry -> what pollRoots last saw at its folder
 	restoring    map[string]string // rel -> entry: waiting to be restored, asked again on the poll tick
+	rootFlips    map[string]int    // entry -> identity changes seen with every file in place
 	dirty        bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
@@ -179,7 +180,7 @@ func New(o Options) (*Engine, error) {
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
-		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{},
+		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, rootFlips: map[string]int{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),
@@ -384,6 +385,13 @@ type EntryStatus struct {
 	// on disk (they were behind a link, or the folder was replaced): they
 	// are being fetched from the other machines, never deleted (§6.5).
 	Restoring []string `json:"Restoring,omitempty"`
+	// Unwatched: the folder is here but file events are not reported for
+	// it; changes are picked up only by polls and rescans (SPEC §6.1).
+	Unwatched bool `json:"Unwatched,omitempty"`
+	// IdentityUnreliable: the folder's identity changes on its own here
+	// (a network or FUSE file system), so it is not used to tell a
+	// replaced folder (§6.5).
+	IdentityUnreliable bool `json:"IdentityUnreliable,omitempty"`
 }
 
 type PeerStatus struct{ ID, Name string }
@@ -415,6 +423,8 @@ func (e *Engine) Status() Status {
 					}
 				}
 				sort.Strings(es.Restoring)
+				es.Unwatched = !es.Missing && e.unwatched(path)
+				es.IdentityUnreliable = e.st.Unreliable[path]
 			}
 			for rel := range e.skipped[path] {
 				es.Skipped = append(es.Skipped, rel)

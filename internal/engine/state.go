@@ -37,6 +37,9 @@ type state struct {
 	// entry's root, a file entry's parent), so a folder put in its place is
 	// not read as the user deleting them (SPEC §6.5).
 	Roots map[string]fsx.DirID `json:"roots,omitempty"`
+	// Unreliable: entries whose folder identity changes on its own here; it
+	// is not used to tell a replaced folder for them (SPEC §6.5).
+	Unreliable map[string]bool `json:"unreliable,omitempty"`
 }
 
 type hashStamp struct {
@@ -45,7 +48,7 @@ type hashStamp struct {
 }
 
 func newState() *state {
-	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}, Roots: map[string]fsx.DirID{}}
+	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}, Roots: map[string]fsx.DirID{}, Unreliable: map[string]bool{}}
 }
 
 func loadState(p string) (*state, error) {
@@ -83,6 +86,9 @@ func loadState(p string) (*state, error) {
 	}
 	if s.Roots == nil {
 		s.Roots = map[string]fsx.DirID{}
+	}
+	if s.Unreliable == nil {
+		s.Unreliable = map[string]bool{}
 	}
 	return s, nil
 }

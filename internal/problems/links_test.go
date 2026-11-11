@@ -51,6 +51,20 @@ func TestD15_RestoringAndRootReplacedProblems(t *testing.T) {
 	}
 }
 
+// F2 and review #3: an unwatched folder is an error until it is watched
+// again; an unreliable identity is a standing warning.
+func TestD15_UnwatchedAndUnreliableProblems(t *testing.T) {
+	st := Input{Limits: lim(), Entries: []engine.EntryStatus{{Path: "notes", Dir: true, Unwatched: true, IdentityUnreliable: true}}}
+	ps := Derive(st, t0)
+	if got := keys(ps); got != "unwatched:notes identity:notes" || ps[0].Severity != Error {
+		t.Fatalf("%q %+v", got, ps)
+	}
+	st.Entries[0].Unwatched, st.Entries[0].IdentityUnreliable = false, false
+	if ps := Derive(st, t0); len(ps) != 0 {
+		t.Fatalf("%+v", ps)
+	}
+}
+
 func TestD23_LostLinkIsAWarningForAnHour(t *testing.T) {
 	ev := engine.Event{Kind: engine.EvLinkLost, Path: "s/l", Detail: "../r/a", Time: t0}
 	if ps := Derive(Input{Events: []engine.Event{ev}}, t0.Add(30*time.Minute)); len(ps) != 1 || ps[0].Severity != Warning {

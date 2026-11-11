@@ -21,6 +21,10 @@ import (
 // peer sent for a shadowed path while it was shadowed are remembered
 // (shadowIn, in memory) and fetched the same way.
 
+// dirIDOf identifies a folder (fsx.DirIDOf); tests replace it to stand in
+// for file systems that reuse inode numbers or change them.
+var dirIDOf = fsx.DirIDOf
+
 // rootDir is the folder entry's files live in: a folder entry's root, a
 // file entry's parent.
 func (e *Engine) rootDir(entry string) string {
@@ -38,7 +42,7 @@ func (e *Engine) rootDir(entry string) string {
 // seen is recorded. A symlink or an absent root is not a folder: nothing
 // changes (the missing-root guard applies).
 func (e *Engine) checkRoot(entry string) {
-	id, ok := fsx.DirIDOf(e.rootDir(entry))
+	id, ok := dirIDOf(e.rootDir(entry))
 	if !ok {
 		return
 	}
@@ -48,9 +52,49 @@ func (e *Engine) checkRoot(entry string) {
 	}
 	e.st.Roots[entry] = id
 	e.dirty = true
-	if !had {
-		return
+	if !had || fsx.SameFolder(old, id) || e.st.Unreliable[entry] {
+		return // first look, the device number drifting, or not relied on
 	}
+	// An identity that changes while every file is still in place is a
+	// file system that does not keep it (FUSE, some network mounts):
+	// after a few, it is not relied on for this entry.
+	if e.allOnDisk(entry) {
+		e.rootFlips[entry]++
+		if e.rootFlips[entry] >= rootFlipLimit {
+			e.st.Unreliable[entry] = true
+			e.log.Warn("entry folder identity keeps changing; not relying on it", "entry", entry)
+			e.event(EvRootIdentity, entry, "", "the folder's identity keeps changing here (a network or FUSE file system?); a replaced folder is no longer told apart")
+			return
+		}
+	}
+	if n := e.notOnDiskAnyMore(entry); n > 0 {
+		e.log.Warn("entry folder replaced; its files are restored from the peers, not deleted", "entry", entry, "files", n)
+		e.event(EvRootReplaced, entry, "", "the folder was replaced here; missing files are restored from the other machines, never deleted")
+	}
+}
+
+// rootFlipLimit: identity changes with every file in place before an
+// entry's identity is not relied on any more.
+const rootFlipLimit = 3
+
+// allOnDisk: every file of entry marked on disk here is on disk.
+func (e *Engine) allOnDisk(entry string) bool {
+	n := 0
+	for rel, fs := range e.st.Files {
+		if fs.Materialized && !fs.V.IsDeleted() && (rel == entry || strings.HasPrefix(rel, entry+"/")) {
+			if _, err := os.Lstat(e.abs(rel)); err != nil {
+				return false
+			}
+			n++
+		}
+	}
+	return n > 0
+}
+
+// notOnDiskAnyMore marks every file of entry as not on disk here (saved):
+// what is at its folder now is not what this machine synced, so a file
+// missing from it is restored, never a delete (§6.5). It returns how many.
+func (e *Engine) notOnDiskAnyMore(entry string) int {
 	n := 0
 	for rel, fs := range e.st.Files {
 		if fs.Materialized && !fs.V.IsDeleted() && (rel == entry || strings.HasPrefix(rel, entry+"/")) {
@@ -59,8 +103,23 @@ func (e *Engine) checkRoot(entry string) {
 		}
 	}
 	if n > 0 {
-		e.log.Warn("entry folder replaced; its files are restored from the peers, not deleted", "entry", entry, "files", n)
-		e.event(EvRootReplaced, entry, "", "the folder was replaced here; missing files are restored from the other machines, never deleted")
+		e.dirty = true
+	}
+	return n
+}
+
+// rootGone: entry's folder was seen gone (absent, a symlink, deleted or
+// moved away by a file event). Whatever folder is there later is a
+// replacement, whatever its identity says (Linux reuses the inode of a
+// deleted folder): nothing is on disk here any more, and the next folder
+// seen is recorded afresh.
+func (e *Engine) rootGone(entry string) {
+	if n := e.notOnDiskAnyMore(entry); n > 0 {
+		e.log.Info("entry folder gone; its files are restored when it is back", "entry", entry, "files", n)
+	}
+	if _, ok := e.st.Roots[entry]; ok {
+		delete(e.st.Roots, entry)
+		e.dirty = true
 	}
 }
 
@@ -68,8 +127,8 @@ func (e *Engine) checkRoot(entry string) {
 // symlink, something else, or nothing.
 func (e *Engine) rootSig(entry string) string {
 	dir := e.rootDir(entry)
-	if id, ok := fsx.DirIDOf(dir); ok {
-		return fmt.Sprintf("dir %d %d", id.Dev, id.Ino)
+	if id, ok := dirIDOf(dir); ok {
+		return fmt.Sprintf("dir %d %d %d", id.Dev, id.Ino, id.Btime)
 	}
 	fi, err := os.Lstat(dir)
 	switch {
@@ -93,20 +152,46 @@ func (e *Engine) pollRoots() {
 			continue
 		}
 		sig := e.rootSig(entry)
-		if old, had := e.rootSeen[entry]; had && old == sig {
-			continue
-		} else if !had {
+		old, had := e.rootSeen[entry]
+		if !had {
 			e.rootSeen[entry] = sig // first look; refreshUnder records it from then on
 			continue
 		}
-		old := e.rootSeen[entry]
-		e.log.Info("entry folder changed", "entry", entry, "was", old, "now", sig)
-		if e.w != nil {
-			e.w.Remove(e.abs(entry))
-			e.track(entry, r)
+		switch {
+		case old != sig:
+			e.log.Info("entry folder changed", "entry", entry, "was", old, "now", sig)
+		case e.unwatched(entry):
+			// Same identity, but its watch died with the folder (deleted and
+			// re-created between two polls): it is another folder.
+			e.log.Info("entry folder no longer watched; watching it again", "entry", entry)
+			e.rootGone(entry)
+		default:
+			continue
 		}
+		e.rewatch(entry)
 		e.refreshUnder(entry, entry)
 	}
+}
+
+// rewatch drops an entry's watch and watches it again (or not, see track).
+func (e *Engine) rewatch(entry string) {
+	if e.w == nil {
+		return
+	}
+	e.w.Remove(e.abs(entry))
+	e.track(entry, e.st.Entries[entry])
+}
+
+// unwatched: a folder entry whose folder is here but has no watch.
+func (e *Engine) unwatched(entry string) bool {
+	r := e.st.Entries[entry]
+	if e.w == nil || !r.Dir {
+		return false
+	}
+	if _, ok := dirIDOf(e.abs(entry)); !ok {
+		return false
+	}
+	return !e.w.Watching(e.abs(entry))
 }
 
 // DefaultRestoreRetry bounds how often one path is asked for again; each

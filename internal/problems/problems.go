@@ -78,6 +78,16 @@ func Derive(in Input, now time.Time) []Problem {
 	}
 	for _, e := range in.Entries {
 		ps = append(ps, linkProblems(e, now)...)
+		if e.Unwatched && !e.Missing {
+			ps = append(ps, Problem{Key: "unwatched:" + e.Path, Severity: Error, Path: e.Path,
+				Message: e.Path + ": changes here are not watched; they sync only at the next check",
+				Hint:    "it is watched again within seconds; if this stays, restart the daemon and check enigma.log"})
+		}
+		if e.IdentityUnreliable {
+			ps = append(ps, Problem{Key: "identity:" + e.Path, Severity: Warning, Path: e.Path,
+				Message: e.Path + ": the folder's identity keeps changing here, so a replaced folder is not told apart",
+				Hint:    "usual on network or FUSE file systems; deleting or replacing the whole folder here then reads as deleting its files"})
+		}
 		if len(e.Restoring) > 0 && !e.Missing {
 			ps = append(ps, Problem{Key: "restoring:" + e.Path, Severity: Warning, Path: e.Path,
 				Message: fmt.Sprintf("%s: %s not here yet, being restored from the other machines", e.Path, plural(len(e.Restoring), "file")),

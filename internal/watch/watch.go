@@ -158,11 +158,24 @@ func (w *Watcher) owner(p string) (string, *root) {
 			}
 			continue
 		}
-		if strings.HasPrefix(p, rp+string(filepath.Separator)) {
+		if p == rp || strings.HasPrefix(p, rp+string(filepath.Separator)) {
 			return rp, r
 		}
 	}
 	return "", nil
+}
+
+// Watching reports whether the folder root path is still watched: a
+// watch dies with its folder (deleted), and then nothing under the path
+// is reported until it is added again.
+func (w *Watcher) Watching(path string) bool {
+	path = filepath.Clean(path)
+	for _, p := range w.fw.WatchList() {
+		if p == path {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *Watcher) handle(ev fsnotify.Event) bool {
@@ -171,9 +184,14 @@ func (w *Watcher) handle(ev fsnotify.Event) bool {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_, r := w.owner(ev.Name)
+	rp, r := w.owner(ev.Name)
 	if r == nil {
 		return false
+	}
+	if !r.file && ev.Name == rp {
+		// The folder root itself went away (deleted or moved): reported,
+		// so the engine sees the folder at the path is another one.
+		return ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename)
 	}
 	if r.skip != nil && !r.file && r.skip(ev.Name) {
 		return false
