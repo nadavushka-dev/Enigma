@@ -94,12 +94,12 @@ func TestD15_PartlyWatchedFolderIsAnError(t *testing.T) {
 	}
 }
 
-func TestD23_LostLinkIsAWarningForAnHour(t *testing.T) {
+// Hand test 2, item 4 (S1 rules): a lost link is handled when it is in
+// the trash; nothing is wrong now, so it is activity only, not a standing
+// problem that lingers.
+func TestD23_LostLinkIsActivityOnly(t *testing.T) {
 	ev := engine.Event{Kind: engine.EvLinkLost, Path: "s/l", Detail: "../r/a", Time: t0}
-	if ps := Derive(Input{Events: []engine.Event{ev}}, t0.Add(30*time.Minute)); len(ps) != 1 || ps[0].Severity != Warning {
+	if ps := Derive(Input{Events: []engine.Event{ev}}, t0.Add(time.Minute)); len(ps) != 0 {
 		t.Fatalf("got %+v", ps)
-	}
-	if ps := Derive(Input{Events: []engine.Event{ev}}, t0.Add(2*time.Hour)); len(ps) != 0 {
-		t.Fatalf("still there after an hour: %+v", ps)
 	}
 }

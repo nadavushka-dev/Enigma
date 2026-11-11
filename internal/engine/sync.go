@@ -587,6 +587,12 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 	if e.ignored(entry, rel) {
 		return
 	}
+	if rel == entry && e.st.Entries[entry].Dir {
+		// A folder entry's root is never a file of it: a symlink there is
+		// the missing-root guard's business (refreshUnder), not skipped.
+		delete(e.skipped[entry], rel)
+		return
+	}
 	if e.shadowed(entry, rel) { // not a delete either: the link hides it
 		delete(e.overLimit[entry], rel)
 		fs := e.st.Files[rel]

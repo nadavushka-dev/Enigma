@@ -116,6 +116,13 @@ func (e *Engine) notOnDiskAnyMore(entry string) int {
 // deleted folder): nothing is on disk here any more, and the next folder
 // seen is recorded afresh.
 func (e *Engine) rootGone(entry string) {
+	// A restore asked for before is moot (its answer finds no folder to
+	// write in): when a folder is back, its files are asked for at once.
+	for rel := range e.restoreAsked {
+		if rel == entry || strings.HasPrefix(rel, entry+"/") {
+			delete(e.restoreAsked, rel)
+		}
+	}
 	if n := e.notOnDiskAnyMore(entry); n > 0 {
 		e.log.Info("entry folder gone; its files are restored when it is back", "entry", entry, "files", n)
 	}
@@ -352,7 +359,7 @@ func (e *Engine) requestRestore(entry, rel string) {
 	e.restoreTries[rel]++
 	p.send(&proto.Msg{Type: proto.Fetch, Path: rel})
 	e.restoreAsked[rel] = time.Now()
-	e.log.Info("restoring a path that is no longer behind a link", "path", rel, "from", p.name)
+	e.log.Info("restoring a file not on disk here", "path", rel, "from", p.name)
 }
 
 // restoreShadowIn fetches the paths under rel that peers changed while
