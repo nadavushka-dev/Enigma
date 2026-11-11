@@ -58,10 +58,11 @@ func (e *Engine) checkRoot(entry string) {
 	}
 	// An identity that changes while every file is still in place is a
 	// file system that does not keep it (FUSE, some network mounts):
-	// after a few, it is not relied on for this entry.
+	// after a few, across restarts, it is not relied on for this entry.
 	if e.allOnDisk(entry) {
-		e.rootFlips[entry]++
-		if e.rootFlips[entry] >= rootFlipLimit {
+		e.st.Flips[entry]++
+		if e.st.Flips[entry] >= rootFlipLimit {
+			delete(e.st.Flips, entry)
 			e.st.Unreliable[entry] = true
 			e.log.Warn("entry folder identity keeps changing; not relying on it", "entry", entry)
 			e.event(EvRootIdentity, entry, "", "the folder's identity keeps changing here (a network or FUSE file system?); a replaced folder is no longer told apart")

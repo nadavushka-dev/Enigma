@@ -227,7 +227,8 @@ rescan, which compares disk against the stored current versions:
 - **Replaced-folder guard:** each machine records which folder (inode,
   birth time and device) an entry's files were synced in; the same inode
   and birth time on another device is the same folder (device numbers
-  drift on btrfs, NFS, external volumes), and Linux's reuse of a deleted
+  drift on btrfs, NFS, external volumes; without a birth time, the same
+  inode on another device is too), and Linux's reuse of a deleted
   folder's inode is told apart by the birth time. The files are no longer
   counted as on disk here, so a missing one is restored from the peers,
   never a delete, after a restart too, when:
@@ -238,8 +239,8 @@ rescan, which compares disk against the stored current versions:
     whatever its identity says.
 
   Where a folder's identity changes while every file stays in place
-  (FUSE, some network mounts), after three such changes it is no longer
-  relied on for that entry, with a standing
+  (FUSE, some network mounts), after three such changes (counted across
+  restarts) it is no longer relied on for that entry, with a standing
   warning; the root watch then only notices it becoming a symlink or
   going away. Not covered: a
   folder deleted and re-created unseen (no event, daemon stopped) on a

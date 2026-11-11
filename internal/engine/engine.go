@@ -109,7 +109,6 @@ type Engine struct {
 	restoreFrom  *peer                  // set while a peer's announcement is refreshed: ask it
 	rootSeen     map[string]string      // entry -> what pollRoots last saw at its folder
 	restoring    map[string]string      // rel -> entry: waiting to be restored, asked again on the poll tick
-	rootFlips    map[string]int         // entry -> identity changes seen with every file in place
 	watchRetry   map[string]*watchRetry // entry -> when its failed watch is tried again
 	dirty        bool
 
@@ -181,7 +180,7 @@ func New(o Options) (*Engine, error) {
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
-		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, rootFlips: map[string]int{}, watchRetry: map[string]*watchRetry{},
+		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, watchRetry: map[string]*watchRetry{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),

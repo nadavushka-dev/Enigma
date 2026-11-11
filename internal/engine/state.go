@@ -40,6 +40,10 @@ type state struct {
 	// Unreliable: entries whose folder identity changes on its own here; it
 	// is not used to tell a replaced folder for them (SPEC §6.5).
 	Unreliable map[string]bool `json:"unreliable,omitempty"`
+	// Flips: per entry, how often its folder identity changed with every
+	// file in place; kept across restarts, so a change once per boot (a
+	// remount) reaches the limit too.
+	Flips map[string]int `json:"flips,omitempty"`
 }
 
 type hashStamp struct {
@@ -48,7 +52,7 @@ type hashStamp struct {
 }
 
 func newState() *state {
-	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}, Roots: map[string]fsx.DirID{}, Unreliable: map[string]bool{}}
+	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}, Roots: map[string]fsx.DirID{}, Unreliable: map[string]bool{}, Flips: map[string]int{}}
 }
 
 func loadState(p string) (*state, error) {
@@ -89,6 +93,9 @@ func loadState(p string) (*state, error) {
 	}
 	if s.Unreliable == nil {
 		s.Unreliable = map[string]bool{}
+	}
+	if s.Flips == nil {
+		s.Flips = map[string]int{}
 	}
 	return s, nil
 }

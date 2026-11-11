@@ -329,6 +329,7 @@ func (e *Engine) forget(path string) {
 	}
 	delete(e.st.Roots, path)
 	delete(e.st.Unreliable, path)
+	delete(e.st.Flips, path)
 	e.dirty = true
 }
 
