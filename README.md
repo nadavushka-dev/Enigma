@@ -168,8 +168,12 @@ another agent at the same files. It ships in the release tarball.
   that contains them (a loop for an agent harness) are skipped and listed
   in `enigma status`.
 - **A folder replaced by a symlink** (links on or off): what is behind
-  the link is never read or written, and nothing is deleted on the other
-  machines. Remove the link and the files come back from them.
+  the link is never read or written, and, if the link is already in place
+  when Enigma looks, nothing is deleted on the other machines. Remove the
+  link and the files come back from them. Stop the daemon (or `enigma
+  remove` the entry) before moving a synced folder and linking it back. A
+  move seen on its own is a delete on the other machines (their trash
+  keeps it 30 days).
 - **Synced folders inside a git repo.** Run git on one machine only;
   Enigma carries the result to the others. Sync the skill/work folders,
   not `.git`. A conflict copy from a simultaneous edit shows up in

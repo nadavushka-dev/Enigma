@@ -265,7 +265,11 @@ rescan, which compares disk against the stored current versions:
   path makes a delete: a local delete is only ever a materialized file
   found missing under a present root. Moving a folder away and only later
   putting a link in its place is still a delete of what was moved (the
-  trash keeps it), as without links.
+  trash keeps it), as without links: restore applies only when the link
+  is already in place when Enigma looks. Stop the daemon (or `enigma
+  remove` the entry) before moving a synced folder and linking it back. A
+  move seen on its own is a delete on the other machines (their trash
+  keeps it 30 days).
 - **Known limits:** the shadowed check and the write are separate steps; a
   parent folder swapped for a symlink in that instant could still be
   written through (closing it needs per-component no-follow opens).
