@@ -246,10 +246,31 @@ rescan, which compares disk against the stored current versions:
   reported as an error on that path. A received link never replaces a
   folder: it is reported as blocked (§13.5).
 - **Never through a link:** a path under a symlinked folder of a folder
-  entry (its root included) leads somewhere else, so it is never read,
-  written, copied or trashed, and is not a delete: it is listed as
-  skipped. A folder entry whose root became a symlink is missing locally
-  (§6.5).
+  entry (its root included) leads somewhere else ("shadowed"), so it is
+  never read, written, copied or trashed, and is never a delete: it is
+  listed as skipped. A folder entry whose root became a symlink is missing
+  locally (§6.5) with its own notice, until it is a folder again.
+- **Restore, never delete:** a tracked path found shadowed is no longer
+  this machine's copy: its version is kept but marked as not on disk here
+  (`materialized` off, persisted). When the link goes away, the path's
+  absence is therefore never a delete, after a restart too: the version is
+  fetched from the peers and written back into the now-real folder, with
+  the edits and new files peers made meanwhile (those are remembered in
+  memory; after a restart the catch-up brings them). A preexisting copy
+  replaced this way is backed up from the history store (D13). No other
+  path makes a delete: a local delete is only ever a materialized file
+  found missing under a present root. Moving a folder away and only later
+  putting a link in its place is still a delete of what was moved (the
+  trash keeps it), as without links.
+- **Known limits:** the shadowed check and the write are separate steps; a
+  parent folder swapped for a symlink in that instant could still be
+  written through (closing it needs per-component no-follow opens).
+  Replacing a link checks its old target and then renames; a retarget by
+  the user in that instant is overwritten without going to the trash. A
+  relative link target is checked by path arithmetic, but the kernel
+  resolves it from the link's real folder: under a symlinked folder above
+  the entry, `../` can lead elsewhere for whatever follows the link
+  (Enigma never does).
 
 ## 7. Conflicts
 
@@ -379,13 +400,21 @@ that folder synced too.
   target is a path: a link may not tell a member a path of a group it is
   not in (D19). Eligibility is re-checked when entries change; a link that
   stops being eligible stays where it is, is reported, and is not synced.
-- **Pending.** A received link whose target does not exist here yet is not
-  written and is not a delete: it waits, is re-checked after every change,
-  and becomes a warning after a minute. It is created once its target
+- **Not dangling at the source.** A new link or retarget whose target does
+  not exist on the machine that has it is not sent (skipped and reported:
+  "not here"), so no machine waits for a target that may never come; it is
+  sent once the target exists. A link to its own entry root or any folder
+  containing it (a loop for whatever follows it), or to itself, is skipped
+  and reported.
+- **Pending.** A received link whose target does not exist here yet (it
+  can arrive before its target) is not written and is not a delete: it
+  waits, is re-checked after every change, and becomes a warning after a
+  minute. It is created once its target
   arrives. Pending links are held in memory; after a restart the catch-up
   brings them back.
 - **Dangling.** A synced link whose target later disappears is left alone
   (Enigma never deletes what the user did not) and reported as dangling.
+- **Polling** lists only what the entry syncs (its ignores apply).
 - **Link vs folder.** A link never replaces a folder: the receiver reports
   it blocked (an error); under the link on the other machine the folder's
   files are never written through it (§6.6). The user keeps one.

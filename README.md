@@ -164,8 +164,12 @@ another agent at the same files. It ships in the release tarball.
   that folder added as well. Targets under `~` are rewritten for each
   machine's home; a link waits until its target has arrived, never
   replaces a folder, and a link that loses a conflict goes to the trash.
-  Agent harnesses follow links, so do not point one at a folder that
-  contains it.
+  Links to something not synced, dangling links, and links to the folder
+  that contains them (a loop for an agent harness) are skipped and listed
+  in `enigma status`.
+- **A folder replaced by a symlink** (links on or off): what is behind
+  the link is never read or written, and nothing is deleted on the other
+  machines. Remove the link and the files come back from them.
 - **Synced folders inside a git repo.** Run git on one machine only;
   Enigma carries the result to the others. Sync the skill/work folders,
   not `.git`. A conflict copy from a simultaneous edit shows up in
