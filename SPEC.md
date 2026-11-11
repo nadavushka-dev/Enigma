@@ -257,9 +257,12 @@ rescan, which compares disk against the stored current versions:
     whatever its identity says.
 
   Where a folder's identity changes while every file stays in place
-  (FUSE, some network mounts), each change found by a check rather than
-  seen live is a strike; three strikes within 24 h (timestamps saved, so
-  a change once per boot counts; older strikes are forgotten) and it is
+  (FUSE, some network mounts), each change is a strike: any identity
+  change found, by whichever check notices it, while every tracked file
+  is still on disk. The device number drifting with the inode and birth
+  time unchanged (or no birth time) is the same folder, not a change and
+  not a strike. Three strikes within 24 h (timestamps saved, so strikes
+  count across restarts; older strikes are forgotten) and it is
   no longer relied on for that entry, with a standing warning, until the
   entry is removed or 7 days pass with no further strike; the root watch then only notices it becoming a symlink or
   going away. Not covered: a
@@ -312,7 +315,10 @@ rescan, which compares disk against the stored current versions:
   is never touched.
 - **Failed writes** (permission denied, disk full) are held and retried
   with a backoff until they work or another version supersedes them; the
-  entry's status says `WRITE FAILING` meanwhile (§13.5). Before a link is
+  entry's status says `WRITE FAILING` meanwhile (§13.5). Only the version
+  is held, not its content: each retry fetches the content again from a
+  machine that is linked and shares the entry (none linked: held until
+  one is). Before a link is
   written where a folder was, what was tracked under it and is gone is
   recorded as deleted first, so the link never hides a delete.
 - **Never clobbered:** something Enigma does not sync (a symlink, a folder,
@@ -365,10 +371,10 @@ rescan, which compares disk against the stored current versions:
   - Pending and blocked links (§8.1) and the paths peers changed while
     shadowed are held in memory; after a restart the catch-up brings them
     back.
-  - A folder replaced three times over an entry's life with every file
-    in place (say, restored from a backup each time) counts like an
-    identity that changes on its own: the entry's identity is then not
-    relied on (§6.5).
+  - A folder replaced three times within 24 h with every file in place
+    (say, restored from a backup) counts like an identity that changes
+    on its own: the entry's identity is then not relied on (§6.5) until
+    7 days pass with no further strike.
   - Files a peer added while this machine's entry root was missing come
     with the next link-up summary, not at once (there is no pull of
     unknown paths).

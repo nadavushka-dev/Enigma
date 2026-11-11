@@ -859,7 +859,7 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	e.restoreFrom = nil
 	d := DecidePolicy(rel, e.current(rel), in, false, e.firstAddPolicy(entry, rel))
 	if err := e.execute(p, entry, rel, in, nil, nil, d); err != nil && !errors.Is(err, fsx.ErrChanged) {
-		e.writeFailed(p, entry, rel, in, nil, nil, err)
+		e.writeFailed(p, entry, rel, in, nil, err)
 	}
 }
 
@@ -987,7 +987,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 		err := e.execute(p, entry, rel, in, anc, content, d)
 		if !errors.Is(err, fsx.ErrChanged) {
 			if err != nil {
-				e.writeFailed(p, entry, rel, in, anc, content, err)
+				e.writeFailed(p, entry, rel, in, anc, err)
 			}
 			return
 		}
@@ -1064,6 +1064,9 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 	case Ignore:
 		return nil
 	case Fetch:
+		if f := e.failing[rel]; f != nil {
+			f.asked = true // a held write's retry: tried when the content comes
+		}
 		p.send(&proto.Msg{Type: proto.Fetch, Path: rel})
 		return nil
 	case Record:
