@@ -74,3 +74,54 @@ func TestD15_IdentityFlipsAreCountedAcrossRestarts(t *testing.T) {
 		t.Fatalf("status %+v after %d boots with a new identity", st, rootFlipLimit)
 	}
 }
+
+// Review 5, nit: a delete recorded for a path behind a symlinked folder
+// here is still announced, so a machine that hears only through this one
+// learns of it at once.
+func TestD15_ShadowedDeleteIsRelayed(t *testing.T) {
+	a, b, c := newMachine(t, "a"), newMachine(t, "b"), newMachine(t, "c")
+	a.write("d/x.md", "x")
+	a.write("d/sub/f.md", "f")
+	a.add("d")
+	link(t, a, b)
+	link(t, b, c)
+	eventually(t, "c has it", hasFile(c, "d/sub/f.md", "f"))
+	settle(t, a, b, c)
+	moveBehindLink(t, b, "d/sub", "repo/sub")
+	settle(t, a, b, c)
+	os.Remove(a.path("d/sub/f.md"))
+	a.e.Rescan()
+	eventually(t, "the delete reaches c through b", hasFile(c, "d/sub/f.md", "<missing>"))
+	if b.read("repo/sub/f.md") != "f" {
+		t.Fatal("the delete went through b's link")
+	}
+}
+
+// Review 5, nit (S5): with links off, a tracked link replaced by a regular
+// file is an edit like any other: it reaches the peers whose current
+// version is the link, and their link goes to the trash.
+func TestD23_LinksOffLinkReplacedByAFileSyncs(t *testing.T) {
+	a, b := skillsFleet(t)
+	eventually(t, "link on b", hasLink(b, ".agents/skills/foo", b.path("repo/skills/foo")))
+	if err := a.e.SetLinks(a.path(".agents/skills"), false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "b has links off", func() bool {
+		for _, es := range b.e.Status().Entries {
+			if es.Path == ".agents/skills" {
+				return !es.LinksOn
+			}
+		}
+		return false
+	})
+	os.Remove(a.path(".agents/skills/foo"))
+	a.write(".agents/skills/foo", "now a file")
+	a.e.Rescan()
+	eventually(t, "the file reaches b", hasFile(b, ".agents/skills/foo", "now a file"))
+	if !linkTrashed(b, b.path("repo/skills/foo")) {
+		t.Fatal("b's link is not in its trash")
+	}
+	if b.read("repo/skills/foo/SKILL.md") != "foo" {
+		t.Fatal("the link's target changed")
+	}
+}

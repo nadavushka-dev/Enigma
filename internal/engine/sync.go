@@ -803,8 +803,8 @@ func (e *Engine) accept(rel string) (string, bool) {
 
 func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	entry, ok := e.accept(rel)
-	if !ok || (in.Link || e.isLink(rel)) && !e.linksOn(entry) {
-		return // links off: neither created nor deleted here (D23)
+	if !ok || e.linkChangeOff(entry, rel, in) {
+		return
 	}
 	e.restoreFrom = p // a restore this refresh asks for goes to p, which has a version of rel
 	e.refreshFile(entry, rel, nil)
@@ -815,6 +815,13 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 		e.event(EvError, rel, p.name, err.Error())
 		e.notify(rel, "could not write ~/"+rel+": "+err.Error())
 	}
+}
+
+// linkChangeOff: in is a link, or the delete of a link, in an entry with
+// links off: neither created nor deleted here (D23). A file that replaced
+// a link is an edit like any other.
+func (e *Engine) linkChangeOff(entry, rel string, in version.Version) bool {
+	return (in.Link || in.IsDeleted() && e.isLink(rel)) && !e.linksOn(entry)
 }
 
 func (e *Engine) onFetch(p *peer, rel string) {
@@ -873,8 +880,8 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 	if !ok {
 		return
 	}
-	if e.isLink(rel) && !e.linksOn(entry) {
-		return // links off: a link here is neither replaced nor deleted (D23)
+	if e.linkChangeOff(entry, rel, in) {
+		return
 	}
 	linkTarget := "" // from ~, for a link version
 	if in.Link {
@@ -1001,9 +1008,11 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		e.log.Warn("not writing through a symlinked folder", "path", rel)
 		if d.Action == Delete {
 			// Nothing here is touched; the delete is only recorded, so the
-			// path is not restored or listed as skipped later.
+			// path is not restored or listed as skipped later, and passed
+			// on like any new version (§6.3).
 			e.setCurrent(rel, d.Result, false, anc...)
 			delete(e.skipped[entry], rel)
+			announce(d.Result)
 			return nil
 		}
 		e.markSkipped(entry, rel)
