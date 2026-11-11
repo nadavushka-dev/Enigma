@@ -108,8 +108,8 @@ Common causes:
   `IdentityUnreliable`). Raise with `enigma limits --files N` after asking.
 - **Skipped files:** `entries[].Skipped` — symlinks or over the size limit.
 - **While away** (`entries[].WhileAway`, problem `while-away:<entry>`): what
-  the daemon found at startup (or when a folder came back) that it did not
-  see live. If `deleted` > 0 and the user did not mean it, the other
+  the daemon found at startup (or when a folder came back, or the entry came
+  back into this machine's groups) that it did not see live. If `deleted` > 0 and the user did not mean it, the other
   machines' `enigma trash list` / `enigma trash restore <id>` get the files
   back (ask first). It clears by itself after 24 h.
 - **Links** (folders with `LinksOn`): `entries[].Links[]` has each link's

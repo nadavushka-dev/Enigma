@@ -190,11 +190,18 @@ func (e *Engine) applyEntry(r proto.EntryRecord, from *peer) {
 		e.track(r.Path, r)
 		e.rescanEntry(r.Path)
 	case nowLive: // entering scope (new here, or thawed)
-		e.track(r.Path, r)
 		if wasActive {
+			// Back in scope (moved into a group this machine is in): what
+			// the rescan finds was not seen live (§13.5).
+			started := !e.starting && e.beginAway(r.Path, AwayNotSynced)
+			e.track(r.Path, r)
 			e.rescanEntry(r.Path) // edits made while frozen become versions (§7)
+			if started {
+				e.endAway(r.Path)
+			}
 			return
 		}
+		e.track(r.Path, r)
 		origin := version.Preexisting
 		if from == nil && r.By == e.o.MachineID {
 			origin = version.Seed
@@ -340,6 +347,7 @@ func (e *Engine) forget(path string) {
 	delete(e.st.Unreliable, path)
 	delete(e.st.Strikes, path)
 	delete(e.st.LastStrike, path)
+	delete(e.st.Away, path)
 	e.dirty = true
 }
 
@@ -807,6 +815,9 @@ func (e *Engine) setCurrent(rel string, v version.Version, materialized bool, le
 		e.dropHeld(rel)
 	}
 	delete(e.failing, rel) // written, or superseded
+	if materialized || v.IsDeleted() {
+		e.awayNotWaiting(rel) // restored (counted before), here anyway, or deleted
+	}
 }
 
 // keep stores content in the history store, as a future merge base.
@@ -1187,7 +1198,8 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			}
 			return err
 		}
-		e.checkRoot(entry) // records the folder this write made, or notices it is another
+		e.awayRestored(entry, rel) // counted only once it is written back
+		e.checkRoot(entry)         // records the folder this write made, or notices it is another
 		e.setCurrent(rel, d.Result, true, anc...)
 		announce(d.Result)
 		if d.Content != nil {

@@ -110,10 +110,9 @@ type Engine struct {
 	restoreAsked map[string]time.Time
 	restoreTries map[string]int // per path: which peer a restore asks next
 	restoreFrom  *peer          // set while a peer's announcement is refreshed: ask it
-	// Catch-up summaries (away.go): awayScan while a scan runs, away once
-	// found; starting while New's startup scan runs.
+	// Catch-up summaries (away.go): awayScan while a scan runs, st.Away
+	// once found; starting while New's startup scan runs.
 	awayScan   map[string]*AwaySummary
-	away       map[string]*AwaySummary
 	failing    map[string]*failedWrite // rel -> a received version that could not be written (retry.go)
 	starting   bool
 	now        func() time.Time
@@ -194,7 +193,7 @@ func New(o Options) (*Engine, error) {
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
 		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, watchRetry: map[string]*watchRetry{},
-		awayScan: map[string]*AwaySummary{}, away: map[string]*AwaySummary{}, failing: map[string]*failedWrite{}, now: o.Now,
+		awayScan: map[string]*AwaySummary{}, failing: map[string]*failedWrite{}, now: o.Now,
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),

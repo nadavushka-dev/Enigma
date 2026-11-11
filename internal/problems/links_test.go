@@ -73,16 +73,21 @@ func TestD20_ConflictProblemClearsWithItsCopyAndNoDuplicates(t *testing.T) {
 // Owner decision: what a catch-up scan found that was not seen live is a
 // warning per entry; deletes that went out point at the peers' trash.
 func TestWhileAwayIsAWarningWithATrashHint(t *testing.T) {
-	s := &engine.AwaySummary{Kind: engine.AwayNotRunning, At: t0, Deleted: 3, Replaced: true, Restoring: 12, Strike: 1}
+	s := &engine.AwaySummary{Kind: engine.AwayNotRunning, At: t0, Deleted: 3, Replaced: true, Restored: 12, Strike: 1}
 	ps := Derive(Input{Entries: []engine.EntryStatus{{Path: "notes", Dir: true, WhileAway: s}}}, t0)
 	if len(ps) != 1 || ps[0].Key != "while-away:notes" || ps[0].Severity != Warning {
 		t.Fatalf("%+v", ps)
 	}
 	for _, want := range []string{"while Enigma was not running", "3 files you deleted here were deleted on the other machines",
-		"~/notes was replaced", "12 files not here are restored", "strike 1/3"} {
+		"~/notes was replaced", "12 files not here were restored", "strike 1/3"} {
 		if !strings.Contains(ps[0].Message, want) {
 			t.Errorf("message %q lacks %q", ps[0].Message, want)
 		}
+	}
+	// Hand test 4, W3: like every problem, the message starts with the
+	// path; behind the warning mark, "~ ~/notes:" read as two marks.
+	if !strings.HasPrefix(ps[0].Message, "notes: while Enigma was not running: ") {
+		t.Errorf("message %q does not start with the entry's path", ps[0].Message)
 	}
 	if !strings.Contains(ps[0].Hint, "enigma trash list") || !strings.Contains(ps[0].Hint, "enigma trash restore") {
 		t.Fatalf("hint %q", ps[0].Hint)

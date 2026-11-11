@@ -96,8 +96,9 @@ Use `--json` for reads. The commands below are the ones with JSON output;
   `WriteFailing` (received versions that cannot be written here: permissions
   or a full disk; retried until they are),
   `WhileAway` (what the last catch-up scan found that was not seen live:
-  `kind`, `at`, `deleted`, `changed`, `added`, `replaced`, `restoring`,
-  `strike`; shown for 24 h).
+  `kind`, `at`, `deleted`, `changed`, `added`, `replaced`, `restored`
+  (files written back from the other machines), `restoring` (still asked
+  for), `strike`; shown for 24 h after `at`, across restarts).
 - `problems` is the standing set, errors first. Quote the `message` and
   `hint`.
 - `conflicts` is a list of conflict-copy paths on this machine.

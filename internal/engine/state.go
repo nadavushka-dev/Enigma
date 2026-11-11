@@ -47,6 +47,10 @@ type state struct {
 	// clears 7 days after it).
 	Strikes    map[string][]int64 `json:"strikes,omitempty"`
 	LastStrike map[string]int64   `json:"last_strike,omitempty"`
+	// Away: per entry, what its last catch-up scan found that was not
+	// seen live (away.go, SPEC §13.5); kept so a restart does not clear
+	// it before its 24 h.
+	Away map[string]*AwaySummary `json:"away,omitempty"`
 }
 
 type hashStamp struct {
@@ -55,7 +59,7 @@ type hashStamp struct {
 }
 
 func newState() *state {
-	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}, Roots: map[string]fsx.DirID{}, Unreliable: map[string]bool{}, Strikes: map[string][]int64{}, LastStrike: map[string]int64{}}
+	return &state{Entries: map[string]proto.EntryRecord{}, Machines: map[string]proto.MachineRecord{}, Groups: map[string]proto.GroupRecord{}, Files: map[string]*fileState{}, Stamps: map[string]*hashStamp{}, Roots: map[string]fsx.DirID{}, Unreliable: map[string]bool{}, Strikes: map[string][]int64{}, LastStrike: map[string]int64{}, Away: map[string]*AwaySummary{}}
 }
 
 func loadState(p string) (*state, error) {
@@ -102,6 +106,9 @@ func loadState(p string) (*state, error) {
 	}
 	if s.LastStrike == nil {
 		s.LastStrike = map[string]int64{}
+	}
+	if s.Away == nil {
+		s.Away = map[string]*AwaySummary{}
 	}
 	return s, nil
 }

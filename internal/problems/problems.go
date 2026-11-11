@@ -114,7 +114,7 @@ func Derive(in Input, now time.Time) []Problem {
 			if s.Deleted > 0 {
 				hint = "if those deletes were not meant, the other machines keep the files in their trash for 30 days: enigma trash list there, then enigma trash restore <id>"
 			}
-			ps = append(ps, Problem{Key: "while-away:" + e.Path, Severity: Warning, Path: e.Path, Message: s.Text(e.Path), Hint: hint})
+			ps = append(ps, Problem{Key: "while-away:" + e.Path, Severity: Warning, Path: e.Path, Message: e.Path + ": " + s.Detail(e.Path), Hint: hint})
 		}
 		if len(e.Restoring) > 0 && !e.Missing {
 			ps = append(ps, Problem{Key: "restoring:" + e.Path, Severity: Warning, Path: e.Path,
