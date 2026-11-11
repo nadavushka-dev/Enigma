@@ -318,7 +318,9 @@ rescan, which compares disk against the stored current versions:
   entry's status says `WRITE FAILING` meanwhile (§13.5). Only the version
   is held, not its content: each retry fetches the content again from a
   machine that is linked and shares the entry (none linked: held until
-  one is). Before a link is
+  one is). A failure is reported (activity event, notification) once; a
+  retry that fails the same way (the same system error) is not news, one
+  that fails another way (permission denied, then disk full) is. Before a link is
   written where a folder was, what was tracked under it and is gone is
   recorded as deleted first, so the link never hides a delete.
 - **Never clobbered:** something Enigma does not sync (a symlink, a folder,

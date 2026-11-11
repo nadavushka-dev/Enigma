@@ -1,10 +1,15 @@
 package engine
 
 import (
+	"errors"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/nadavushka-dev/enigma/internal/fsx"
 	"github.com/nadavushka-dev/enigma/internal/version"
 )
 
@@ -29,6 +34,7 @@ type failedWrite struct {
 	in    version.Version
 	anc   []version.Node
 	err   string
+	kind  string // failureKind of err: a repeat of the same kind is not news
 	next  time.Time
 	wait  time.Duration
 	asked bool // the retry asked a peer for the content (execute, Fetch)
@@ -42,15 +48,31 @@ func (e *Engine) writeFailed(p *peer, entry, rel string, in version.Version, anc
 	if old != nil {
 		wait = min(old.wait*2, writeRetryMax)
 	}
-	e.failing[rel] = &failedWrite{p: p, entry: entry, in: in, anc: anc, err: err.Error(),
+	kind := failureKind(err)
+	e.failing[rel] = &failedWrite{p: p, entry: entry, in: in, anc: anc, err: err.Error(), kind: kind,
 		next: time.Now().Add(wait), wait: wait}
-	if old == nil || old.err != err.Error() {
+	if old == nil || old.kind != kind {
 		e.log.Error("apply", "path", rel, "err", err)
 		e.event(EvWriteFailed, rel, p.name, err.Error())
 		e.notify(rel, "could not write ~/"+rel+": "+err.Error())
 	} else {
 		e.log.Debug("apply still failing", "path", rel, "err", err, "next", wait)
 	}
+}
+
+// tempName matches the random part of a write's temp file name.
+var tempName = regexp.MustCompile(regexp.QuoteMeta(fsx.TempPrefix) + `[0-9]+`)
+
+// failureKind is what tells two write failures apart: the system error
+// (permission denied, disk full) when there is one, else the message with
+// the temp file's random name left out. Each attempt writes through its
+// own temp file, so the full message differs every time.
+func failureKind(err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return "errno:" + strconv.Itoa(int(errno))
+	}
+	return tempName.ReplaceAllString(err.Error(), fsx.TempPrefix+"*")
 }
 
 // retryFailedWrites tries the held writes that are due, on the poll tick.

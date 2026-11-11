@@ -5,9 +5,93 @@ import (
 	"reflect"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// writeFailedEvents counts m's write-failed events for rel.
+func writeFailedEvents(m *machine, rel string) int {
+	n := 0
+	for _, ev := range m.e.Events(0) {
+		if ev.Kind == EvWriteFailed && ev.Path == rel {
+			n++
+		}
+	}
+	return n
+}
+
+// A retry that fails the same way again is the same failure: one event,
+// one notification, though each attempt's error names its own temp file.
+func TestRepeatedWriteFailureIsReportedOnce(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	var bn notes
+	a, b := newMachine(t, "a"), newMachine(t, "b", bn.opt, func(o *Options) { o.LinkPoll = 100 * time.Millisecond })
+	a.write("n/perm/p.md", "v1")
+	a.add("n")
+	link(t, a, b)
+	eventually(t, "synced", hasFile(b, "n/perm/p.md", "v1"))
+	if err := os.Chmod(b.path("n/perm"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(b.path("n/perm"), 0o755) })
+	a.write("n/perm/p.md", "v2")
+	eventually(t, "b holds the failing write", func() bool { _, ok := heldWrite(t, b, "n/perm/p.md"); return ok })
+	// Wait for a retry that failed again: the backoff has doubled.
+	eventually(t, "a retry failed again", func() bool {
+		var wait time.Duration
+		b.e.do(func() {
+			if f := b.e.failing["n/perm/p.md"]; f != nil {
+				wait = f.wait
+			}
+		})
+		return wait >= 2*writeRetryFirst
+	})
+	if n := writeFailedEvents(b, "n/perm/p.md"); n != 1 {
+		t.Errorf("%d write-failed events, want 1", n)
+	}
+	bn.mu.Lock()
+	got := len(bn.got)
+	bn.mu.Unlock()
+	if got != 1 {
+		t.Errorf("%d notifications, want 1: %q", got, bn.got)
+	}
+}
+
+// A failure of another kind (permission denied, then disk full) is news:
+// reported again. The same kind with another temp file is not.
+func TestWriteFailureOfAnotherKindIsReportedAgain(t *testing.T) {
+	var bn notes
+	a, b := newMachine(t, "a"), newMachine(t, "b", bn.opt)
+	a.write("n/p.md", "v1")
+	a.add("n")
+	link(t, a, b)
+	eventually(t, "synced", hasFile(b, "n/p.md", "v1"))
+	fail := func(tmp string, errno syscall.Errno) {
+		b.e.do(func() {
+			var p *peer
+			for _, q := range b.e.peers {
+				p = q
+			}
+			b.e.writeFailed(p, "n", "n/p.md", b.e.st.Files["n/p.md"].V, nil,
+				&os.PathError{Op: "open", Path: b.path("n/" + tmp), Err: errno})
+		})
+	}
+	fail(".enigma-tmp-111", syscall.EACCES)
+	fail(".enigma-tmp-222", syscall.EACCES)
+	if n := writeFailedEvents(b, "n/p.md"); n != 1 {
+		t.Fatalf("%d write-failed events after the same failure twice, want 1", n)
+	}
+	fail(".enigma-tmp-333", syscall.ENOSPC)
+	if n := writeFailedEvents(b, "n/p.md"); n != 2 {
+		t.Fatalf("%d write-failed events after a disk-full failure, want 2", n)
+	}
+	if !bn.has("n/p.md", "no space left")() {
+		t.Fatalf("disk-full failure not notified: %q", bn.got)
+	}
+}
 
 // heldWrite reports, from m's loop, whether a failed write of rel is held
 // and the peer it came from.
