@@ -40,8 +40,9 @@ func TestSameFolder(t *testing.T) {
 		{DirID{1, 10, 5}, DirID{2, 10, 5}, true},  // device drift (btrfs, NFS)
 		{DirID{1, 10, 5}, DirID{1, 10, 6}, false}, // inode reused
 		{DirID{1, 10, 5}, DirID{1, 11, 5}, false},
-		{DirID{1, 10, 0}, DirID{1, 10, 0}, true}, // no birth times: device and inode
-		{DirID{1, 10, 0}, DirID{2, 10, 0}, false},
+		{DirID{1, 10, 0}, DirID{1, 10, 0}, true}, // no birth times: the inode
+		{DirID{1, 10, 0}, DirID{2, 10, 0}, true}, // device drift without birth times (NFSv3)
+		{DirID{1, 10, 0}, DirID{2, 11, 0}, false},
 		{DirID{1, 10, 5}, DirID{1, 10, 0}, true},
 	} {
 		if got := SameFolder(c.a, c.b); got != c.want {

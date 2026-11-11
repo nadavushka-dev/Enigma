@@ -1,7 +1,9 @@
 # Enigma — design spec
 
 Status: **agreed**, 2026-10-20; groups, problems and the fleet rename added 2026-10-26 (D19–D21);
-link replication agreed 2026-11-10 (D23, §8.1).
+link replication agreed 2026-11-10 (D23, §8.1); replaced and vanished entry
+folders, root watching and the hand-test fixes brought up to date 2026-11-11
+(§6.5, §6.6, §8.1, §13.5).
 Milestones 1–6 are implemented (v0.2.0); milestone 7 is the 2026-10-26 additions.
 Sections 1–3 record what was decided in discussion. Sections 4 onward are
 the technical design. Section 15 records how the remaining open points were
@@ -34,16 +36,16 @@ machines, in real time, over ssh.
 | D3 | Topology | Direct to all. Every machine runs the same daemon; there is no hub. |
 | D4 | Conflicts | Edits to different lines are merged automatically. Overlapping edits: the newer edit wins in place, and the other is kept as a conflict copy that syncs like any file. Binary files skip the merge. |
 | D5 | Machines | One fleet containing all your machines, picked from your ssh config. No per-file machine lists and no exclusions (superseded by D19: groups). |
-| D6 | What syncs | Files and folders, at the same path relative to `~` on every machine. Created on machines that don't have it yet, including parent folders. |
+| D6 | What syncs | Files and folders, at the same path relative to `~` on every machine. Created on machines that don't have it yet, including parent folders. A machine that had the entry and lost its folder (or a file entry's parent folder) does not get it created again: it is missing locally until the user puts a folder there (§6.5). |
 | D7 | First add | The user chooses at add time (D22). By default the machine where you add wins, and a differing copy on another machine is kept as a visible conflict copy. The user may instead choose "this machine wins", which replaces the other copy after backing it up (D13). |
-| D8 | Deletes | Spread to all machines. Each machine first moves its copy to a local trash, kept 30 days. An edit beats a concurrent delete. |
+| D8 | Deletes | Spread to all machines. Each machine first moves its copy to a local trash, kept 30 days. An edit beats a concurrent delete. Only a file the user deletes inside a present entry folder is a delete: an entry folder that vanishes, is deleted, moved away or replaced deletes nothing elsewhere, and its files are restored once a folder is there again (§6.5). |
 | D9 | Setup | Adding a machine installs Enigma on it over ssh (binary + background service) and shows each step. |
 | D10 | Interface | A CLI for everything (scriptable, usable by agents) plus a TUI for picking machines and files and watching status. |
 | D11 | Alerts | `enigma status` and the TUI show everything. Conflicts also raise a desktop notification. |
 | D12 | Dev tools | tuxedo, tuicr and herdr are for our development workflow only, never part of Enigma. |
 | D13 | Backups | First-add backups are stored locally on the machine that made them, never next to the file. They are used when the user chooses "this machine wins". |
 | D14 | Folder first add | Files that exist only on another machine are kept and spread to everyone. Files that differ follow D7. |
-| D15 | Symlinks | Never followed: nothing is read, written or trashed through a link. Skipped and listed in status, unless the folder entry has link replication on (D23). |
+| D15 | Symlinks | Never followed: nothing is read, written or trashed through a link. Skipped and listed in status, unless the folder entry has link replication on (D23). A folder entry whose own folder is a symlink is missing locally, never synced through the link (§6.5, §6.6). |
 | D16 | Paths | Only paths under `~`. |
 | D17 | Repo | `github.com/nadavushka-dev/enigma`; releases come from there. |
 | D18 | Limits | 10 MB per file, 2,000 files per folder entry, by default; a fleet setting (`enigma limits`). |
@@ -51,7 +53,7 @@ machines, in real time, over ssh.
 | D20 | Problems | The daemon keeps a list of standing problems (what is wrong right now, with a hint), shown by `enigma status`, `doctor` and a notice line in the TUI, until each is resolved. |
 | D21 | TUI parity | Everything the CLI can do, the TUI can do. |
 | D22 | First-add preview | Before creating an entry, the adding machine asks every member of the target group what it has at that path and shows the user which machines have it, whether it differs, and which are offline. If anything differs the user chooses: keep both (default; differing copies become visible conflict copies), this machine wins (differing copies are replaced and backed up), or cancel. For a folder the TUI chooses per differing file. A non-interactive add with a difference and no `--on-existing` cancels. The choice travels in the entry record, so machines that were offline follow it when they reconnect. |
-| D23 | Link replication | Opt-in per folder entry (`enigma add --links`, `enigma entry links`), off by default. A symlink inside such an entry is replicated as a link, never as content, when its target is inside a synced entry of the same group (any entry, not ignored), checked on the sending and the receiving machine. Targets are stored relative to the link or as `~/…` and written under each machine's own home; targets outside `~` are skipped and reported. A received link waits until its target exists (never a dangling link, never a delete). A link never replaces a folder; a losing link goes to the trash, never to a conflict-copy link. Not in v1: links as entry roots, cross-group targets, resolving chains (§8.1). |
+| D23 | Link replication | Opt-in per folder entry (`enigma add --links`, `enigma entry links`), off by default. A symlink inside such an entry is replicated as a link, never as content, when its target is inside a synced entry of the same group (any entry, not ignored), checked on the sending and the receiving machine. Targets are stored relative to the link or as `~/…` and written under each machine's own home; targets outside `~` are skipped and reported. A received link waits until its target exists (never a dangling link, never a delete). A link never replaces a folder; a losing link goes to the trash, never to a conflict-copy link, on every machine that had it. With replication off, links are neither created nor deleted by sync in either direction (a file that replaces a link still syncs). Not in v1: links as entry roots, cross-group targets, resolving chains (§8.1). |
 
 ## 3. Vocabulary
 
@@ -144,6 +146,11 @@ machines, in real time, over ssh.
 ### 6.1 Detecting local changes
 - fsnotify watches every entry: a file entry's parent folder (filtered to the
   file), or a folder entry recursively, adding new subfolders as they appear.
+  A watch that cannot be added (on Linux, the inotify watch limit,
+  `fs.inotify.max_user_watches`) is reported in status and retried
+  (§6.5, root watch); changes there are picked up by the polls and rescans
+  meanwhile.
+- Every entry's own folder is also checked every 2 s (§6.5, root watch).
 - Events are debounced for 200 ms of quiet, capped at 2 s. Editors save in
   bursts (temp file, rename).
 - After the debounce the file is hashed (SHA-256). If the hash equals the
@@ -220,14 +227,25 @@ rescan, which compares disk against the stored current versions:
   written on this machine (`materialized`). A file this machine has never
   had is not a delete.
 - **Vanished-root guard:** if an entry's whole folder, or a file entry's
-  parent folder, is missing, Enigma records no deletes for it. The entry is
-  marked "missing locally" and an alert is raised. This covers an unmounted
-  disk or a moved home folder. A missing root is not created again by
-  starting to watch it (only a brand-new entry's root is, D6).
+  parent folder, is missing or is a symlink, Enigma records no deletes for
+  it, writes nothing there and fetches nothing for it. The entry is
+  marked "missing locally" (status and a standing error, §13.5), with an
+  activity event and a notification. This covers an unmounted disk, a
+  moved home folder, and a user deleting or moving away the entry's
+  folder itself. A missing root is not created again, neither by watching
+  it nor by a received version or a restore: only a brand-new entry's
+  root is (D6); a file entry's parent is watched through a symlink, but
+  a parent that is gone is not re-created. When a folder is there again
+  (a file event, the root watch or a rescan notices), the entry syncs
+  again and, by the replaced-folder guard below, its files come back from
+  the peers. **Deleting a whole synced folder therefore deletes nothing
+  elsewhere; to delete files everywhere, delete the files inside it (or
+  `enigma remove` the entry first).**
 - **Replaced-folder guard:** each machine records which folder (inode,
   birth time and device) an entry's files were synced in; the same inode
   and birth time on another device is the same folder (device numbers
-  drift on btrfs, NFS, external volumes), and Linux's reuse of a deleted
+  drift on btrfs, NFS, external volumes; without a birth time, the same
+  inode on another device is too), and Linux's reuse of a deleted
   folder's inode is told apart by the birth time. The files are no longer
   counted as on disk here, so a missing one is restored from the peers,
   never a delete, after a restart too, when:
@@ -238,25 +256,44 @@ rescan, which compares disk against the stored current versions:
     whatever its identity says.
 
   Where a folder's identity changes while every file stays in place
-  (FUSE, some network mounts), after three such changes it is no longer
-  relied on for that entry, with a standing warning. Not covered: a
+  (FUSE, some network mounts), after three such changes (counted across
+  restarts) it is no longer relied on for that entry, with a standing
+  warning; the root watch then only notices it becoming a symlink or
+  going away. Not covered: a
   folder deleted and re-created unseen (no event, daemon stopped) on a
   file system without birth times that reuses its inode; that reads as
   deleting its files. A peer that no longer has the file on disk serves it from
   its history store. To delete files everywhere, delete the files, not the
   folder. Status lists the files being restored, and a warning stands
   until they are here.
+
+  A restore asks one peer at once (the one that announced the path, else
+  the next in turn) and asks again, another peer each time, at most every
+  30 s per path while the file is still missing. A folder seen gone drops
+  the asks made before, so the files are asked for as soon as a folder is
+  back, not after the 30 s.
 - **Root watch:** every entry's folder is also checked every 2 s (one
   `lstat`): file events do not reliably report the watched folder itself
-  being moved, replaced or re-created. A change, or a folder whose watch
-  died, is refreshed at once and watched again; status never says "ok"
-  for a folder that is not watched (an error until it is). A file
-  entry's parent is watched through a symlink as before.
+  being moved, replaced or re-created (kqueue follows links; a moved
+  folder's inotify watch follows it). A change of what is there (a folder
+  by identity, a symlink, something else, nothing) is refreshed at once
+  and watched again; for an entry whose identity is not relied on, only
+  the kind counts. A folder whose watch died (it was in the watcher's list
+  and is gone from it: the folder was deleted, even if re-created at once)
+  is another folder: seen gone, refreshed and watched again. Status never
+  says "ok" for a folder that is not watched (NOT WATCHED), or has
+  subfolders that are not (PARTLY WATCHED, naming them); both are errors
+  until they are watched. A watch that could not be added (the Linux
+  inotify watch limit) did not die: the folder is the same, nothing is
+  marked as not on disk, and the watch is retried after 4 s, then with a
+  doubling wait up to 5 minutes; a retry that succeeds refreshes the
+  entry. A file entry's parent is watched through a symlink as before.
 
 ### 6.6 Applying a version
 - **Write:** to a temp file in the same folder, fsync, set the exec bit and
   mtime, then rename over the target. A reader never sees a half-written
-  file. Missing parent folders are created (D6).
+  file. Missing parent folders inside the entry are created (D6); a
+  missing entry root, or a file entry's missing parent, is not (§6.5).
 - **Precondition:** just before the rename, the target is hashed again. If
   it changed since the decision (someone is editing it right now), the write
   is abandoned and the new local edit wins the race: it becomes a local
@@ -271,14 +308,19 @@ rescan, which compares disk against the stored current versions:
   removed. A deleted link is moved to the trash itself; what it points at
   is never touched.
 - **Never clobbered:** something Enigma does not sync (a symlink, a folder,
-  an oversized file) sitting at a target path is not overwritten. It is
-  reported as an error on that path. A received link never replaces a
-  folder: it is reported as blocked (§13.5).
+  an oversized file) sitting at a target path is not overwritten: the
+  received version is not written (it is logged; a symlink or an
+  oversized file there is also listed as skipped in status, §13.5). A received link never
+  replaces a folder: it is reported as blocked (§13.5).
 - **Never through a link:** a path under a symlinked folder of a folder
   entry (its root included) leads somewhere else ("shadowed"), so it is
   never read, written, copied or trashed, and is never a delete: it is
-  listed as skipped. A folder entry whose root became a symlink is missing
-  locally (§6.5) with its own notice, until it is a folder again.
+  listed as skipped (a shadowed path with no live version is not). A
+  delete received for a shadowed path is recorded without touching
+  anything on disk, and passed on to the other links like any version. A
+  folder entry whose root became a symlink is missing locally (§6.5) with
+  its own notice, until it is a folder again; the root itself is never
+  listed as skipped.
 - **Restore, never delete:** a tracked path found shadowed is no longer
   this machine's copy: its version is kept but marked as not on disk here
   (`materialized` off, persisted). When the link goes away, the path's
@@ -292,13 +334,14 @@ rescan, which compares disk against the stored current versions:
   locally until the user makes it a folder again (a file event or a rescan
   notices), and only then are the files fetched. No other
   path makes a delete: a local delete is only ever a materialized file
-  found missing under a present root. Moving a folder away and only later
-  putting a link in its place is still a delete of what was moved (the
-  trash keeps it), as without links: restore applies only when the link
-  is already in place when Enigma looks. Stop the daemon (or `enigma
-  remove` the entry) before moving a synced folder and linking it back. A
-  move seen on its own is a delete on the other machines (their trash
-  keeps it 30 days).
+  found missing under a present root. For a folder **inside** an entry,
+  moving it away and only later putting a link in its place is still a
+  delete of what was moved (the trash keeps it), as without links: restore
+  applies only when the link is already in place when Enigma looks. Stop
+  the daemon (or `enigma remove` the entry) before moving such a folder
+  and linking it back. A move seen on its own is a delete on the other
+  machines (their trash keeps it 30 days). The entry's own folder is
+  different: moved away, it is missing locally (§6.5), never a delete.
 - **Known limits:** the shadowed check and the write are separate steps; a
   parent folder swapped for a symlink in that instant could still be
   written through (closing it needs per-component no-follow opens).
@@ -308,6 +351,19 @@ rescan, which compares disk against the stored current versions:
   resolves it from the link's real folder: under a symlinked folder above
   the entry, `../` can lead elsewhere for whatever follows the link
   (Enigma never does).
+  - A file entry under a symlinked parent whose target folder is replaced
+    loses its watch without the root watch noticing (it sees a link
+    before and after): its edits sync at the 10-minute rescan.
+  - Pending and blocked links (§8.1) and the paths peers changed while
+    shadowed are held in memory; after a restart the catch-up brings them
+    back.
+  - A folder replaced three times over an entry's life with every file
+    in place (say, restored from a backup each time) counts like an
+    identity that changes on its own: the entry's identity is then not
+    relied on (§6.5).
+  - Files a peer added while this machine's entry root was missing come
+    with the next link-up summary, not at once (there is no pull of
+    unknown paths).
 
 ## 7. Conflicts
 
@@ -365,10 +421,14 @@ stored target, and its hash (`sha256("enigma-link\0"+target)`) never
 equals a file's. Steps 1, 2 and 4 apply; links are never merged (step 3).
 In step 4, and when a first add replaces a link (D22, D13), the losing
 **link** is never written as a conflict copy, since every agent harness
-would load a `foo.conflict-…` skill link as a duplicate: the machine that
-has it moves it to the trash, records a `link-lost` activity event and
-shows a warning for an hour. A losing **file** is kept as a conflict copy
-or backup as usual, so a link replacing a file loses nothing.
+would load a `foo.conflict-…` skill link as a duplicate: every machine
+that has it moves it to the trash and records a `link-lost` activity
+event. That includes the link's author when it receives another machine's
+resolution (a version with two parents, its own link among them) rather
+than resolving the conflict itself. The lost link is handled once it is
+in the trash, so it is activity only, not a standing problem (§13.5). A
+losing **file** is kept as a conflict copy or backup as usual, so a link
+replacing a file loses nothing.
 
 **Text detection:** valid UTF-8 and no NUL bytes in the first 8 KB.
 
@@ -454,12 +514,30 @@ that folder synced too.
 - **Polling** lists only what the entry syncs (its ignores apply).
 - **Link vs folder.** A link never replaces a folder: the receiver reports
   it blocked (an error); under the link on the other machine the folder's
-  files are never written through it (§6.6). The user keeps one.
+  files are never written through it (§6.6). The user keeps one. A
+  blocked link is held (in memory) and tried again after every change:
+  once the folder is gone it is decided again against the current
+  version and written, without a restart.
 - **Link vs file.** At first add, D22 applies: keep both keeps the file as
   a conflict copy (and backup) and writes the link; this machine wins
   backs the file up and writes the link. Afterwards, §7 step 4: the newer
-  wins; a losing file is a conflict copy, a losing link goes to the trash.
+  wins; a losing file is a conflict copy, a losing link goes to the trash
+  on every machine that had it (§7).
   The first-add preview does not list links yet.
+- **Turned off** (`enigma entry links <folder> off`): links in the entry
+  are neither created nor deleted by sync, in either direction. A link
+  removed here is not a delete elsewhere: its version is kept, marked as
+  not on disk here. A received link version, or the delete of a link, is
+  ignored. Links are skipped (D15) and listed. A link that a user replaces
+  with a regular file is an ordinary edit: the file reaches the other
+  machines, and a machine whose current version is the link moves its
+  link to the trash and writes the file.
+- **Turned back on:** every member rescans the entry when the setting
+  arrives. Links made anywhere while it was off become versions and are
+  sent; a link that was removed here while off is restored from the peers
+  that still have it (it was only marked not on disk).
+- **Skipped-link notes** clear as soon as the path is no longer a link
+  (the 2 s link poll also re-checks noted links that are gone).
 - **Retarget** is an edit; a retarget beats a concurrent delete (D8).
 - **Chains** are never resolved: eligibility looks at the first hop only.
 - **Not in v1:** an entry root that is a link (`enigma add` still refuses
@@ -506,7 +584,9 @@ machinery (§6, §7) is unchanged.
   and spread.
 - **Leaving scope** (`group remove`, an entry moved to a group it is not in)
   is `enigma remove` for that machine alone: syncing stops, files stay, the
-  machine keeps its stored versions for the paths. If it re-enters scope,
+  machine keeps its stored versions for the paths. Such a frozen entry is
+  still listed in its status, as `not synced here: this machine is not in
+  its group`, never as "ok". If it re-enters scope,
   an edit made meanwhile is a concurrent version and goes through §7.
 - **Moving an entry** (`enigma entry move <path> <group>`): members of both
   groups continue; members only of the new group enter scope; members only
@@ -542,11 +622,12 @@ machine X (into `main`, or the group given with `--group`, §9):
      stays on the machines that saw it (§7).
    - **this machine wins**: every other machine backs up its differing
      copy locally (D13), then writes X's version. No conflict copies.
-   - **cancel**: nothing is created.
+   - **cancel**: nothing is created, and `enigma add` exits 1 (so a
+     script never takes a cancelled add for a done one).
    For a folder, the TUI chooses per differing file; `--on-existing`
    makes the same choice non-interactively. An add that finds a
    difference with no flag and no terminal cancels with an error naming
-   the flag.
+   the flag (exit 1).
 3. X records the entry (with the chosen policy) in fleet state and makes
    version `{X:1}` of every file under it.
 4. Every other member of the group, on receiving the entry, compares its
@@ -699,9 +780,9 @@ rules lives in `skills/enigma/` and ships in the release tarball.
 | `enigma machine add <alias> [--group G]…` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §12) |
 | `enigma group list` · `create <name> [machine…]` · `delete <name> [--yes]` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into> [--add-members]` | manage groups (§9) |
 | `enigma entry move <path> <group>` · `entry links <path> on\|off` | move an entry to another group (§9); turn link replication on or off for a folder entry (D23) |
-| `enigma add <path> [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4); `--dry-run` prints the first-add preview without adding; a difference with no flag and no terminal cancels (D22) |
+| `enigma add <path> [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4); `--dry-run` prints the first-add preview without adding; a difference with no flag and no terminal cancels (D22); a cancelled add exits 1 |
 | `enigma limits [--file-size SIZE] [--files N]` | show the fleet's limits, or change them for every machine (§8); SIZE like `25MB` |
-| `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers |
+| `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers. Each entry has one state, the first that applies: `not synced here: this machine is not in its group` (a frozen entry, §9), `MISSING LOCALLY: deletes are not propagated` (§6.5), `NOT WATCHED: changes here sync only at the next check`, `PARTLY WATCHED: N subfolders not watched; …` (§6.5 root watch), `restoring N from the other machines (not here yet)`, `over the N-file limit, …` (§8), `ok, N skipped (symlinks or over SIZE)`, else `ok`; `, links on` is appended for a folder with link replication on. `--json` carries the same as fields (`Frozen`, `Missing`, `Unwatched`, `UnwatchedFolders`, `Restoring`, `OverLimit`, `Skipped`, `IdentityUnreliable`, `LinksOn`, `Links`) |
 | `enigma conflicts [--local]` | list conflict copies across the fleet (asks every member over ssh), with the machines that hold each |
 | `enigma trash list` · `restore <id>` · `empty` | trash on this machine |
 | `enigma log [-f]` | daemon log |
@@ -815,7 +896,10 @@ Finding a file to add without walking the tree by hand.
   on it.
 
 ### 13.3 Notifications
-For a conflict copy, a vanished entry root, or a failed merge write:
+For a conflict copy (not for a first-add copy, which is activity only), an
+entry root missing locally (vanished, or a symlink now), a folder going
+over its file limit, a received file over the size limit, or a received
+version that could not be written:
 - macOS: `osascript -e 'display notification …'`; the text goes in as
   AppleScript string literals and the script is passed as an argument,
   never through a shell;
@@ -834,26 +918,36 @@ The activity feed says what happened; **problems** say what is wrong now
 derived from state, not from the log: a problem appears when its condition
 starts and disappears when it ends, so the list is always true.
 
-Conditions, with their hints:
-- a member's link is down (the ssh error, since when; hint: `enigma doctor`,
-  or `enigma machine alias` for a founder with no target);
-- a member on another version that cannot be upgraded (no binary for its
-  platform; hint: `make dist` / `enigma update`);
-- an entry missing locally (vanished root, §6.5); an entry over the file
-  limit (§8); files skipped as oversized or non-regular (one problem per
-  entry, counting them);
-- a path that cannot be written: something unsyncable sits there (§6.6) or
-  a permission error;
-- links (D23): a link skipped, with the reason (outside `~`, target not
-  synced, in another group, ignored); a link waiting for its target over a
-  minute; a dangling link (warnings); a link blocked by a folder (error);
-  a link that lost to another version and went to the trash, for an hour
-  (warning);
-- a conflict copy written in the last hour (warning; it clears by itself);
-- a group with no members; an entry of a group this machine is not in
-  (cannot happen by construction, reported if it does);
-- daemon level: watcher error, failed rescan, history store at its cap,
-  a notification command failing.
+Every problem, with its key, level, trigger and when it clears (each has
+a hint; one line per key):
+
+| Key | Level | Appears when | Clears when |
+|---|---|---|---|
+| `link:<machine>` | error | a member's link is down (the ssh error, since when; hint: `enigma doctor`) | the link is up |
+| `link:<machine>` | warning | the member has no ssh target here, so only it can dial (hint: `enigma machine alias`) | the link is up |
+| `upgrade:<machine>` | error | a member on another version cannot be upgraded (no binary for its platform; hint: `make dist` / `enigma update`) | the link is up |
+| `missing:<entry>` | error | the entry's folder (a file entry's parent) is missing or a symlink here (§6.5) | a folder is there again |
+| `unwatched:<entry>` | error | the entry's folder has no live watch, or some of its subfolders could not be watched (NOT / PARTLY WATCHED, §6.5); not while missing | every folder is watched |
+| `restoring:<entry>` | warning | files this machine keeps a version of are not on disk and are being fetched (a replaced folder, a removed link, §6.5, §6.6); not while missing | they are here |
+| `identity:<entry>` | warning | the folder's identity changed three times with every file in place (FUSE, network mounts, §6.5) | the entry is removed (it is a property of the file system) |
+| `overlimit:<entry>` | error | new files wait past the folder's file limit (§8) | there is room, or they are gone |
+| `skipped:<entry>` | warning | files skipped as oversized or non-regular (one per entry, counting them; links with a state of their own are not counted) | they are gone or fit |
+| `link-skipped:<path>` | warning | a link not replicated, with the reason (outside `~`, target not synced, another group, ignored, a loop, not here) (D23) | the path is no longer such a link, or it becomes eligible |
+| `link-pending:<path>` | warning | a received link has waited over a minute for its target | the target arrives (the link is written) |
+| `link-blocked:<path>` | error | a received link is blocked by a folder here | the folder is gone (the link is written) or another version wins |
+| `link-dangling:<path>` | warning | a synced link's target is gone | the target is back, or the link is removed |
+| `conflict:<copy>` | warning | a conflict copy was written in the last hour | the copy is deleted, or after an hour |
+| `error:<n>` | error | an error event: a received version could not be written (a permission or disk error), a received file over the size limit, a folder going over its file limit | after an hour |
+
+Not problems, activity only: a first-add copy (`kept-both`), an entry
+folder replaced (`root-replaced`; the `restoring` problem stands while
+files are missing), an entry root going missing (`root-missing`; the
+`missing` problem stands), an identity found unreliable
+(`root-identity`; the `identity` problem stands), and a link that lost
+to another version and went to the trash (`link-lost`): each is either
+handled when it happens or covered by a standing problem. The list is
+derived again on every status, so a problem disappears as soon as its
+condition ends; the same key is shown once.
 
 Exposed as `GET /problems` on the API socket. `enigma status` prints the
 list first; `enigma doctor` includes it and exits non-zero when any
@@ -902,7 +996,21 @@ Machines, Groups or Files pane when there is one.
     creates, retargets, deletes and link/file swaps; once quiet every
     machine has the same links, no file is ever changed through a link,
     and every link a user set and did not replace is a link somewhere or
-    in a trash.
+    in a trash. With entry folders replaced (`TestSimulationRoots`: the
+    root swapped for a symlink to a copy and back, re-created empty, the
+    copy moved back, with real identities, reused inodes, and identities
+    that tell nothing apart): once every root is a real folder again,
+    identical files everywhere and no delete nobody made (every path a
+    user wrote and did not delete exists on every machine).
+    `ENIGMA_SIM_SEEDS` raises the seeds of every simulation.
+  - Invariants every change keeps (each has tests named after its rule):
+    a delete is only a materialized file missing under a present root;
+    nothing is read, written or trashed through a link; a missing root is
+    never created again, by a watch, a write or a restore; a watch that
+    failed to add is never taken for a replaced folder; an entry's state
+    in status is never "ok" while it is frozen, missing, not (fully)
+    watched or restoring; a problem stands exactly while its condition
+    does (§13.5).
   - End-to-end (from milestone 2), with no second physical machine needed:
     - 3–4 Linux Docker containers, each running `sshd` and an Enigma
       daemon, plus the development Mac as a full member. The Mac covers

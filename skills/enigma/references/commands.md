@@ -28,7 +28,7 @@ Global:
 
 | Command | Does |
 |---|---|
-| `enigma add [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json] [path]` | Sync a file or folder. `--dry-run` shows the first-add report; `--on-existing` answers it; no path opens the `fzf` picker; `--links` replicates the symlinks in a folder. |
+| `enigma add [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json] [path]` | Sync a file or folder. `--dry-run` shows the first-add report; `--on-existing` answers it; no path opens the `fzf` picker; `--links` replicates the symlinks in a folder. A cancelled add exits 1. |
 | `enigma remove <path>` | Stop syncing; the files stay everywhere. |
 | `enigma list` | Human list of synced entries and groups. Use `status --json` in scripts. |
 | `enigma status [--json]` | Problems first, then peers, entries, limits and conflict copies. |
@@ -77,6 +77,15 @@ without `--on-existing` a difference cancels with an error naming the flag.
   skipped, unless the folder has links on: then a link whose target is
   synced in the same group is replicated as a link (`entries[].Links`
   shows each with its state: synced, pending, skipped, blocked, dangling).
+  With links off, sync neither creates nor deletes links in either
+  direction; a link replaced by a regular file syncs as an edit.
+- Deleting a synced folder itself (or moving it away, or replacing it
+  with a symlink) deletes nothing elsewhere: the entry is missing locally
+  and is not re-created; a folder put back gets its files restored.
+  Delete the files inside to delete everywhere.
+- `enigma status` entry states: `ok`, `MISSING LOCALLY`, `NOT WATCHED`,
+  `PARTLY WATCHED`, `restoring N`, over the file limit, `ok, N skipped`,
+  `not synced here` (not in the entry's group).
 - Defaults: 10 MB per file, 2,000 files per folder. Ceilings: 64 MB and
   20,000.
 - Always ignored: `.git/`, `node_modules/`, `.DS_Store`, editor swap files.

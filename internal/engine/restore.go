@@ -11,6 +11,7 @@ import (
 	"github.com/nadavushka-dev/enigma/internal/fsx"
 	"github.com/nadavushka-dev/enigma/internal/proto"
 	"github.com/nadavushka-dev/enigma/internal/version"
+	"github.com/nadavushka-dev/enigma/internal/watch"
 )
 
 // Restore, never delete (SPEC §6.6). A tracked path found under a
@@ -57,10 +58,11 @@ func (e *Engine) checkRoot(entry string) {
 	}
 	// An identity that changes while every file is still in place is a
 	// file system that does not keep it (FUSE, some network mounts):
-	// after a few, it is not relied on for this entry.
+	// after a few, across restarts, it is not relied on for this entry.
 	if e.allOnDisk(entry) {
-		e.rootFlips[entry]++
-		if e.rootFlips[entry] >= rootFlipLimit {
+		e.st.Flips[entry]++
+		if e.st.Flips[entry] >= rootFlipLimit {
+			delete(e.st.Flips, entry)
 			e.st.Unreliable[entry] = true
 			e.log.Warn("entry folder identity keeps changing; not relying on it", "entry", entry)
 			e.event(EvRootIdentity, entry, "", "the folder's identity keeps changing here (a network or FUSE file system?); a replaced folder is no longer told apart")
@@ -114,6 +116,13 @@ func (e *Engine) notOnDiskAnyMore(entry string) int {
 // deleted folder): nothing is on disk here any more, and the next folder
 // seen is recorded afresh.
 func (e *Engine) rootGone(entry string) {
+	// A restore asked for before is moot (its answer finds no folder to
+	// write in): when a folder is back, its files are asked for at once.
+	for rel := range e.restoreAsked {
+		if rel == entry || strings.HasPrefix(rel, entry+"/") {
+			delete(e.restoreAsked, rel)
+		}
+	}
 	if n := e.notOnDiskAnyMore(entry); n > 0 {
 		e.log.Info("entry folder gone; its files are restored when it is back", "entry", entry, "files", n)
 	}
@@ -146,7 +155,12 @@ func (e *Engine) rootSig(entry string) string {
 // it), so this runs with the link poll; it only stats each root. On a
 // change the entry is watched again (or not, see track) and refreshed:
 // missing, back, or restored (§6.5).
+//
+// An entry whose identity is not relied on (FUSE, some network mounts)
+// is compared by what is there only: a folder, a symlink, something else
+// or nothing; its identity changes on its own.
 func (e *Engine) pollRoots() {
+	health := e.watchHealth()
 	for entry, r := range e.st.Entries {
 		if r.Removed || !e.inScope(r) {
 			continue
@@ -157,20 +171,124 @@ func (e *Engine) pollRoots() {
 			e.rootSeen[entry] = sig // first look; refreshUnder records it from then on
 			continue
 		}
+		changed := old != sig
+		if e.st.Unreliable[entry] {
+			changed = sigKind(old) != sigKind(sig)
+		}
+		ws := e.rootWatch(entry, health)
 		switch {
-		case old != sig:
+		case changed:
 			e.log.Info("entry folder changed", "entry", entry, "was", old, "now", sig)
-		case e.unwatched(entry):
-			// Same identity, but its watch died with the folder (deleted and
-			// re-created between two polls): it is another folder.
+			delete(e.watchRetry, entry)
+		case ws.dead:
+			// Same identity, but the watch it had died with the folder
+			// (deleted and re-created between two polls): another folder.
 			e.log.Info("entry folder no longer watched; watching it again", "entry", entry)
 			e.rootGone(entry)
+			delete(e.watchRetry, entry)
+		case ws.failed():
+			e.retryWatch(entry)
+			continue
 		default:
+			delete(e.watchRetry, entry)
 			continue
 		}
 		e.rewatch(entry)
 		e.refreshUnder(entry, entry)
 	}
+}
+
+// sigKind is what kind of thing a rootSig is: dir, link, other or absent.
+func sigKind(sig string) string {
+	kind, _, _ := strings.Cut(sig, " ")
+	return kind
+}
+
+// Retry bounds for a watch that could not be added (the inotify watch
+// limit): retrying walks the entry's tree, so it backs off.
+const (
+	watchRetryMin = 4 * time.Second
+	watchRetryMax = 5 * time.Minute
+)
+
+// retryWatch watches entry again when its retry is due, the first time a
+// wait after the failure was seen. It never marks the files as not on
+// disk: a watch that was never added did not die with its folder.
+func (e *Engine) retryWatch(entry string) {
+	now := time.Now()
+	rt := e.watchRetry[entry]
+	if rt == nil {
+		e.watchRetry[entry] = &watchRetry{next: now.Add(watchRetryMin), wait: watchRetryMin}
+		return
+	}
+	if now.Before(rt.next) {
+		return
+	}
+	e.rewatch(entry)
+	if ws := e.rootWatch(entry, e.watchHealth()); !ws.dead && !ws.failed() {
+		delete(e.watchRetry, entry)
+		e.log.Info("entry watched again", "entry", entry)
+		e.refreshUnder(entry, entry) // changes made while it was not watched
+		return
+	}
+	rt.wait = min(2*rt.wait, watchRetryMax)
+	rt.next = now.Add(rt.wait)
+	e.log.Warn("entry still not fully watched; trying again later", "entry", entry, "in", rt.wait)
+}
+
+// watchState is how an entry's folder is watched. dead: the watch it had
+// died (the folder was deleted; the one there now is another). rootFailed:
+// its watch could not be added (the watch limit), or it has none. folders:
+// its subfolders (from ~) whose watch could not be added.
+type watchState struct {
+	dead, rootFailed bool
+	folders          []string
+}
+
+func (s watchState) failed() bool { return s.rootFailed || len(s.folders) > 0 }
+
+// watchHealth is every watched root's health, with one look at the
+// watcher (nil without one).
+func (e *Engine) watchHealth() map[string]watch.Health {
+	if e.w == nil {
+		return nil
+	}
+	return e.w.Health()
+}
+
+// rootWatch says how entry is watched, from health (watchHealth). Only an
+// entry whose root folder (a file entry's parent) is a folder here is
+// watched; anything else is the root poll's business. Only a folder
+// entry's watch is known to die with its folder.
+func (e *Engine) rootWatch(entry string, health map[string]watch.Health) watchState {
+	if e.w == nil {
+		return watchState{}
+	}
+	if _, ok := dirIDOf(e.rootDir(entry)); !ok {
+		return watchState{}
+	}
+	dir := e.st.Entries[entry].Dir
+	h, ok := health[e.abs(entry)]
+	switch {
+	case !ok:
+		return watchState{dead: dir, rootFailed: !dir} // dropped: lost, as if it died
+	case h.Added && !h.Alive:
+		return watchState{dead: dir}
+	}
+	ws := watchState{rootFailed: !h.Added}
+	for _, d := range h.Failed {
+		if rel, ok := e.rel(d); ok && d != e.rootDir(entry) {
+			ws.folders = append(ws.folders, rel)
+		}
+	}
+	return ws
+}
+
+// watchRetry: a watch that could not be added is tried again at next,
+// then after twice the wait, up to watchRetryMax.
+type watchRetry struct {
+	next time.Time
+	wait time.Duration
 }
 
 // rewatch drops an entry's watch and watches it again (or not, see track).
@@ -180,18 +298,6 @@ func (e *Engine) rewatch(entry string) {
 	}
 	e.w.Remove(e.abs(entry))
 	e.track(entry, e.st.Entries[entry])
-}
-
-// unwatched: a folder entry whose folder is here but has no watch.
-func (e *Engine) unwatched(entry string) bool {
-	r := e.st.Entries[entry]
-	if e.w == nil || !r.Dir {
-		return false
-	}
-	if _, ok := dirIDOf(e.abs(entry)); !ok {
-		return false
-	}
-	return !e.w.Watching(e.abs(entry))
 }
 
 // DefaultRestoreRetry bounds how often one path is asked for again; each
@@ -253,7 +359,7 @@ func (e *Engine) requestRestore(entry, rel string) {
 	e.restoreTries[rel]++
 	p.send(&proto.Msg{Type: proto.Fetch, Path: rel})
 	e.restoreAsked[rel] = time.Now()
-	e.log.Info("restoring a path that is no longer behind a link", "path", rel, "from", p.name)
+	e.log.Info("restoring a file not on disk here", "path", rel, "from", p.name)
 }
 
 // restoreShadowIn fetches the paths under rel that peers changed while

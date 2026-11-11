@@ -1,10 +1,13 @@
 package watch
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -192,6 +195,82 @@ func TestDirRootGoneIsReported(t *testing.T) {
 				t.Fatal("still watching a deleted root")
 			}
 		})
+	}
+}
+
+// A root whose own watch cannot be added (the inotify watch limit,
+// ENOSPC) is an error from Add, and Health says it was never added: it
+// did not die, so it is not another folder. Its subfolders are still
+// watched.
+func TestRootWatchThatFailsToAddIsReported(t *testing.T) {
+	root := real(t, t.TempDir())
+	os.MkdirAll(filepath.Join(root, "sub"), 0o755)
+	defer SetAddHook(func(dir string) error {
+		if dir == root {
+			return syscall.ENOSPC
+		}
+		return nil
+	})()
+	w := newW(t)
+	if err := w.Add(root, false, nil); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("Add = %v, want the watch limit error", err)
+	}
+	h, ok := w.Health()[root]
+	if !ok || h.Added || h.Alive || !slices.Equal(h.Failed, []string{root}) {
+		t.Fatalf("Health = %+v, %v", h, ok)
+	}
+	f := filepath.Join(root, "sub", "f")
+	write(t, f, "x")
+	waitFor(t, w, f)
+}
+
+// A subfolder whose watch cannot be added is listed, so the entry is not
+// reported as fully watched; it clears once the folder is watched again.
+func TestSubfolderWatchThatFailsIsReported(t *testing.T) {
+	root := real(t, t.TempDir())
+	sub := filepath.Join(root, "sub")
+	os.MkdirAll(sub, 0o755)
+	var fail atomic.Bool
+	fail.Store(true)
+	defer SetAddHook(func(dir string) error {
+		if dir == sub && fail.Load() {
+			return syscall.ENOSPC
+		}
+		return nil
+	})()
+	w := newW(t)
+	if err := w.Add(root, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	h := w.Health()[root]
+	if !h.Added || !h.Alive || !slices.Equal(h.Failed, []string{sub}) {
+		t.Fatalf("Health = %+v", h)
+	}
+	fail.Store(false)
+	w.Remove(root)
+	if err := w.Add(root, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if h := w.Health()[root]; !h.Added || !h.Alive || len(h.Failed) != 0 {
+		t.Fatalf("Health after a retry = %+v", h)
+	}
+}
+
+// Health tells a watch that died with its folder from one never added.
+func TestHealthOfADeadRootWatch(t *testing.T) {
+	root := filepath.Join(real(t, t.TempDir()), "notes")
+	os.MkdirAll(root, 0o755)
+	w := newW(t)
+	if err := w.Add(root, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if h := w.Health()[root]; !h.Added || !h.Alive {
+		t.Fatalf("Health = %+v", h)
+	}
+	os.RemoveAll(root)
+	waitFor(t, w, root)
+	if h := w.Health()[root]; !h.Added || h.Alive {
+		t.Fatalf("Health of a deleted root = %+v", h)
 	}
 }
 

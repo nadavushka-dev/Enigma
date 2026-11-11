@@ -35,6 +35,7 @@ func TestStatusStateIsNeverOkWhenNotSynced(t *testing.T) {
 	}{
 		{engine.EntryStatus{Path: "p", Dir: true, Frozen: true}, "not synced here"},
 		{engine.EntryStatus{Path: "p", Dir: true, Unwatched: true}, "NOT WATCHED"},
+		{engine.EntryStatus{Path: "p", Dir: true, UnwatchedFolders: []string{"p/a", "p/b"}}, "PARTLY WATCHED: 2 subfolders"},
 		{engine.EntryStatus{Path: "p", Dir: true, Restoring: []string{"p/a"}}, "restoring 1"},
 		{engine.EntryStatus{Path: "p", Dir: true}, "ok"},
 	} {

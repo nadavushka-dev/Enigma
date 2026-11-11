@@ -280,19 +280,26 @@ func (e *Engine) track(path string, r proto.EntryRecord) {
 		return err == nil && m.Ignored(filepath.ToSlash(rel))
 	}
 	// Watching creates a missing root (D6, a brand-new entry). A root that
-	// is gone while this machine has versions under it, or is a symlink,
-	// is not watched: it is missing locally, and pollRoots watches it again
-	// once it is a folder (§6.5).
-	// Folder entries only: a file entry's parent may be a symlink
-	// (dotfiles), and is watched through it as always.
-	if _, ok := dirIDOf(e.rootDir(path)); r.Dir && !ok {
-		if _, err := os.Lstat(e.rootDir(path)); err == nil || e.rootVanished(path) {
+	// is gone while this machine has versions under it, a file entry's
+	// parent included, or is not a folder, is not watched: it is missing
+	// locally, and pollRoots watches it again once it is a folder (§6.5).
+	// A file entry's parent may be a symlink (dotfiles): it is watched
+	// through it as always.
+	if dir := e.rootDir(path); !isFolder(dir) {
+		fi, err := os.Lstat(dir)
+		if err == nil && (r.Dir || fi.Mode()&os.ModeSymlink == 0) || err != nil && e.rootVanished(path) {
 			return
 		}
 	}
 	if err := e.w.Add(root, !r.Dir, skip); err != nil {
 		e.log.Error("watch", "entry", path, "err", err)
 	}
+}
+
+// isFolder: p is a folder, not a symlink to one.
+func isFolder(p string) bool {
+	_, ok := dirIDOf(p)
+	return ok
 }
 
 // unwatch stops watching an entry; its versions stay (a frozen entry).
@@ -304,6 +311,7 @@ func (e *Engine) unwatch(path string) {
 	delete(e.skipped, path)
 	delete(e.overLimit, path)
 	delete(e.missing, path)
+	delete(e.watchRetry, path)
 	e.clearLinkNotes(path, false)
 }
 
@@ -321,6 +329,7 @@ func (e *Engine) forget(path string) {
 	}
 	delete(e.st.Roots, path)
 	delete(e.st.Unreliable, path)
+	delete(e.st.Flips, path)
 	e.dirty = true
 }
 
@@ -578,6 +587,12 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 	if e.ignored(entry, rel) {
 		return
 	}
+	if rel == entry && e.st.Entries[entry].Dir {
+		// A folder entry's root is never a file of it: a symlink there is
+		// the missing-root guard's business (refreshUnder), not skipped.
+		delete(e.skipped[entry], rel)
+		return
+	}
 	if e.shadowed(entry, rel) { // not a delete either: the link hides it
 		delete(e.overLimit[entry], rel)
 		fs := e.st.Files[rel]
@@ -794,8 +809,8 @@ func (e *Engine) accept(rel string) (string, bool) {
 
 func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 	entry, ok := e.accept(rel)
-	if !ok || (in.Link || e.isLink(rel)) && !e.linksOn(entry) {
-		return // links off: neither created nor deleted here (D23)
+	if !ok || e.linkChangeOff(entry, rel, in) {
+		return
 	}
 	e.restoreFrom = p // a restore this refresh asks for goes to p, which has a version of rel
 	e.refreshFile(entry, rel, nil)
@@ -806,6 +821,13 @@ func (e *Engine) onAnnounce(p *peer, rel string, in version.Version) {
 		e.event(EvError, rel, p.name, err.Error())
 		e.notify(rel, "could not write ~/"+rel+": "+err.Error())
 	}
+}
+
+// linkChangeOff: in is a link, or the delete of a link, in an entry with
+// links off: neither created nor deleted here (D23). A file that replaced
+// a link is an edit like any other.
+func (e *Engine) linkChangeOff(entry, rel string, in version.Version) bool {
+	return (in.Link || in.IsDeleted() && e.isLink(rel)) && !e.linksOn(entry)
 }
 
 func (e *Engine) onFetch(p *peer, rel string) {
@@ -864,8 +886,8 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 	if !ok {
 		return
 	}
-	if e.isLink(rel) && !e.linksOn(entry) {
-		return // links off: a link here is neither replaced nor deleted (D23)
+	if e.linkChangeOff(entry, rel, in) {
+		return
 	}
 	linkTarget := "" // from ~, for a link version
 	if in.Link {
@@ -992,9 +1014,11 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		e.log.Warn("not writing through a symlinked folder", "path", rel)
 		if d.Action == Delete {
 			// Nothing here is touched; the delete is only recorded, so the
-			// path is not restored or listed as skipped later.
+			// path is not restored or listed as skipped later, and passed
+			// on like any new version (§6.3).
 			e.setCurrent(rel, d.Result, false, anc...)
 			delete(e.skipped[entry], rel)
+			announce(d.Result)
 			return nil
 		}
 		e.markSkipped(entry, rel)

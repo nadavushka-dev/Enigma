@@ -55,6 +55,10 @@ type Input struct {
 // recent is how long a conflict copy or an error event stays a problem.
 const recent = time.Hour
 
+// unwatchedHint goes with a folder, or part of one, not watched.
+const unwatchedHint = "Enigma keeps trying to watch it; on Linux the inotify watch limit may be reached " +
+	"(sysctl fs.inotify.max_user_watches); if this stays, check enigma.log"
+
 // Derive lists the problems in in, errors first, then by key. Since is
 // left zero; Tracker fills it.
 func Derive(in Input, now time.Time) []Problem {
@@ -83,10 +87,17 @@ func Derive(in Input, now time.Time) []Problem {
 	}
 	for _, e := range in.Entries {
 		ps = append(ps, linkProblems(e, now)...)
-		if e.Unwatched && !e.Missing {
+		switch {
+		case e.Missing:
+		case e.Unwatched:
 			ps = append(ps, Problem{Key: "unwatched:" + e.Path, Severity: Error, Path: e.Path,
 				Message: e.Path + ": changes here are not watched; they sync only at the next check",
-				Hint:    "it is watched again within seconds; if this stays, restart the daemon and check enigma.log"})
+				Hint:    unwatchedHint})
+		case len(e.UnwatchedFolders) > 0:
+			ps = append(ps, Problem{Key: "unwatched:" + e.Path, Severity: Error, Path: e.Path,
+				Message: fmt.Sprintf("%s: %s not watched (%s); changes there sync only at the next check",
+					e.Path, plural(len(e.UnwatchedFolders), "subfolder"), strings.Join(e.UnwatchedFolders, ", ")),
+				Hint: unwatchedHint})
 		}
 		if e.IdentityUnreliable {
 			ps = append(ps, Problem{Key: "identity:" + e.Path, Severity: Warning, Path: e.Path,
@@ -138,10 +149,6 @@ func Derive(in Input, now time.Time) []Problem {
 			ps = append(ps, Problem{Key: "conflict:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
 				Message: fmt.Sprintf("conflict on %s: the other edit is kept as %s", ev.Detail, ev.Path),
 				Hint:    "enigma conflicts lists every copy; delete the copy once you have what you need from it"})
-		case engine.EvLinkLost:
-			ps = append(ps, Problem{Key: "linklost:" + ev.Path, Severity: Warning, Path: ev.Path, Peer: ev.Peer,
-				Message: fmt.Sprintf("%s: the link here (-> %s) lost to another version and is in the trash", ev.Path, ev.Detail),
-				Hint:    "enigma trash list shows it; enigma trash restore <id> brings it back as a new change"})
 		case engine.EvError:
 			ps = append(ps, Problem{Key: fmt.Sprintf("error:%d", ev.Seq), Severity: Error, Path: ev.Path, Peer: ev.Peer,
 				Message: errorMessage(ev)})

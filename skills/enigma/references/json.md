@@ -88,7 +88,11 @@ Use `--json` for reads. The commands below are the ones with JSON output;
 ```
 
 - The nested entry keys are **capitalized** (`Path`, `Dir`, `Group`, `Frozen`,
-  `Missing`, `Skipped`, `OverLimit`); the rest are lowercase.
+  `Missing`, `Skipped`, `OverLimit`); the rest are lowercase. Present only
+  when set: `LinksOn`, `Links`, `Restoring` (files being restored from the
+  other machines), `Unwatched` (the folder has no live watch),
+  `UnwatchedFolders` (subfolders that could not be watched),
+  `IdentityUnreliable` (the folder's identity changes on its own here).
 - `problems` is the standing set, errors first. Quote the `message` and
   `hint`.
 - `conflicts` is a list of conflict-copy paths on this machine.

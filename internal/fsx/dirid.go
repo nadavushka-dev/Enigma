@@ -33,7 +33,9 @@ func DirIDOf(p string) (DirID, bool) {
 // SameFolder reports whether a and b identify the same folder. A device
 // number alone may change on its own (btrfs subvolumes, NFS, external
 // volumes): the same inode and birth time on another device is the same
-// folder. Without birth times, inode and device must both match.
+// folder. Without a birth time on either side (NFSv3), the same inode is
+// the same folder whatever the device: a device number drifting is far
+// more common than another folder with the same inode on another device.
 func SameFolder(a, b DirID) bool {
 	if a.Ino != b.Ino {
 		return false
@@ -41,5 +43,5 @@ func SameFolder(a, b DirID) bool {
 	if a.Btime != 0 && b.Btime != 0 {
 		return a.Btime == b.Btime
 	}
-	return a.Dev == b.Dev
+	return true
 }

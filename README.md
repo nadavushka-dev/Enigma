@@ -166,14 +166,24 @@ another agent at the same files. It ships in the release tarball.
   replaces a folder, and a link that loses a conflict goes to the trash.
   Links to something not synced, dangling links, and links to the folder
   that contains them (a loop for an agent harness) are skipped and listed
-  in `enigma status`.
+  in `enigma status`. With links turned off again, sync neither creates
+  nor deletes links, in either direction: removing a link on one machine
+  leaves it on the others (turn links back on and it comes back), but a
+  link you replace with a regular file syncs like any edit.
+- **Deleting a whole synced folder deletes nothing elsewhere.** If the
+  folder you added (or a synced file's parent folder) is deleted, moved
+  away or replaced by a symlink, Enigma does not create it again; status
+  says `MISSING LOCALLY` and no deletes are sent. Put a folder back
+  (`mkdir`, or move it back) and the files are restored from the other
+  machines. To delete files everywhere, delete the files inside the
+  folder, or `enigma remove` the entry first.
 - **A folder replaced by a symlink** (links on or off): what is behind
   the link is never read or written, and, if the link is already in place
   when Enigma looks, nothing is deleted on the other machines. Remove the
-  link and the files come back from them. Stop the daemon (or `enigma
-  remove` the entry) before moving a synced folder and linking it back. A
-  move seen on its own is a delete on the other machines (their trash
-  keeps it 30 days).
+  link and the files come back from them. For a folder *inside* a synced
+  folder, stop the daemon (or `enigma remove` the entry) before moving it
+  and linking it back: a move seen on its own is a delete on the other
+  machines (their trash keeps it 30 days).
 - **Synced folders inside a git repo.** Run git on one machine only;
   Enigma carries the result to the others. Sync the skill/work folders,
   not `.git`. A conflict copy from a simultaneous edit shows up in
@@ -205,9 +215,16 @@ the last versions only to merge with.
 
 - `enigma status` starts with the standing problems: a link that is down
   and why, a machine that cannot be upgraded, an entry missing locally or
-  over its limit, a conflict copy from the last hour. Each comes with the
-  command that fixes it. The TUI shows the same on its notice line, and `p`
-  lists them.
+  over its limit, a folder not watched, files being restored, a conflict
+  copy from the last hour. Each comes with the command that fixes it. The
+  TUI shows the same on its notice line, and `p` lists them. Each entry's
+  line says `ok` only when it is: otherwise `MISSING LOCALLY` (its folder
+  is gone or a symlink; nothing is deleted elsewhere), `NOT WATCHED` or
+  `PARTLY WATCHED` (changes there sync only at the next check; Enigma
+  keeps retrying, and on Linux the inotify watch limit,
+  `fs.inotify.max_user_watches`, is the usual cause), `restoring N` (files
+  coming back from the other machines), over the file limit, or `not
+  synced here` (this machine is not in the entry's group).
 - `enigma doctor` asks every machine over ssh and prints the connectivity
   matrix, versions and service state. It exits non-zero on problems.
 - The daemon log is `~/.local/share/enigma/enigma.log` (rotated at 10 MB);

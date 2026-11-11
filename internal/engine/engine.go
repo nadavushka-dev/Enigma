@@ -105,11 +105,11 @@ type Engine struct {
 	// when each path was last asked for.
 	shadowIn     map[string]bool
 	restoreAsked map[string]time.Time
-	restoreTries map[string]int    // per path: which peer a restore asks next
-	restoreFrom  *peer             // set while a peer's announcement is refreshed: ask it
-	rootSeen     map[string]string // entry -> what pollRoots last saw at its folder
-	restoring    map[string]string // rel -> entry: waiting to be restored, asked again on the poll tick
-	rootFlips    map[string]int    // entry -> identity changes seen with every file in place
+	restoreTries map[string]int         // per path: which peer a restore asks next
+	restoreFrom  *peer                  // set while a peer's announcement is refreshed: ask it
+	rootSeen     map[string]string      // entry -> what pollRoots last saw at its folder
+	restoring    map[string]string      // rel -> entry: waiting to be restored, asked again on the poll tick
+	watchRetry   map[string]*watchRetry // entry -> when its failed watch is tried again
 	dirty        bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
@@ -180,7 +180,7 @@ func New(o Options) (*Engine, error) {
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
-		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, rootFlips: map[string]int{},
+		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{}, restoreTries: map[string]int{}, rootSeen: map[string]string{}, restoring: map[string]string{}, watchRetry: map[string]*watchRetry{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),
@@ -388,6 +388,10 @@ type EntryStatus struct {
 	// Unwatched: the folder is here but file events are not reported for
 	// it; changes are picked up only by polls and rescans (SPEC §6.1).
 	Unwatched bool `json:"Unwatched,omitempty"`
+	// UnwatchedFolders: folders of the entry (from ~) whose watch could
+	// not be added (the inotify watch limit); changes in them are picked up
+	// only by polls and rescans until a retry watches them.
+	UnwatchedFolders []string `json:"UnwatchedFolders,omitempty"`
 	// IdentityUnreliable: the folder's identity changes on its own here
 	// (a network or FUSE file system), so it is not used to tell a
 	// replaced folder (§6.5).
@@ -408,6 +412,7 @@ type Status struct {
 func (e *Engine) Status() Status {
 	var s Status
 	e.do(func() {
+		health := e.watchHealth()
 		for path, r := range e.st.Entries {
 			if r.Removed {
 				continue
@@ -423,7 +428,9 @@ func (e *Engine) Status() Status {
 					}
 				}
 				sort.Strings(es.Restoring)
-				es.Unwatched = !es.Missing && e.unwatched(path)
+				if ws := e.rootWatch(path, health); !es.Missing {
+					es.Unwatched, es.UnwatchedFolders = ws.dead || ws.rootFailed, ws.folders
+				}
 				es.IdentityUnreliable = e.st.Unreliable[path]
 			}
 			for rel := range e.skipped[path] {
