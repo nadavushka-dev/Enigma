@@ -429,13 +429,25 @@ func (e *Engine) onLocalPath(abs string) {
 // New files past the folder's file limit wait as over the limit (§8), and
 // the ones waiting take any room this refresh made.
 func (e *Engine) refreshUnder(entry, rel string) {
+	if rel == entry && e.rootIsLink(entry) {
+		// Nothing under a linked root is this entry's (§6.6): no writes,
+		// no deletes, until it is a folder again (§6.5 guard).
+		e.markMissingWhy(entry, "the folder is a symlink here now; nothing is synced through it until it is a folder again",
+			"~/"+entry+" is a symlink now; nothing is synced through it until it is a folder again")
+	}
 	waiting := len(e.overLimit[entry])
 	room := e.room(entry, e.st.Entries[entry])
 	seen := map[string]bool{}
 	if info, _ := fsx.Stat(e.abs(rel)); info.Kind == fsx.Dir {
-		files, _ := fsx.ListFiles(e.abs(rel), fsx.NewMatcher(nil))
+		// The entry's own ignores apply from its root; below it, the
+		// defaults (refreshFile checks the entry's ignores on each path).
+		m := fsx.NewMatcher(nil)
+		if em := e.matchers[entry]; em != nil && rel == entry {
+			m = em
+		}
+		files, _ := fsx.ListFiles(e.abs(rel), m)
 		if e.linksOn(entry) {
-			links, _ := fsx.ListLinks(e.abs(rel), fsx.NewMatcher(nil))
+			links, _ := fsx.ListLinks(e.abs(rel), m)
 			files = append(files, links...)
 		}
 		for _, f := range files {
@@ -462,7 +474,17 @@ func (e *Engine) refreshUnder(entry, rel string) {
 			e.refreshFile(entry, p, room)
 		}
 	}
+	e.restoreShadowIn(entry, rel)
 	e.reportOverLimit(entry, waiting)
+}
+
+// rootIsLink: entry is a folder entry whose root is a symlink.
+func (e *Engine) rootIsLink(entry string) bool {
+	if r := e.st.Entries[entry]; !r.Dir {
+		return false
+	}
+	fi, err := os.Lstat(e.abs(entry))
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
 }
 
 // room is how many more files a folder entry may track (nil: no limit,
@@ -523,6 +545,11 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 	if e.shadowed(entry, rel) { // not a delete either: the link hides it
 		delete(e.overLimit[entry], rel)
 		e.markSkipped(entry, rel)
+		if fs := e.st.Files[rel]; fs != nil && fs.Materialized {
+			// What is there now is behind a link, not this version: once
+			// the link goes, the path is restored, never deleted (§6.6).
+			fs.Materialized, e.dirty = false, true
+		}
 		return
 	}
 	fs := e.st.Files[rel]
@@ -564,7 +591,11 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 		e.newLocalVersion(rel, info, version.Edit)
 	case fsx.Missing:
 		delete(sk, rel)
-		if fs == nil || fs.V.IsDeleted() || !fs.Materialized {
+		if fs != nil && !fs.V.IsDeleted() && !fs.Materialized {
+			e.requestRestore(rel) // not on disk here (it was behind a link): fetch it
+			return
+		}
+		if fs == nil || fs.V.IsDeleted() {
 			return // never had it here: not a delete
 		}
 		if !e.rootPresent(entry, e.st.Entries[entry]) {
@@ -591,10 +622,17 @@ func (e *Engine) refreshFile(entry, rel string, room *int) {
 
 // markMissing applies the vanished-root guard (§6.5) to entry.
 func (e *Engine) markMissing(entry string) {
+	e.markMissingWhy(entry, "the folder vanished here; deletes are not sent until it is back",
+		"~/"+entry+" vanished; deletes are not sent until it is back")
+}
+
+// markMissingWhy is markMissing with the activity detail and the
+// notification shown to the user.
+func (e *Engine) markMissingWhy(entry, detail, note string) {
 	if !e.missing[entry] {
-		e.log.Warn("entry root vanished; not propagating deletes", "entry", entry)
-		e.event(EvError, entry, "", "the folder vanished here; deletes are not sent until it is back")
-		e.notify(entry, "~/"+entry+" vanished; deletes are not sent until it is back")
+		e.log.Warn("entry root missing; not propagating deletes", "entry", entry, "why", detail)
+		e.event(EvError, entry, "", detail)
+		e.notify(entry, note)
 	}
 	e.missing[entry] = true
 }
@@ -685,7 +723,13 @@ func (e *Engine) firstAddPolicy(entry, rel string) proto.FirstAddPolicy {
 // accept reports the entry covering rel if remote changes to it may apply.
 func (e *Engine) accept(rel string) (string, bool) {
 	entry, _, ok := e.entryFor(rel)
-	if !ok || e.ignored(entry, rel) || e.missing[entry] {
+	if !ok || e.ignored(entry, rel) {
+		return "", false
+	}
+	if e.missing[entry] {
+		if e.rootIsLink(entry) {
+			e.shadowIn[rel] = true // fetched once the root is a folder again
+		}
 		return "", false
 	}
 	return entry, true
@@ -794,6 +838,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 		if m, ok := e.tryMerge(rel, cur, in, anc, content); ok {
 			d = DecideMerged(rel, cur, in, m)
 		}
+		d = e.restoreDecision(entry, rel, in, d)
 		if d.Action == Apply && d.Result.Link {
 			if _, err := os.Lstat(e.abs(linkTarget)); err != nil {
 				// Never a dangling link: wait for the target (D23). Not a
@@ -869,6 +914,9 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 		// copying there would change what the link points at.
 		e.log.Warn("not writing through a symlinked folder", "path", rel)
 		e.markSkipped(entry, rel)
+		if d.Action != Delete {
+			e.shadowIn[rel] = true // fetched once it is not behind a link (restore.go)
+		}
 		return nil
 	}
 	switch d.Action {
@@ -929,12 +977,25 @@ func (e *Engine) execute(p *peer, entry, rel string, in version.Version, anc []v
 			}
 		}
 		if d.Backup || (d.Copy != nil && !d.Copy.FromIncoming) {
-			local, err := os.ReadFile(abs)
-			if err != nil {
-				return err
-			}
-			if !onDisk || fsx.Hash(local) != basis {
-				return fsx.ErrChanged
+			var local []byte
+			if fs := e.st.Files[rel]; !onDisk && fs != nil && !fs.V.IsDeleted() && e.needsRestore(entry, rel) {
+				// The local version is not on disk here (it was behind a
+				// link): keep it from history, as it would be from disk.
+				data, ok := e.hist.Get(fs.V.Hash)
+				if !ok {
+					e.log.Warn("local version not on disk nor in history; nothing to keep", "path", rel)
+					d.Backup, d.Copy = false, nil
+				}
+				local = data
+			} else {
+				data, err := os.ReadFile(abs)
+				if err != nil {
+					return err
+				}
+				if !onDisk || fsx.Hash(data) != basis {
+					return fsx.ErrChanged
+				}
+				local = data
 			}
 			if d.Backup {
 				if err := e.backup(rel, local); err != nil {

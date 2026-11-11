@@ -99,7 +99,12 @@ type Engine struct {
 	missing   map[string]bool            // entry root vanished locally (§6.5 guard)
 	linkNotes map[string]*linkNote       // rel -> a link skipped, pending or blocked here (D23)
 	pending   map[string]*pendingLink    // rel -> a received link waiting for its target (D23)
-	dirty     bool
+	// shadowIn: paths a peer changed while they were behind a symlinked
+	// folder here; fetched once they are not (restore.go). restoreAsked:
+	// when each path was last asked for.
+	shadowIn     map[string]bool
+	restoreAsked map[string]time.Time
+	dirty        bool
 
 	machinesChanged chan struct{} // coalesced OnMachines notifications
 
@@ -166,6 +171,7 @@ func New(o Options) (*Engine, error) {
 		peers:     map[string]*peer{}, matchers: map[string]*fsx.Matcher{},
 		skipped: map[string]map[string]bool{}, overLimit: map[string]map[string]bool{}, missing: map[string]bool{},
 		linkNotes: map[string]*linkNote{}, pending: map[string]*pendingLink{},
+		shadowIn: map[string]bool{}, restoreAsked: map[string]time.Time{},
 		machinesChanged: make(chan struct{}, 1),
 		hashStat:        fsx.Stat, settle: stampSettle,
 		probes: map[string]*probeCollector{}, probeSem: make(chan struct{}, 2),

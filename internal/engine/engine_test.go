@@ -27,6 +27,7 @@ type machine struct {
 	e       *Engine
 	noWatch bool
 	opts    func(*Options)
+	barrier int // settle's counter (barrier_test.go)
 }
 
 func newMachine(t *testing.T, name string, mods ...func(*Options)) *machine {
