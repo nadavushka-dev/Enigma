@@ -116,7 +116,7 @@ where a typo could do harm: groups are always picked from a list, and a
 list always selects — `enter` opens the choice.
 
 <div align="center">
-<img src="demo/tui.gif" alt="the Enigma TUI: machines, groups, files and the activity feed" width="900">
+<img src="demo/tui.gif" alt="the Enigma TUI: machines, groups, files with each link's target and state, s turning links off and on, and the activity feed" width="900">
 </div>
 
 ## Commands
@@ -170,6 +170,11 @@ another agent at the same files. It ships in the release tarball.
   nor deletes links, in either direction: removing a link on one machine
   leaves it on the others (turn links back on and it comes back), but a
   link you replace with a regular file syncs like any edit.
+
+  <div align="center">
+  <img src="demo/links.gif" alt="a repo of agent skills synced with enigma add, the flat ~/.agents/skills synced with --links, devbox reading the link under its own home, an edit and a new linked skill arriving, then status with a link to /etc skipped" width="900">
+  </div>
+
 - **Deleting a whole synced folder deletes nothing elsewhere.** If the
   folder you added (or a synced file's parent folder) is deleted, moved
   away or replaced by a symlink, Enigma does not create it again; status
