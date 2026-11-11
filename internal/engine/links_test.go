@@ -133,14 +133,14 @@ func TestD23_LinkReplicatedWhenTargetManaged(t *testing.T) {
 func TestD23_HomeRelativeAcrossDifferentHomesHasNoEcho(t *testing.T) {
 	a, b := skillsFleet(t)
 	eventually(t, "link on b", hasLink(b, ".agents/skills/foo", b.path("repo/skills/foo")))
-	time.Sleep(200 * time.Millisecond)
+	settle(t, a, b)
 	before := map[string]version.Vector{}
 	for _, m := range []*machine{a, b} {
 		before[m.name] = cur(m, ".agents/skills/foo").Vector
 	}
 	a.e.Rescan()
 	b.e.Rescan()
-	time.Sleep(300 * time.Millisecond)
+	settle(t, a, b)
 	for _, m := range []*machine{a, b} {
 		if got := cur(m, ".agents/skills/foo").Vector; version.Compare(got, before[m.name]) != version.Equal {
 			t.Fatalf("%s made a new version of an unchanged link: %v -> %v", m.name, before[m.name], got)
@@ -161,7 +161,7 @@ func TestD23_LinkToUnmanagedTargetSkipped(t *testing.T) {
 	a.symlink(".agents/skills/x", a.path("elsewhere/x"))
 	eventually(t, "reported skipped", linkState(a, ".agents/skills/x", LinkSkipped))
 	eventually(t, "the managed one still syncs", hasLink(b, ".agents/skills/foo", b.path("repo/skills/foo")))
-	time.Sleep(200 * time.Millisecond)
+	settle(t, a, b)
 	if b.readlink(".agents/skills/x") != "<no link>" || cur(b, ".agents/skills/x") != nil {
 		t.Fatal("a link to an unsynced target was replicated")
 	}
@@ -181,7 +181,7 @@ func TestD23_LinkTargetOutsideHomeSkipped(t *testing.T) {
 			t.Fatalf("%s reason = %q", rel, l.Reason)
 		}
 	}
-	time.Sleep(200 * time.Millisecond)
+	settle(t, a, b)
 	if b.readlink(".agents/skills/out") != "<no link>" || b.readlink(".agents/skills/up") != "<no link>" {
 		t.Fatal("a link outside ~ was replicated")
 	}
@@ -201,7 +201,7 @@ func TestD23_LinkIntoOtherGroupSkippedAndPathNotLeaked(t *testing.T) {
 	if l, _ := linkStatus(a, ".agents/skills/foo"); !strings.Contains(l.Reason, "another group") {
 		t.Fatalf("reason = %q", l.Reason)
 	}
-	time.Sleep(200 * time.Millisecond)
+	settle(t, a, b, c)
 	for _, m := range []*machine{b, c} {
 		if cur(m, ".agents/skills/foo") != nil || m.readlink(".agents/skills/foo") != "<no link>" {
 			t.Fatalf("%s got a link into another group", m.name)
@@ -212,10 +212,18 @@ func TestD23_LinkIntoOtherGroupSkippedAndPathNotLeaked(t *testing.T) {
 	}
 }
 
+// A link can reach a machine before its target (catch-up order, or here:
+// b refuses the target's only file as oversized). It waits, and is
+// created once the target arrives.
 func TestD23_LinkPendingUntilTargetArrives(t *testing.T) {
-	a, b := skillsFleet(t)
-	eventually(t, "first link on b", hasLink(b, ".agents/skills/foo", b.path("repo/skills/foo")))
-	a.symlink(".agents/skills/later", a.path("repo/skills/later")) // not there yet, on either
+	a, b := newMachine(t, "a"), newMachine(t, "b", func(o *Options) { o.MaxFileSize = 16 })
+	a.write("repo/skills/foo/SKILL.md", "foo")
+	a.write("repo/skills/later/BIG.md", strings.Repeat("x", 64)) // over b's limit
+	a.write(".agents/skills/x.md", "x")
+	a.symlink(".agents/skills/later", a.path("repo/skills/later"))
+	a.add("repo/skills")
+	a.addLinks(".agents/skills")
+	link(t, a, b)
 	eventually(t, "pending on b", linkState(b, ".agents/skills/later", LinkPending))
 	if b.readlink(".agents/skills/later") != "<no link>" {
 		t.Fatal("a dangling link was created")
@@ -223,6 +231,26 @@ func TestD23_LinkPendingUntilTargetArrives(t *testing.T) {
 	a.write("repo/skills/later/SKILL.md", "later")
 	eventually(t, "link created once its target arrived", hasLink(b, ".agents/skills/later", b.path("repo/skills/later")))
 	eventually(t, "synced", linkState(b, ".agents/skills/later", LinkSynced))
+}
+
+// A link dangling on the machine that has it is not replicated (no peer
+// waits for a target that may never come); it is once its target exists.
+func TestD23_DanglingHereIsNotReplicated(t *testing.T) {
+	a, b := skillsFleet(t)
+	eventually(t, "first link on b", hasLink(b, ".agents/skills/foo", b.path("repo/skills/foo")))
+	a.symlink(".agents/skills/later", a.path("repo/skills/later"))
+	a.e.Rescan()
+	eventually(t, "a reports it", linkState(a, ".agents/skills/later", LinkSkipped))
+	if l, _ := linkStatus(a, ".agents/skills/later"); !strings.Contains(l.Reason, "not here") {
+		t.Fatalf("reason = %q", l.Reason)
+	}
+	settle(t, a, b)
+	if _, ok := linkStatus(b, ".agents/skills/later"); ok || cur(b, ".agents/skills/later") != nil {
+		t.Fatal("a dangling link reached b")
+	}
+	a.write("repo/skills/later/SKILL.md", "later")
+	a.e.Rescan()
+	eventually(t, "link on b once its target exists", hasLink(b, ".agents/skills/later", b.path("repo/skills/later")))
 }
 
 func TestD23_RetargetPropagates(t *testing.T) {
@@ -255,7 +283,7 @@ func TestD23_ConcurrentRetargetLoserInTrash(t *testing.T) {
 	b.e.Rescan()
 	link(t, a, b)
 	eventually(t, "b's newer retarget wins on a", hasLink(a, ".agents/skills/s", "../../repo/skills/baz"))
-	time.Sleep(300 * time.Millisecond)
+	settle(t, a, b)
 	if b.readlink(".agents/skills/s") != "../../repo/skills/baz" {
 		t.Fatal("b lost its winning retarget")
 	}
@@ -280,7 +308,7 @@ func TestD23_DeleteTrashesLinkObjectNotTarget(t *testing.T) {
 	if !linkTrashed(b, b.path("repo/skills/foo")) {
 		t.Fatal("b's link is not in its trash")
 	}
-	time.Sleep(200 * time.Millisecond)
+	settle(t, a, b)
 	if b.read("repo/skills/foo/SKILL.md") != "foo" || a.read("repo/skills/foo/SKILL.md") != "foo" {
 		t.Fatal("deleting the link touched its target")
 	}
@@ -291,12 +319,17 @@ func TestD8_RetargetBeatsDelete(t *testing.T) {
 	eventually(t, "link on b", hasLink(b, ".agents/skills/foo", b.path("repo/skills/foo")))
 	eventually(t, "bar on b", hasFile(b, "repo/skills/bar/SKILL.md", "bar"))
 	cutAll(t, a, b)
-	os.Remove(a.path(".agents/skills/foo"))
-	a.e.Rescan()
 	b.retarget(".agents/skills/foo", b.path("repo/skills/bar"))
 	b.e.Rescan()
+	time.Sleep(1100 * time.Millisecond) // the delete is newer: only D8 keeps the retarget
+	os.Remove(a.path(".agents/skills/foo"))
+	a.e.Rescan()
 	link(t, a, b)
 	eventually(t, "the retarget is back on a", hasLink(a, ".agents/skills/foo", a.path("repo/skills/bar")))
+	settle(t, a, b)
+	if b.readlink(".agents/skills/foo") != b.path("repo/skills/bar") {
+		t.Fatal("b lost its retarget to the delete")
+	}
 }
 
 func TestD23_LinkVsFolderReportedNeverClobbered(t *testing.T) {
@@ -309,7 +342,7 @@ func TestD23_LinkVsFolderReportedNeverClobbered(t *testing.T) {
 	a.addLinks(".agents/skills")
 	link(t, a, b)
 	eventually(t, "b reports the link blocked", linkState(b, ".agents/skills/foo", LinkBlocked))
-	time.Sleep(300 * time.Millisecond)
+	settle(t, a, b)
 	if b.read(".agents/skills/foo/SKILL.md") != "b's own" {
 		t.Fatal("b's folder was clobbered")
 	}
@@ -353,7 +386,7 @@ func TestD13_ReplaceBacksUpFileBeforeLink(t *testing.T) {
 	if !backedUp(b, "b's file") {
 		t.Fatal("b's file was not backed up")
 	}
-	time.Sleep(200 * time.Millisecond)
+	settle(t, a, b)
 	if n := len(conflictCopies(a, ".agents/skills", "foo")) + len(conflictCopies(b, ".agents/skills", "foo")); n != 0 {
 		t.Fatalf("%d conflict copies with this machine wins", n)
 	}
@@ -409,7 +442,7 @@ func TestD23_LinksOffByDefaultAndToggled(t *testing.T) {
 	a.add(".agents/skills")
 	link(t, a, b)
 	eventually(t, "x on b", hasFile(b, ".agents/skills/x.md", "x"))
-	time.Sleep(200 * time.Millisecond)
+	settle(t, a, b)
 	if b.readlink(".agents/skills/foo") != "<no link>" {
 		t.Fatal("a link synced with links off")
 	}
@@ -432,9 +465,8 @@ func TestD23_ReceiverRechecksEligibility(t *testing.T) {
 		v := version.Version{Hash: fsx.LinkHash(target), Vector: version.Vector{"id-a": 1000}, Mtime: time.Now().UnixNano(), By: "id-a", ByName: "a", Link: true}
 		b.e.do(func() {
 			p := b.e.peers["id-a"]
-			b.e.onFile(p, ".agents/skills/bad", v, nil, []byte(target))
+			b.e.onFile(p, ".agents/skills/bad", v, nil, []byte(target)) // synchronous: on b's loop
 		})
-		time.Sleep(50 * time.Millisecond)
 		if b.readlink(".agents/skills/bad") != "<no link>" || cur(b, ".agents/skills/bad") != nil {
 			t.Fatalf("b materialized an ineligible link to %s", target)
 		}

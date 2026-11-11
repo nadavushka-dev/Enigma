@@ -154,6 +154,10 @@ func (e *Engine) linkReason(entry, linkRel, target string) string {
 	if target == linkRel || strings.HasPrefix(target, linkRel+"/") {
 		return "it points at itself"
 	}
+	if target == "." || strings.HasPrefix(linkRel, target+"/") {
+		// A harness following it would walk into it again and again.
+		return "it points at a folder that contains it (a loop)"
+	}
 	for p, tr := range e.st.Entries {
 		if tr.Removed || !(target == p || tr.Dir && strings.HasPrefix(target, p+"/")) {
 			continue
@@ -182,7 +186,16 @@ func (e *Engine) linkInfo(entry, rel string, info fsx.Info) (li fsx.Info, stored
 	if reason := e.linkReason(entry, rel, target); reason != "" {
 		return fsx.Info{}, stored, reason
 	}
-	return fsx.Info{Kind: fsx.Other, Link: true, Target: stored, Hash: fsx.LinkHash(stored), Mtime: info.Mtime}, stored, ""
+	h := fsx.LinkHash(stored)
+	if _, err := os.Lstat(e.abs(target)); err != nil {
+		// Dangling here: never sent as a new link or retarget, so no
+		// machine waits for a target that may never come. One already
+		// synced stays as it is (reported dangling).
+		if fs := e.st.Files[rel]; fs == nil || fs.V.IsDeleted() || fs.V.Hash != h {
+			return fsx.Info{}, stored, "its target ~/" + target + " is not here (a dangling link is not replicated)"
+		}
+	}
+	return fsx.Info{Kind: fsx.Other, Link: true, Target: stored, Hash: h, Mtime: info.Mtime}, stored, ""
 }
 
 // noteLink records that the link at rel is skipped, pending or blocked.
@@ -331,18 +344,32 @@ func (e *Engine) pollLinks() {
 			continue
 		}
 		seen := map[string]bool{}
-		links, _ := fsx.ListLinks(e.abs(entry), fsx.NewMatcher(nil))
-		for _, f := range links {
-			rel := entry + "/" + f
+		room := e.room(entry, r) // once per entry: refreshFile keeps it current
+		for _, rel := range e.entryLinks(entry) {
 			seen[rel] = true
-			e.refreshFile(entry, rel, e.room(entry, r))
+			e.refreshFile(entry, rel, room)
 		}
 		for rel, fs := range e.st.Files {
 			if !seen[rel] && fs.V.Link && !fs.V.IsDeleted() && strings.HasPrefix(rel, entry+"/") {
-				e.refreshFile(entry, rel, e.room(entry, r))
+				e.refreshFile(entry, rel, room)
 			}
 		}
 	}
+}
+
+// entryLinks lists the symlinks of a folder entry (paths from ~), without
+// walking what the entry ignores.
+func (e *Engine) entryLinks(entry string) []string {
+	m := e.matchers[entry]
+	if m == nil {
+		m = fsx.NewMatcher(e.st.Entries[entry].Ignore)
+	}
+	links, _ := fsx.ListLinks(e.abs(entry), m)
+	out := make([]string, len(links))
+	for i, f := range links {
+		out[i] = entry + "/" + f
+	}
+	return out
 }
 
 // linkStatuses lists the links of entry for status; loop only.
