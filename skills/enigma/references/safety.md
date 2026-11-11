@@ -84,6 +84,8 @@ state to "reset" syncing.
 | Deleted by a synced delete | Each machine's `trash/<day>/<path>` |
 | Concurrent edit could not merge | The `.conflict-` copy next to the file |
 | First-add keep-both | A `.conflict-` copy; inside a folder it syncs, beside a single file it stays on the machines that resolved it |
-| Entry root vanished | `status` `Missing`; deletes are suppressed until the root is back |
+| Entry root vanished (deleted, moved, or a symlink) | `status` `Missing`; deletes are suppressed and the root is not re-created; the other machines still have the files, and a folder put back gets them restored (`Restoring` lists them until they are here) |
+| A link removed with links off | Still on the other machines; turning links back on restores it here |
+| A link that lost to another version | This machine's trash (`enigma trash list`); activity says `link-lost` |
 
 Nothing is deleted silently by Enigma itself.

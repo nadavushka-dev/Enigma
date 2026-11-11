@@ -104,14 +104,30 @@ Common causes:
 - **Daemon down:** `enigma service install` (ask first) or `enigma daemon`.
 - **Over the file limit:** `entries[].OverLimit` (the nested entry keys are
   capitalized: `Path`, `Dir`, `Group`, `Frozen`, `Missing`, `Skipped`,
-  `OverLimit`). Raise with `enigma limits --files N` after asking.
+  `OverLimit`, `Restoring`, `Unwatched`, `UnwatchedFolders`,
+  `IdentityUnreliable`). Raise with `enigma limits --files N` after asking.
 - **Skipped files:** `entries[].Skipped` — symlinks or over the size limit.
 - **Links** (folders with `LinksOn`): `entries[].Links[]` has each link's
   `State` and `Reason`. Pending waits for its target; blocked means a
   folder is in the way on this machine (the user keeps one); dangling
   links are left alone.
-- **Entry root vanished:** `entries[].Missing`; deletes are suppressed until
-  it is back.
+- **Entry root vanished:** `entries[].Missing` (status `MISSING LOCALLY`):
+  the folder was deleted, moved away or replaced by a symlink. Enigma does
+  not re-create it and sends no deletes. Putting a folder back restores the
+  files from the other machines. Deleting a whole synced folder never
+  deletes elsewhere; to delete files everywhere, delete the files inside it
+  (ask first).
+- **Restoring:** `entries[].Restoring` lists files coming back from the
+  other machines (a replaced folder, a removed link); they need a linked
+  machine that has them.
+- **Not watched:** `entries[].Unwatched` (`NOT WATCHED`) or
+  `UnwatchedFolders` (`PARTLY WATCHED`): changes there sync only at the
+  next check; Enigma retries. On Linux the usual cause is the inotify watch
+  limit (`sysctl fs.inotify.max_user_watches`); raising it needs the user.
+- **Frozen:** `entries[].Frozen` (`not synced here`): this machine is not
+  in the entry's group.
+- **Links off:** links are neither created nor deleted by sync; a link
+  removed on one machine stays on the others.
 - **Version mismatch:** the fleet upgrades itself; wait for the link to come
   back. Do not run a dev build against a live fleet.
 - **Conflict:** compare the original and the copy; keep what is needed, then
@@ -135,6 +151,12 @@ entries; the files stay.
 Ask before any of these, and show exactly what changes:
 
 - `enigma remove <path>` — stops syncing; files stay.
+- Deleting files inside a synced folder — deletes them on every machine
+  (each keeps them in its trash 30 days). Deleting the whole folder does
+  not; it marks the entry missing locally.
+- Moving a folder inside a synced folder and linking it back — stop the
+  daemon or `enigma remove` the entry first, or the move is a delete
+  elsewhere.
 - `enigma group delete <name>` / `group merge` with `--yes` — entries stop
   syncing; files stay.
 - `enigma machine remove <name> [--uninstall]` — the machine leaves;
