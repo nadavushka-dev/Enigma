@@ -288,4 +288,35 @@ func TestDocker_LinkReplication(t *testing.T) {
 	if mac.read("vault/a.md") != "n1" || mac.read("vault/b.md") != "n2" || strings.Contains(mac.sh("enigma trash list"), "vault/") {
 		t.Fatal("a delete reached mac after a restart over a re-created root")
 	}
+
+	// 10. Hand test F1/F2 (2026-11-11, second round): deleted and re-created
+	//     on one line, and moved away, removed later, re-created: Linux
+	//     hands the new folder the old inode. Restored, never deleted, and
+	//     the new folder is watched (a file written in it syncs).
+	vaultOK := func(what string) {
+		t.Helper()
+		eventuallyLong(t, "lin restores the vault: "+what, 60*time.Second, func() bool {
+			return lin.read("vault/a.md") == "n1" && lin.read("vault/b.md") == "n2"
+		})
+		if mac.read("vault/a.md") != "n1" || mac.read("vault/b.md") != "n2" || strings.Contains(mac.sh("enigma trash list"), "vault/") {
+			t.Fatalf("a delete reached mac: %s", what)
+		}
+	}
+	before := lin.sh("stat -c %i ~/vault")
+	lin.sh("rm -rf ~/vault && mkdir ~/vault")
+	t.Logf("inode before %s, after %s", before, lin.sh("stat -c %i ~/vault"))
+	vaultOK("rm -rf && mkdir")
+	lin.sh("printf after > ~/vault/new.md")
+	eventuallyLong(t, "a file in the re-created folder syncs", 60*time.Second, func() bool { return mac.read("vault/new.md") == "after" })
+	if out := lin.sh("enigma status"); strings.Contains(out, "NOT WATCHED") || strings.Contains(out, "MISSING") {
+		t.Fatalf("lin's status:\n%s", out)
+	}
+	lin.sh("mv ~/vault ~/vault.old")
+	time.Sleep(5 * time.Second)
+	lin.sh("rm -rf ~/vault.old; mkdir ~/vault")
+	vaultOK("mv away, wait, rm -rf, mkdir")
+	barrier(t, lin, mac, 9)
+	if mac.read("vault/new.md") != "after" {
+		t.Fatal("mac lost new.md")
+	}
 }
