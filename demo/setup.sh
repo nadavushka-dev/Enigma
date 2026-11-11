@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 DEMO=${DEMO:-/tmp/enigma-demo}
 NAME=enigma-demo-devbox
 ARCH=$(go env GOARCH)
-VERSION=${VERSION:-v0.3.0} # what the recording shows
+VERSION=${VERSION:-v0.5.0} # what the recording shows
 
 sh demo/teardown.sh >/dev/null 2>&1 || true
 mkdir -p "$DEMO/bin" "$DEMO/home/.ssh" "$DEMO/keys"

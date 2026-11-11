@@ -1,9 +1,9 @@
-# Recorded by demo/record.sh, after sync.tape.
+# Recorded by demo/record.sh, after sync.tape and links.tape.
 Output demo/tui.gif
 Set Shell bash
 Set Theme "Catppuccin Mocha"
 Set FontSize 16
-Set Width 1300
+Set Width 1500
 Set Height 760
 Set TypingSpeed 60ms
 Set Padding 24
@@ -23,6 +23,12 @@ Tab Sleep 1s            # Files: "adding to pair"
 Type "G" Sleep 800ms
 Enter Sleep 1.5s        # open ~/work: synced in pair
 Sleep 3s # record.sh edits the file on devbox meanwhile: watch Activity
+Type "g" Sleep 600ms
+Enter Sleep 600ms
+Enter Sleep 600ms
+Enter Sleep 2.5s        # ~/.agents/skills: each link, its target and state
+Type "s" Sleep 2s       # links off for this folder
+Type "s" Sleep 2.5s     # and on again
 Type "?"
 Sleep 3s
 Escape
