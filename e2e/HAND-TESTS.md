@@ -112,6 +112,16 @@ Each: steps, then what must be true. "Peers" means the other two boxes.
     says `WRITE FAILING` (an error problem names the path). On s2
     `chmod 755 ~/notes/perm`: within seconds (at most a few minutes of
     backoff) s2 has the edit, the problem is gone, no restart.
+17. **todo 21 (hand test 4): stopping while reloads land.** Needs a
+    race build: `docker run --rm -v $PWD:/src -v /tmp/r:/out -w /src golang:1.26-bookworm go build -race -ldflags "-X github.com/nadavushka-dev/enigma/internal/buildinfo.Version=$(e2e/sandbox.sh run s1 enigma version | cut -d' ' -f2)" -o /out/enigma-race ./cmd/enigma`,
+    `docker cp /tmp/r/enigma-race enigma-sandbox-s1:/usr/local/bin/`.
+    On s1, stop the daemon, then many times: start
+    `GORACE=log_path=/tmp/race/r enigma-race daemon &`, run a few loops of
+    `enigma machine alias s2 s2x; enigma machine alias s2` (each reload
+    replaces s2's dial loop), `kill -TERM` the daemon mid-loop.
+    Expect: no `/tmp/race/r.*` file. It was 1 in 150 stops before the fix
+    (`reload` at daemon.go:578 against `Run`'s `wg.Wait`). Then
+    `enigma service install` to get the normal daemon back.
 13. **S5: links off.** `enigma entry links ~/.agents/skills off` on s1,
     then `rm ~/.agents/skills/foo` on s1.
     Expect: the peers keep their link (nothing in their trash). Turn links

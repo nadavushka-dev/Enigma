@@ -252,6 +252,11 @@ func (d *daemon) reload() error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// Stopping: Run has cancelled the dial loops under mu and waits for them;
+	// a new loop's wg.Add would race that Wait and outlive Run.
+	if d.ctx.Err() != nil {
+		return err
+	}
 	for id, ps := range d.peers {
 		if w, ok := want[id]; !ok || !slices.Equal(w.targets, ps.targets) || w.rec.Bin != ps.rec.Bin {
 			ps.cancel()

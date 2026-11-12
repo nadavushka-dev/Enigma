@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -398,6 +399,52 @@ func TestRemovedMachineIsNotDialed(t *testing.T) {
 	}
 	if p := peerReport(a, "b"); p.Name != "" {
 		t.Fatalf("removed machine still listed: %+v", p)
+	}
+}
+
+// TestReloadDuringShutdownStartsNoDialLoop: a reload that lands while the
+// daemon is stopping (a machine record arriving, `enigma machine` calling
+// /reload) must not start a dial loop: its wg.Add would race Run's
+// wg.Wait, and the loop would outlive Run and use the closed engine.
+// Under -race the detector reports the Add/Wait race (hand test, todo 21).
+func TestReloadDuringShutdownStartsNoDialLoop(t *testing.T) {
+	for round := 0; round < 20; round++ {
+		n := newNetwork()
+		var flips atomic.Int64
+		// The ghost's alias comes and goes on every lookup, so every reload
+		// sees new targets and replaces its dial loop.
+		a := n.node(t, "a", func(o *Options) { o.HasAlias = func(string) bool { return flips.Add(1)%2 == 0 } })
+		config.Init(a.paths, "a")
+		a.start()
+		if err := a.client().SetMachine(proto.MachineRecord{ID: config.NewID(), Name: "ghost", Alias: "g", Target: "ghost"}); err != nil {
+			t.Fatal(err)
+		}
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c := a.client()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+						c.Reload()
+					}
+				}
+			}()
+		}
+		time.Sleep(time.Duration(round%5) * 5 * time.Millisecond)
+		a.stop()
+		after := len(n.tried())
+		time.Sleep(50 * time.Millisecond)
+		close(stop)
+		wg.Wait()
+		if late := n.tried()[after:]; len(late) > 0 {
+			t.Fatalf("round %d: dialed after the daemon stopped: %v", round, late)
+		}
 	}
 }
 
