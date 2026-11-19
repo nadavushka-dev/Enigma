@@ -1,6 +1,6 @@
 ---
 name: enigma
-description: Use when the user wants to keep files or folders identical across their machines with Enigma: syncing dotfiles, agent rules, or notes; adding a path that already exists on another machine; checking why a file is not syncing; resolving conflict copies; restoring a deleted file; managing Enigma groups or machines; or changing fleet limits. Trigger on "sync my dotfiles", "get ~/.claude onto devbox", "why isn't ~/notes on nas", "only share this folder with laptop and devbox", "enigma status", "enigma doctor", or "enigma conflicts".
+description: "Use when the user wants to keep files or folders identical across their machines with Enigma: syncing dotfiles, agent rules, or notes; adding a path that already exists on another machine; checking why a file is not syncing; resolving conflict copies; restoring a deleted file; managing Enigma groups or machines; or changing fleet limits. Trigger on \"sync my dotfiles\", \"get ~/.claude onto devbox\", \"why isn't ~/notes on nas\", \"only share this folder with laptop and devbox\", \"enigma status\", \"enigma doctor\", or \"enigma conflicts\"."
 ---
 
 # Enigma
