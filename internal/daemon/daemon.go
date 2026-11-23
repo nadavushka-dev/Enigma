@@ -504,6 +504,13 @@ type AddRequest struct {
 	Links    bool                            `json:"links,omitempty"`    // replicate links in the folder (D23)
 }
 
+// MergeRequest sets how an entry merges concurrent edits (SPEC §7).
+type MergeRequest struct {
+	Path     string          `json:"path"`
+	Mode     proto.MergeMode `json:"mode"`
+	NewestBy string          `json:"newest_by,omitempty"`
+}
+
 // LinksRequest turns link replication on or off for a folder entry (D23).
 type LinksRequest struct {
 	Path string `json:"path"`
@@ -570,6 +577,14 @@ func (d *daemon) api() http.Handler {
 			return
 		}
 		reply(w, struct{}{}, d.eng.SetLinks(req.Path, req.On))
+	})
+	mux.HandleFunc("POST /merge", func(w http.ResponseWriter, r *http.Request) {
+		var req MergeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			reply(w, nil, err)
+			return
+		}
+		reply(w, struct{}{}, d.eng.SetMerge(req.Path, req.Mode, req.NewestBy))
 	})
 	mux.HandleFunc("POST /remove", func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest

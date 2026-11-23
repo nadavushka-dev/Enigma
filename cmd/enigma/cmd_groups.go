@@ -18,7 +18,7 @@ import (
 func init() {
 	register(&command{name: "group", args: "list [--json] | create <name> [machine]... | delete <name> [--yes] | rename <name> <new> | add <name> <machine>... | remove <name> <machine>... | merge <from> <into> [--yes] [--add-members]",
 		summary: "groups: which machines sync which entries (SPEC §9)", run: cmdGroup})
-	register(&command{name: "entry", args: "move <path> <group> | links <path> on|off", summary: "move a synced file or folder to another group; turn link replication on or off for a synced folder", run: cmdEntry})
+	register(&command{name: "entry", args: "move <path> <group> | links <path> on|off | merge <path> lines|json [--newest-by FIELD]", summary: "move a synced file or folder to another group; turn link replication on or off for a synced folder; merge concurrent edits by lines or by JSON key", run: cmdEntry})
 }
 
 func cmdGroup(c *ctx, args []string) error {
@@ -374,6 +374,9 @@ func cmdEntry(c *ctx, args []string) error {
 	if len(args) >= 1 && args[0] == "links" {
 		return cmdEntryLinks(c, args[1:])
 	}
+	if len(args) >= 1 && args[0] == "merge" {
+		return cmdEntryMerge(c, args[1:])
+	}
 	if len(args) != 3 || args[0] != "move" {
 		return usageError{"entry move needs a path and a group"}
 	}
@@ -421,6 +424,44 @@ func cmdEntryLinks(c *ctx, args []string) error {
 		fmt.Fprintf(c.stdout, "%s: links are replicated when their target is synced in the same group\n", tilde(abs))
 	} else {
 		fmt.Fprintf(c.stdout, "%s: links are skipped again; the links already made stay\n", tilde(abs))
+	}
+	return nil
+}
+
+// cmdEntryMerge is `entry merge <path> lines|json [--newest-by FIELD]` (SPEC §7).
+func cmdEntryMerge(c *ctx, args []string) error {
+	bad := usageError{"entry merge needs a synced path and lines or json (json may add --newest-by FIELD)"}
+	if len(args) != 2 && len(args) != 4 {
+		return bad
+	}
+	mode, newestBy := proto.MergeMode(args[1]), ""
+	if mode != proto.MergeLines && mode != proto.MergeJSON {
+		return bad
+	}
+	if len(args) == 4 {
+		if args[2] != "--newest-by" || args[3] == "" || mode != proto.MergeJSON {
+			return bad
+		}
+		newestBy = args[3]
+	}
+	abs, err := absPath(args[0])
+	if err != nil {
+		return err
+	}
+	cl, err := client()
+	if err != nil {
+		return err
+	}
+	if err := cl.SetMerge(abs, mode, newestBy); err != nil {
+		return err
+	}
+	switch {
+	case mode == proto.MergeLines:
+		fmt.Fprintf(c.stdout, "%s: concurrent edits merge by lines\n", tilde(abs))
+	case newestBy != "":
+		fmt.Fprintf(c.stdout, "%s: concurrent edits merge by JSON key; a key changed on both sides keeps the value with the larger %q\n", tilde(abs), newestBy)
+	default:
+		fmt.Fprintf(c.stdout, "%s: concurrent edits merge by JSON key\n", tilde(abs))
 	}
 	return nil
 }

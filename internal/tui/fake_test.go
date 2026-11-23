@@ -143,6 +143,11 @@ func (f *fake) SetLinks(abs string, on bool) error {
 	return f.opErr
 }
 
+func (f *fake) SetMerge(abs string, mode proto.MergeMode, newestBy string) error {
+	f.call(strings.TrimSpace("merge "+string(mode)+" "+newestBy) + " " + abs)
+	return f.opErr
+}
+
 func (f *fake) SetLimits(l engine.Limits) (engine.Limits, error) {
 	f.call(fmt.Sprintf("set-limits %d %d", l.MaxFileSize, l.MaxFiles))
 	if f.opErr != nil {

@@ -110,6 +110,18 @@ const (
 	FirstAddReplace FirstAddPolicy = "replace"
 )
 
+// MergeMode is how an entry merges concurrent edits (SPEC §7 step 3).
+type MergeMode string
+
+const (
+	// MergeLines is the three-way line merge. It is the default; records
+	// store it as empty.
+	MergeLines MergeMode = "lines"
+	// MergeJSON merges a file that is one JSON object key by key, each
+	// top-level value whole; other files still merge lines.
+	MergeJSON MergeMode = "json"
+)
+
 // EntryRecord is one entry in the replicated fleet state (SPEC §6.4).
 // The record with the highest (Clock, By) wins.
 type EntryRecord struct {
@@ -131,6 +143,13 @@ type EntryRecord struct {
 	// inside it whose target is synced in the same group are replicated
 	// as links. Off by default; then symlinks are skipped (D15).
 	Links bool `json:"links,omitempty"`
+
+	// Merge is how concurrent edits are merged (SPEC §7 step 3). Empty
+	// means MergeLines.
+	Merge MergeMode `json:"merge,omitempty"`
+	// MergeNewestBy, with MergeJSON, ranks a key changed on both sides:
+	// the value whose field of this name is the larger number wins whole.
+	MergeNewestBy string `json:"merge_newest_by,omitempty"`
 }
 
 // FirstAddFor is the policy for rel, a tracked path at or under the entry.

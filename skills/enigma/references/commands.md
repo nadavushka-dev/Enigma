@@ -34,6 +34,7 @@ Global:
 | `enigma status [--json]` | Problems first, then peers, entries, limits and conflict copies. |
 | `enigma entry move <path> <group>` | Move an entry to another group. |
 | `enigma entry links <path> on\|off` | Turn link replication on or off for a synced folder. |
+| `enigma entry merge <path> lines\|json [--newest-by FIELD]` | How concurrent edits merge: by lines (default), or a file that is one JSON object by top-level key. `--newest-by FIELD`: a key changed on both sides keeps the value whose numeric `FIELD` is larger. Status shows `json merge`; `status --json` has `Merge` and `MergeNewestBy`. |
 
 ## Groups
 

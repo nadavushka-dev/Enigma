@@ -982,7 +982,7 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 		e.refreshFile(entry, rel, nil)
 		cur := e.current(rel)
 		d := DecidePolicy(rel, cur, in, true, e.firstAddPolicy(entry, rel))
-		if m, ok := e.tryMerge(rel, cur, in, anc, content); ok {
+		if m, ok := e.tryMerge(entry, rel, cur, in, anc, content); ok {
 			d = DecideMerged(rel, cur, in, m)
 		}
 		d = e.restoreDecision(entry, rel, in, d)
@@ -1008,8 +1008,10 @@ func (e *Engine) onFile(p *peer, rel string, in version.Version, anc []version.N
 // tryMerge three-way merges concurrent text edits on their common base
 // (SPEC §7 step 3). It fails, sending Decide to the fallback, when there is
 // no base, its content is not in history, a side is not text, or the edits
-// overlap.
-func (e *Engine) tryMerge(rel string, cur *version.Version, in version.Version, anc []version.Node, content []byte) (Merged, bool) {
+// overlap. An entry with merge json merges a file that is one JSON object
+// key by key, and never by lines (a line merge could mix two versions of
+// one value).
+func (e *Engine) tryMerge(entry, rel string, cur *version.Version, in version.Version, anc []version.Node, content []byte) (Merged, bool) {
 	if cur == nil || cur.IsDeleted() || in.IsDeleted() || cur.Hash == in.Hash || cur.Link || in.Link ||
 		version.Compare(in.Vector, cur.Vector) != version.Concurrent {
 		return Merged{}, false
@@ -1031,11 +1033,20 @@ func (e *Engine) tryMerge(rel string, cur *version.Version, in version.Version, 
 	if !merge.IsText(baseData) || !merge.IsText(local) || !merge.IsText(content) {
 		return Merged{}, false
 	}
-	out, ok := merge.Merge3(baseData, local, content)
+	how := "lines"
+	out, isJSON, ok := []byte(nil), false, false
+	if r := e.st.Entries[entry]; r.Merge == proto.MergeJSON {
+		out, isJSON, ok = merge.JSON3(baseData, local, content, r.MergeNewestBy)
+		how = "json"
+	}
+	if !isJSON {
+		out, ok = merge.Merge3(baseData, local, content)
+		how = "lines"
+	}
 	if !ok {
 		return Merged{}, false
 	}
-	e.log.Info("merged concurrent edits", "path", rel)
+	e.log.Info("merged concurrent edits", "path", rel, "how", how)
 	return Merged{Hash: fsx.Hash(out), Content: out}, true
 }
 

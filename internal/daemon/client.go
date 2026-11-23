@@ -70,6 +70,11 @@ func (c *Client) SetLinks(abs string, on bool) error {
 	return c.do(http.MethodPost, "/links", LinksRequest{Path: abs, On: on}, nil)
 }
 
+// SetMerge sets how the entry at abs merges concurrent edits (SPEC §7).
+func (c *Client) SetMerge(abs string, mode proto.MergeMode, newestBy string) error {
+	return c.do(http.MethodPost, "/merge", MergeRequest{Path: abs, Mode: mode, NewestBy: newestBy}, nil)
+}
+
 // MoveEntry puts the entry at abs in another group (a group ID).
 func (c *Client) MoveEntry(abs string, group string) error {
 	return c.do(http.MethodPost, "/move", pathRequest{Path: abs, Group: group}, nil)

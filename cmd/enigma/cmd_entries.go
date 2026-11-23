@@ -626,6 +626,12 @@ func entryState(e engine.EntryStatus, lim engine.Limits) string {
 	if e.LinksOn {
 		state += ", links on"
 	}
+	if e.Merge == proto.MergeJSON {
+		state += ", json merge"
+		if e.MergeNewestBy != "" {
+			state += " (newest by " + e.MergeNewestBy + ")"
+		}
+	}
 	return state
 }
 

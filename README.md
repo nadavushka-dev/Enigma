@@ -36,7 +36,8 @@ Enigma is a small daemon on each machine. You pick files and folders under
   returns.
 - **Merges, not clobbers:** concurrent edits to different lines of a text
   file merge automatically. When they can't merge, nothing is lost: the
-  other version is kept next to the file as a conflict copy.
+  other version is kept next to the file as a conflict copy. JSON files
+  can opt in to merging key by key (`enigma entry merge`).
 - **Safe deletes:** a synced delete moves the file to a trash you can
   restore from for 30 days.
 - **One version everywhere:** upgrade one machine and it upgrades the rest
@@ -130,7 +131,7 @@ list always selects — `enter` opens the choice.
 | `enigma remove <path>` | Stop syncing it. The files stay everywhere. |
 | `enigma list` · `status` | What's synced, and the state of each link. Status starts with what is wrong right now. |
 | `enigma group list` · `create <name> [machine]…` · `delete <name>` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into>` | Groups: which machines sync which entries. Delete and merge show what changes and ask (`--yes` to skip). |
-| `enigma entry move <path> <group>` · `links <path> on\|off` | Move a synced file or folder to another group; turn link replication on or off for a synced folder. |
+| `enigma entry move <path> <group>` · `links <path> on\|off` · `merge <path> lines\|json [--newest-by FIELD]` | Move a synced file or folder to another group; turn link replication on or off for a synced folder; merge concurrent edits by lines (default) or by JSON key (see below). |
 | `enigma limits [--file-size SIZE] [--files N]` | Show the fleet's limits, or change them on every machine. |
 | `enigma conflicts [--local]` | Conflict copies on every machine. |
 | `enigma trash list` · `restore <id>` · `empty` | Files removed here by a synced delete. |
@@ -199,6 +200,15 @@ another agent at the same files. It ships in the release tarball.
   Enigma carries the result to the others. Sync the skill/work folders,
   not `.git`. A conflict copy from a simultaneous edit shows up in
   `git status` on that machine — delete it or ignore it.
+- **JSON files edited on several machines.** A line merge gives up when
+  two machines change nearby lines. `enigma entry merge ~/app/state.json
+  json` merges a file that is one JSON object key by key instead: keys
+  changed on different machines merge, and the same key changed on both is
+  a conflict copy as usual (never a mix of the two values). For files
+  where each value says how fresh it is, such as OAuth tokens refreshed on
+  each machine while a laptop is offline, add `--newest-by expires`: the
+  value with the larger `expires` wins that key whole, and there is no
+  conflict copy. Other files in a folder entry keep merging by lines.
 - **Small things.** By default the limits are 10 MB per file and 2,000
   files per folder. Enigma is for the files around your projects, not the
   projects themselves. Change them for the whole fleet with

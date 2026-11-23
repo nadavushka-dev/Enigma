@@ -407,6 +407,9 @@ type EntryStatus struct {
 	// the entry known here, with its state.
 	LinksOn bool         `json:"LinksOn,omitempty"`
 	Links   []LinkStatus `json:"Links,omitempty"`
+	// Merge: how concurrent edits are merged; empty is lines (§7).
+	Merge         proto.MergeMode `json:"Merge,omitempty"`
+	MergeNewestBy string          `json:"MergeNewestBy,omitempty"`
 	// Restoring: files this machine keeps a version of but does not have
 	// on disk (they were behind a link, or the folder was replaced): they
 	// are being fetched from the other machines, never deleted (§6.5).
@@ -449,7 +452,7 @@ func (e *Engine) Status() Status {
 			if r.Removed {
 				continue
 			}
-			es := EntryStatus{Path: path, Dir: r.Dir, Group: r.Group, Frozen: !e.inScope(r), Missing: e.missing[path], LinksOn: r.Dir && r.Links}
+			es := EntryStatus{Path: path, Dir: r.Dir, Group: r.Group, Frozen: !e.inScope(r), Missing: e.missing[path], LinksOn: r.Dir && r.Links, Merge: r.Merge, MergeNewestBy: r.MergeNewestBy}
 			if es.LinksOn && !es.Frozen {
 				es.Links = e.linkStatuses(path)
 			}

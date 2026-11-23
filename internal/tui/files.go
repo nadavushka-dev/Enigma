@@ -58,7 +58,7 @@ func (p *filesPane) Help() []KeyHelp {
 	if p.filter != nil {
 		return []KeyHelp{{"type", "filter"}, {"tab", "scope"}, {"↑/↓", "move"}, {"enter", "jump"}, {"esc", "cancel"}}
 	}
-	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"m", "move"}, {"x", "remove"}, {"s", "links"}, {"/", "filter"}}
+	return []KeyHelp{{"l/h", "open/close"}, {"a", "add"}, {"m", "move"}, {"x", "remove"}, {"s", "links"}, {"M", "merge"}, {"/", "filter"}}
 }
 
 func (p *filesPane) MoreHelp() (string, []KeyHelp) {
@@ -263,6 +263,8 @@ func (p *filesPane) Update(msg tea.Msg, s *Shared) tea.Cmd {
 		return p.remove(s, n)
 	case "s":
 		return p.toggleLinks(s, n)
+	case "M":
+		return p.setMerge(s, n)
 	case "/":
 		return p.openFilter(s)
 	}
@@ -386,6 +388,55 @@ func (p *filesPane) toggleLinks(s *Shared, n *fileNode) tea.Cmd {
 	}
 }
 
+// setMerge asks how a synced entry merges concurrent edits (SPEC §7):
+// lines, json, or json FIELD for newest by FIELD.
+func (p *filesPane) setMerge(s *Shared, n *fileNode) tea.Cmd {
+	if n == nil {
+		return nil
+	}
+	e := entryFor(s, n.rel)
+	if e == nil || e.Path != n.rel || e.Frozen {
+		return showErr(fmt.Errorf("M sets how a synced file or folder merges concurrent edits"))
+	}
+	cur := "lines"
+	if e.Merge == proto.MergeJSON {
+		cur = strings.TrimSpace("json " + e.MergeNewestBy)
+	}
+	abs := filepath.Join(s.Backend.Home(), filepath.FromSlash(n.rel))
+	b := s.Backend
+	return func() tea.Msg {
+		return OpenPrompt{Title: "Merge for ~/" + n.rel, Label: "lines, json, or json FIELD", Initial: cur,
+			Submit: func(answer string) tea.Cmd {
+				w := strings.Fields(answer)
+				var mode proto.MergeMode
+				newestBy := ""
+				switch {
+				case len(w) == 1 && w[0] == "lines":
+					mode = proto.MergeLines
+				case len(w) >= 1 && len(w) <= 2 && w[0] == "json":
+					mode = proto.MergeJSON
+					if len(w) == 2 {
+						newestBy = w[1]
+					}
+				default:
+					return showErr(fmt.Errorf("merge wants lines, json, or json FIELD (newest by FIELD), not %q", answer))
+				}
+				return func() tea.Msg {
+					if err := b.SetMerge(abs, mode, newestBy); err != nil {
+						return ShowError{Err: err}
+					}
+					if mode == proto.MergeLines {
+						return done("~/" + n.rel + " merges by lines")
+					}
+					if newestBy != "" {
+						return done("~/" + n.rel + " merges by JSON key, newest by " + newestBy)
+					}
+					return done("~/" + n.rel + " merges by JSON key")
+				}
+			}}
+	}
+}
+
 // linkOf is the status of the link at rel (D23), if its entry knows it.
 func linkOf(s *Shared, rel string) *engine.LinkStatus {
 	e := entryFor(s, rel)
@@ -442,6 +493,9 @@ func (p *filesPane) markRel(s *Shared, rel string, dir bool) string {
 		}
 		if e.LinksOn {
 			mark += " · links"
+		}
+		if e.Merge == proto.MergeJSON {
+			mark += " · json merge"
 		}
 		return mark
 	}

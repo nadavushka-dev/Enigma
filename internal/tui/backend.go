@@ -27,8 +27,9 @@ type Backend interface {
 	Preview(abs string, group string) (engine.AdoptionReport, error) // first-add report (D22)
 	Add(abs string, group string) error                              // start syncing a file or folder in a group (ID; "" is main)
 	AddWithPolicy(abs string, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error
-	Remove(abs string) error            // stop syncing an entry
-	SetLinks(abs string, on bool) error // link replication for a synced folder (D23)
+	Remove(abs string) error                                          // stop syncing an entry
+	SetLinks(abs string, on bool) error                               // link replication for a synced folder (D23)
+	SetMerge(abs string, mode proto.MergeMode, newestBy string) error // how concurrent edits merge (SPEC §7)
 	MoveEntry(abs string, group string) error
 	Groups() ([]engine.GroupInfo, error)
 	GroupOp(req daemon.GroupRequest) (string, error) // one change to a group (SPEC §9)
@@ -70,11 +71,14 @@ func (l *Live) Add(abs string, group string) error { return l.cl.Add(abs, nil, g
 func (l *Live) AddWithPolicy(abs, group string, policy proto.FirstAddPolicy, policies map[string]proto.FirstAddPolicy) error {
 	return l.cl.AddWithPolicy(abs, nil, group, policy, policies)
 }
-func (l *Live) MoveEntry(abs string, group string) error         { return l.cl.MoveEntry(abs, group) }
-func (l *Live) Groups() ([]engine.GroupInfo, error)              { return l.cl.Groups() }
-func (l *Live) GroupOp(req daemon.GroupRequest) (string, error)  { return l.cl.Group(req) }
-func (l *Live) Remove(abs string) error                          { return l.cl.Remove(abs) }
-func (l *Live) SetLinks(abs string, on bool) error               { return l.cl.SetLinks(abs, on) }
+func (l *Live) MoveEntry(abs string, group string) error        { return l.cl.MoveEntry(abs, group) }
+func (l *Live) Groups() ([]engine.GroupInfo, error)             { return l.cl.Groups() }
+func (l *Live) GroupOp(req daemon.GroupRequest) (string, error) { return l.cl.Group(req) }
+func (l *Live) Remove(abs string) error                         { return l.cl.Remove(abs) }
+func (l *Live) SetLinks(abs string, on bool) error              { return l.cl.SetLinks(abs, on) }
+func (l *Live) SetMerge(abs string, mode proto.MergeMode, newestBy string) error {
+	return l.cl.SetMerge(abs, mode, newestBy)
+}
 func (l *Live) SetLimits(x engine.Limits) (engine.Limits, error) { return l.cl.SetLimits(x) }
 
 func (l *Live) AddMachine(ctx context.Context, alias string, groups []string, out io.Writer) error {

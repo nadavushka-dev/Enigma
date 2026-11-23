@@ -137,12 +137,19 @@ Common causes:
   back. Do not run a dev build against a live fleet.
 - **Conflict:** compare the original and the copy; keep what is needed, then
   delete the copy. Do not delete either version before deciding.
+- **Recurring conflicts on a JSON file** (several machines edit different
+  keys, e.g. tokens refreshed on each while a laptop is offline): suggest
+  `enigma entry merge ~/path json` (merge by top-level key), plus
+  `--newest-by FIELD` when each value carries a number saying which is
+  newer (e.g. `expires`). It changes the entry on every machine; ask first.
+  `entries[].Merge` / `MergeNewestBy` in `status --json` show it.
 
 ## Groups, machines, limits
 
 - `enigma group list --json`, `group create`, `group add`, `group remove`,
   `group rename`, `group merge`, `group delete`.
 - `enigma entry move ~/path <group>`.
+- `enigma entry merge ~/path lines|json [--newest-by FIELD]`.
 - `enigma machine add <ssh-alias>`, `machine list --json`, `machine remove`,
   `machine rename`, `machine alias`.
 - `enigma limits --json`, `enigma limits --file-size 25MB --files 5000`.

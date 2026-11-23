@@ -3,7 +3,7 @@
 Status: **agreed**, 2026-10-20; groups, problems and the fleet rename added 2026-10-26 (D19–D21);
 link replication agreed 2026-11-10 (D23, §8.1); replaced and vanished entry
 folders, root watching and the hand-test fixes brought up to date 2026-11-11
-(§6.5, §6.6, §8.1, §13.5).
+(§6.5, §6.6, §8.1, §13.5); the JSON merge agreed 2026-11-23 (D24, §7).
 Milestones 1–6 are implemented (v0.2.0); milestone 7 is the 2026-10-26 additions.
 Sections 1–3 record what was decided in discussion. Sections 4 onward are
 the technical design. Section 15 records how the remaining open points were
@@ -54,6 +54,7 @@ machines, in real time, over ssh.
 | D21 | TUI parity | Everything the CLI can do, the TUI can do. |
 | D22 | First-add preview | Before creating an entry, the adding machine asks every member of the target group what it has at that path and shows the user which machines have it, whether it differs, and which are offline. If anything differs the user chooses: keep both (default; differing copies become visible conflict copies), this machine wins (differing copies are replaced and backed up), or cancel. For a folder the TUI chooses per differing file. A non-interactive add with a difference and no `--on-existing` cancels. The choice travels in the entry record, so machines that were offline follow it when they reconnect. |
 | D23 | Link replication | Opt-in per folder entry (`enigma add --links`, `enigma entry links`), off by default. A symlink inside such an entry is replicated as a link, never as content, when its target is inside a synced entry of the same group (any entry, not ignored), checked on the sending and the receiving machine. Targets are stored relative to the link or as `~/…` and written under each machine's own home; targets outside `~` are skipped and reported. A received link waits until its target exists (never a dangling link, never a delete). A link never replaces a folder; a losing link goes to the trash, never to a conflict-copy link, on every machine that had it. With replication off, links are neither created nor deleted by sync in either direction (a file that replaces a link still syncs). Not in v1: links as entry roots, cross-group targets, resolving chains (§8.1). |
+| D24 | JSON merge | Opt-in per entry (`enigma entry merge <path> json [--newest-by FIELD]`), lines by default. A file that is one JSON object merges key by key: each top-level value is one unit, never merged inside. A key changed on both sides is a conflict, unless `--newest-by FIELD` is set and both values are objects whose `FIELD` is a number: then the larger wins whole. Other files in the entry still merge by lines. Generic: Enigma knows nothing of what the file holds (§7 step 3). |
 
 ## 3. Vocabulary
 
@@ -205,6 +206,8 @@ group (§9).
   for per-file choices inside a folder. The policy applies only while the
   file's current version is the first-add seed; after a real edit, normal
   conflict rules apply (§7).
+- An entry record carries its merge (D24): `merge` (empty for lines, or
+  `json`) and `merge_newest_by` (a field name, with `json` only).
 - Each record (a machine, a group, an entry) carries a Lamport timestamp and the ID of
   the machine that last changed it. The highest timestamp wins, with the
   machine ID as tie-break. Removed records stay behind as markers ("tombstones").
@@ -403,6 +406,22 @@ When two versions are concurrent (neither vector is newer):
      the identical version). Its mtime is the later of the two; its exec bit
      and author come from the version that would win in step 4.
    - Overlapping or touching hunks: go to step 4.
+   - **JSON merge** (D24, entries with `merge` `json`): when base and both
+     versions each parse as one JSON object (no repeated key, nothing after
+     it), the merge is by top-level key instead of by line. A key that is
+     the same on both sides, or changed (added, removed) on one side only,
+     takes that value; values compare compacted, so layout is not a change.
+     A key changed differently on both sides goes to step 4, never to a
+     line merge, which could mix two versions of one value. With
+     `merge_newest_by` F, such a key instead takes the whole value whose
+     field F is the larger number, when both values are objects with a
+     number F (compared by value); a tie, a missing or non-number F, or a
+     removed key still goes to step 4. The result keeps the base's
+     remaining keys in the base's order, then added keys by name, laid out
+     like the base (its indent, one line if the base is one line, its final
+     newline). Every input is shared and the rules are symmetric, so both
+     machines make the same bytes. A file that is not one JSON object
+     merges by lines.
 4. **Fallback (binary file, no base, or overlapping edits):**
    - The newer version by mtime wins in place; on equal mtimes, the higher
      machine ID wins, then the higher content hash (a total order, so two
@@ -796,7 +815,7 @@ rules lives in `skills/enigma/` and ships in the release tarball.
 | `enigma init` | create the fleet on this machine, with the group `main` |
 | `enigma machine add <alias> [--group G]…` · `list` · `remove <name> [--uninstall]` · `rename <name> <new>` · `alias <name> <ssh-alias>` | manage machines (upgrades are automatic, §12) |
 | `enigma group list` · `create <name> [machine…]` · `delete <name> [--yes]` · `rename <name> <new>` · `add <name> <machine>…` · `remove <name> <machine>…` · `merge <from> <into> [--add-members]` | manage groups (§9) |
-| `enigma entry move <path> <group>` · `entry links <path> on\|off` | move an entry to another group (§9); turn link replication on or off for a folder entry (D23) |
+| `enigma entry move <path> <group>` · `entry links <path> on\|off` · `entry merge <path> lines\|json [--newest-by FIELD]` | move an entry to another group (§9); turn link replication on or off for a folder entry (D23); set how concurrent edits merge (D24, §7) |
 | `enigma add <path> [--group G] [--ignore GLOB]… [--links] [--on-existing keep-both\|mine-wins\|cancel] [--dry-run] [--json]` · `remove <path>` · `list` | manage entries (`--group` defaults to `main`); `add` with no path picks files and folders with `fzf` (§13.4); `--dry-run` prints the first-add preview without adding; a difference with no flag and no terminal cancels (D22); a cancelled add exits 1 |
 | `enigma limits [--file-size SIZE] [--files N]` | show the fleet's limits, or change them for every machine (§8); SIZE like `25MB` |
 | `enigma status` | problems (§13.5), machines (link up/down, latency, last seen), groups, entries, pending transfers. Each entry has one state, the first that applies: `not synced here: this machine is not in its group` (a frozen entry, §9), `MISSING LOCALLY: deletes are not propagated` (§6.5), `NOT WATCHED: changes here sync only at the next check`, `PARTLY WATCHED: N subfolders not watched; …` (§6.5 root watch), `WRITE FAILING: N not written here (retried; see the problems)` (§6.6), `restoring N from the other machines (not here yet)`, `over the N-file limit, …` (§8), `ok, N skipped (symlinks or over SIZE)`, else `ok`; `, links on` is appended for a folder with link replication on. `--json` carries the same as fields (`Frozen`, `Missing`, `Unwatched`, `UnwatchedFolders`, `WriteFailing`, `Restoring`, `OverLimit`, `Skipped`, `IdentityUnreliable`, `WhileAway`, `LinksOn`, `Links`) |
@@ -865,7 +884,9 @@ a notice line (§13.5), and the key hints.
   selecting the other group and pressing `m`. No group is ever typed. `x`
   stops syncing an entry (after a confirmation). `s` turns link
   replication on or off for a synced folder (D23), with a notice; a
-  replicated link shows `link → <target>` and its state. `/` filters it with fuzzy
+  replicated link shows `link → <target>` and its state. `M` on a synced
+  entry asks for its merge (`lines`, `json` or `json FIELD`, D24); an
+  entry with the JSON merge is marked `json merge`. `/` filters it with fuzzy
   search (§13.4).
 - **Activity:** the daemon's recent events (a ring of the last 500: changes
   received and made, merges, conflict copies, deletes, links up and down,
@@ -1105,4 +1126,5 @@ Each milestone ends with all tests passing and a review in tuicr.
 | Paths outside `~` | Not supported (D16). |
 | Binary distribution | `github.com/nadavushka-dev/enigma` (D17). |
 | Limits | 10 MB / 2,000 files by default, per fleet (D18, §8). |
+| JSON files edited on several machines while apart (an OAuth `auth.json` refreshed on each) | Opt-in JSON merge by key, with an optional newest-by field (D24, §7). |
 | Sharing some files with some machines | Groups (D19, §9). The fleet keeps the old meaning of "group" in code until the rename. |
